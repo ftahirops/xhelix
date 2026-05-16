@@ -1,0 +1,21 @@
+# SSH-related correlations. Loaded into the per-host correlator.
+---
+id: ssh_brute_then_success
+desc: Many SSH auth failures followed by a successful login from the same source
+severity: critical
+mitre: [T1110.001, T1078]
+window: 600s
+group_by: [src_ip]
+steps:
+  - select: |
+      event.sensor == "identity.sshd" &&
+      event.tags["outcome"] == "failure"
+    within: 600s
+  - select: |
+      event.sensor == "identity.sshd" &&
+      event.tags["outcome"] == "success" &&
+      event.tags["src_ip"] == group.src_ip
+    within: 60s
+remediation: |
+  Brute force succeeded. Disable account, rotate keys, snapshot
+  the session that just opened.

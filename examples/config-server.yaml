@@ -1,0 +1,110 @@
+# xhelix example config: server preset
+# Recommended for: production servers, baremetal, VMs.
+# Default if no preset is set.
+
+preset: server
+
+logging:
+  level: info
+  format: text
+  destination: stdout
+
+storage:
+  hot:
+    path: /var/lib/xhelix/hot.db
+    retention_hours: 24
+    max_size_mb: 2048
+
+ruleset:
+  bundled: core
+  custom_dir: /etc/xhelix/rules.d
+
+sensors:
+  heartbeat:
+    enabled: true
+    interval: 1s
+  # Sensor planes below activate as phases land.
+  ebpf:
+    enabled: false       # Phase 1
+  fim:
+    enabled: false       # Phase 2
+    package_diff: true
+    suid_baseline: true
+  decoys:
+    enabled: false       # Phase 3
+
+alerts:
+  sinks:
+    - kind: stdout
+    - kind: file
+      path: /var/log/xhelix/alerts.jsonl
+  severity_threshold: notice
+
+response:
+  enabled: false
+  soak_days: 30
+
+netban:
+  enabled: false
+  use_nftables: true
+
+remediate:
+  enabled: false
+  backup_dir: /var/lib/xhelix/backup
+  quarantine_dir: /var/lib/xhelix/quarantine
+  backup_paths:
+    - /etc/passwd
+    - /etc/shadow
+    - /etc/ld.so.preload
+    - /etc/sudoers
+    - /root/.ssh/authorized_keys
+
+session:
+  enabled: true
+  max_events_per_session: 1000
+
+ui:
+  enabled: false
+  bind: 127.0.0.1:18443
+  tls_enabled: true
+  auto_detect_ssh: true
+  rate_limit_per_second: 5
+
+webhook:
+  enabled: false
+  url: ""
+
+forensic:
+  enabled: true
+  evidence_dir: /var/lib/xhelix/evidence
+
+memscan:
+  enabled: true
+  max_region_mb: 64
+
+lockout:
+  enabled: false
+
+execguard:
+  enabled: false
+  mount_points: ["/"]
+  deny_paths: []
+
+host_quarantine:
+  enabled: false
+  allow_ips: []
+
+beacon:
+  enabled: true
+tamperguard:
+  enabled: true
+kintegrity:
+  enabled: true
+threatfeed:
+  enabled: true
+  allow_offline: true
+dnsexfil:
+  enabled: true
+baseline:
+  enabled: true
+  retention_days: 30

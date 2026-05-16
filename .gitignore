@@ -1,0 +1,37 @@
+# Build artefacts
+/xhelix
+/xhelixctl
+/xhelix-verify
+/xhelix-bridge
+/mynetgate
+/dist/
+*.deb
+*.rpm
+*.tar.gz
+*.o
+
+# Go
+/vendor/
+
+# IDE / tools
+.vscode/
+.idea/
+.claude/
+
+# Documentation (deliberately excluded from public push)
+*.md
+
+# Local state for development
+/var/
+/tmp/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+.git-old-history-backup/

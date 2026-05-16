@@ -1,0 +1,42 @@
+# Memory exploit primitives. v1.0 plane.
+---
+id: mem_mprotect_rwx
+desc: A page was made writable+executable in a single mprotect call (shellcode pattern)
+severity: critical
+mitre: [T1055.009, T1620, T1027]
+match: |
+  event.sensor == "ebpf.memory" &&
+  event.tags["mprotect_rwx"] == "true" &&
+  (!("jit_allowlisted" in event.tags) || event.tags["jit_allowlisted"] != "true")
+tags: [post_exploitation, memory_corruption]
+remediation: |
+  RWX mprotect is the shellcode page-permission flip. Capture the
+  pid's memory regions; check for ROP gadgets; quarantine pid.
+test_id: M-01
+---
+id: mem_kernel_anomaly
+desc: Kernel emitted GPF / BUG / KASAN / oops
+severity: critical
+mitre: [T1068]
+match: |
+  event.sensor == "memory.dmesg" &&
+  (event.tags["class"] == "gpf" ||
+   event.tags["class"] == "bug" ||
+   event.tags["class"] == "kasan" ||
+   event.tags["class"] == "oops")
+tags: [kernel_exploit_attempt]
+remediation: |
+  Kernel-level corruption indicator. Could be a successful or
+  failed kernel LPE attempt; capture full dmesg + correlate.
+---
+id: mem_lkrg_violation
+desc: LKRG (kernel runtime guard) reported a tampering attempt
+severity: critical
+mitre: [T1014, T1068]
+match: |
+  event.sensor == "memory.dmesg" &&
+  event.tags["class"].startsWith("lkrg_")
+tags: [kernel_exploit, rootkit]
+remediation: |
+  LKRG denied an attempt to subvert the running kernel. Snapshot
+  full dmesg + correlate with recent process activity.

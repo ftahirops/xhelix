@@ -1,0 +1,61 @@
+# Decoy plane rules. Decoys produce zero-FP indicators.
+---
+id: decoy_file_opened
+desc: A honey file was opened
+severity: critical
+mitre: [T1552.001]
+match: |
+  event.sensor == "decoy" &&
+  event.tags["honey_file_open"] == "true"
+tags: [decoy, credential_access]
+remediation: |
+  Honey files are never legitimately opened. Treat the originating
+  process and user as compromised.
+test_id: D-01
+---
+id: decoy_service_connect
+desc: Connection received on a honey service port
+severity: critical
+mitre: [T1046]
+match: |
+  event.sensor == "decoy" &&
+  event.tags["honey_service_connect"] == "true"
+tags: [decoy, lateral_movement]
+remediation: Capture src IP, JA3, payload. Correlate to lateral movement.
+test_id: D-02
+---
+id: decoy_dns_resolved
+desc: A canary DNS hostname was resolved
+severity: high
+mitre: [T1018]
+match: |
+  event.sensor == "decoy" &&
+  event.tags["honey_dns_resolve"] == "true"
+tags: [decoy, recon]
+remediation: Reconnaissance indicator. Identify resolver source.
+test_id: D-03
+---
+id: decoy_canary_token_used
+desc: An embedded canary token was used externally
+severity: critical
+mitre: [T1059, T1005]
+match: |
+  event.sensor == "decoy.canary" &&
+  event.tags["token_used"] == "true"
+tags: [decoy, exfiltration]
+remediation: |
+  The token leaked. Track the use location and time; rotate any real
+  credentials in the same context.
+test_id: D-04
+---
+id: decoy_db_row_read
+desc: Honey row in a real database was read
+severity: critical
+mitre: [T1005]
+match: |
+  event.sensor == "decoy.db" &&
+  event.tags["honey_row_read"] == "true"
+tags: [decoy, collection]
+remediation: |
+  The reading session should be considered compromised; rotate any
+  selected creds and audit recent queries.

@@ -1,0 +1,235 @@
+# xhelix configuration
+# Documentation: https://github.com/xhelix/xhelix/blob/main/docs/CONFIG.md
+
+preset: server   # desktop | server | container-host
+
+logging:
+  level: info       # trace | debug | info | warn | error
+  format: text      # text | json
+  destination: stdout
+
+agent:
+  pid_file: /run/xhelix/xhelix.pid
+  state_dir: /var/lib/xhelix
+  log_dir: /var/log/xhelix
+  heartbeat_url: ""    # optional external heartbeat receiver
+  heartbeat_interval: 1s
+
+storage:
+  hot:
+    path: /var/lib/xhelix/hot.db
+    retention_hours: 24
+    max_size_mb: 2048
+  warm:
+    enabled: false       # v0.2+
+  cold:
+    enabled: false       # v1.0+
+
+ruleset:
+  bundled: core
+  custom_dir: /etc/xhelix/rules.d
+  reload_on_change: true
+
+sensors:
+  heartbeat:
+    enabled: true
+    interval: 1s
+  ebpf:
+    enabled: false       # Phase 1
+    ringbuf_size_mb: 8
+  fim:
+    enabled: false       # Phase 2
+  decoys:
+    enabled: false       # Phase 3
+  netids:
+    enabled: false       # v0.2
+  identity:
+    enabled: false       # v0.2
+  memory:
+    enabled: false       # v1.0
+
+alerts:
+  sinks:
+    - kind: stdout
+    - kind: file
+      path: /var/log/xhelix/alerts.jsonl
+      rotate_size_mb: 100
+      keep: 7
+  severity_threshold: notice
+  rate_limit:
+    per_rule_per_minute: 60
+    global_per_second: 500
+
+# Active response: detect → trace → block → remediate → notify.
+# Disabled by default; opt in once rules have soaked.
+response:
+  enabled: false
+  soak_days: 30           # min days a rule must be clean before auto-quarantine
+
+netban:
+  enabled: false
+  use_nftables: true      # falls back to a no-op if nft is missing
+
+remediate:
+  enabled: false
+  backup_dir: /var/lib/xhelix/backup
+  quarantine_dir: /var/lib/xhelix/quarantine
+  backup_paths:
+    - /etc/passwd
+    - /etc/shadow
+    - /etc/ld.so.preload
+    - /etc/sudoers
+    - /root/.ssh/authorized_keys
+
+session:
+  enabled: true
+  max_events_per_session: 1000
+
+# Enterprise web dashboard. When enabled, listens with TLS + bearer
+# token + IP allow-list. By default only the SSH client IP is
+# allowed, so it is reachable only from the operator who started
+# the daemon.
+ui:
+  enabled: false
+  bind: 127.0.0.1:18443
+  tls_enabled: true       # self-signed cert auto-generated on first run
+  tls_cert: ""            # blank = state_dir/ui.crt
+  tls_key: ""             # blank = state_dir/ui.key
+  http_redirect: false
+  http_redirect_addr: 127.0.0.1:18080
+  allow_ips: []           # populated by auto_detect_ssh
+  auto_detect_ssh: true
+  token_file: ""          # blank = state_dir/ui-token
+  audit_log: ""           # blank = log_dir/ui-audit.log
+  rate_limit_per_second: 5
+  trust_forwarded_for: false
+
+webhook:
+  enabled: false
+  url: ""                 # Slack/Teams/generic JSON endpoint
+
+# Pre-kill evidence capture — /proc/<pid>/{maps,exe,fd,...} dumped to
+# evidence_dir before SIGKILL turns the process into ash.
+forensic:
+  enabled: true
+  evidence_dir: /var/lib/xhelix/evidence
+
+# YARA-lite memory scanner. Runs against suspect pids when a rule
+# fires ActionMemScan. Default patterns target shellcode primitives;
+# extend in your own rule custom_dir.
+memscan:
+  enabled: true
+  max_region_mb: 64
+
+# Account lockout — passwd -l, kill PTYs, revoke authorized_keys.
+# Triggered by ActionLockUser when an alert names a user.
+lockout:
+  enabled: false
+
+# Exec-deny via fanotify. Continuously running; denies execve before
+# the binary runs. Requires CAP_SYS_ADMIN and a kernel built with
+# CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y (default on every mainstream
+# distro since 2020). When deny_paths is empty, defaults are used
+# (deny exec from /tmp, /var/tmp, /dev/shm, /proc/self/fd/*).
+#
+# Format for deny_paths entries:
+#   deny_prefix:/path/        — match HasPrefix
+#   deny_suffix:.sh           — match HasSuffix
+#   deny_contains:/.cache/    — match Contains
+#   deny_eq:/usr/bin/foo      — match equality
+#   /path/                    — shorthand for deny_prefix
+execguard:
+  enabled: false
+  mount_points: ["/"]
+  deny_paths: []
+
+# Host quarantine — last-resort response that drops the host into
+# network isolation except for an operator allow-list. Only triggered
+# when a rule explicitly fires ActionHostQuarantine. allow_ips MUST
+# include the operator's mgmt IP or the daemon refuses to engage
+# (would lock the operator out).
+host_quarantine:
+  enabled: false
+  allow_ips: []           # set to your jump host / mgmt IP
+
+# ──── v0.0.9 elite-tier detection ────
+
+# C2 beacon detector. Watches outbound connect events for periodic
+# callbacks with low jitter — the rhythm of every C2 framework.
+beacon:
+  enabled: true
+  min_samples: 8          # min calls before a verdict
+  max_jitter_cv: 0.35     # stddev/mean threshold for "periodic"
+  min_span_seconds: 300   # ignore short bursts
+  allow_list: []          # IPs to never flag (NTP servers, monitoring SaaS)
+
+# Sensor self-protection. Watches /proc/self/status TracerPid, our own
+# binary mtime/inode, optionally auditd liveness, and the pid file.
+# Anything an attacker would touch to silence xhelix.
+tamperguard:
+  enabled: true
+  interval_seconds: 5
+  check_auditd: false     # set true if you require auditd to be running
+
+# Kernel integrity. Hashes /proc/kallsyms symbol set + /proc/modules +
+# critical syscall addresses at startup, periodically re-hashes,
+# alerts on drift. Catches LKM rootkits.
+kintegrity:
+  enabled: true
+  interval_seconds: 60
+
+# Public threat-intel feed fetcher. Tags any outbound connection to a
+# listed IP with the source name (spamhaus_drop / tor_exits / etc.).
+threatfeed:
+  enabled: true
+  refresh_hours: 6
+  allow_offline: true     # don't block daemon start on first-fetch fail
+  extra_sources: []       # add MISP/OTX/internal feeds here
+
+# DNS tunneling / exfiltration detector. Per-domain rolling stats:
+# query rate, label entropy, average label length, TXT fraction.
+dnsexfil:
+  enabled: true
+  window_seconds: 300
+  min_queries_per_window: 30
+  max_label_len: 25.0
+  max_entropy: 3.8
+  max_txt_fraction: 0.4
+
+# Per-binary behavioural baseline. Records hourly windows of syscall
+# histograms, network endpoints, file writes, and child processes
+# per binary into JSONL files (one per UTC day, gzipped on rotate).
+# This is the foundation for any future ML scoring or fleet-hub
+# baseline aggregation — Phase 1 only records.
+baseline:
+  enabled: true
+  store_dir: /var/lib/xhelix/baseline
+  keep_hours: 2          # in-memory window count; 2 = current + previous
+  max_keys_per_window: 64
+  retention_days: 30     # days of JSONL kept on disk
+  ignore_binaries: []    # binaries whose events skip baselining
+
+  # Phase 2: scoring on top of the baseline. Statistical anomaly
+  # detection — set-diff (new endpoint, new child, new file write,
+  # new sensor) + EWMA event-rate spike. Detection-mode by default.
+  scoring:
+    enabled: true
+    warmup_hours: 24            # binary must be observed this long before scoring
+    hysteresis_n: 2             # feature must appear in N consecutive new windows
+    min_feature_classes: 1      # how many classes must be anomalous to fire
+    lookback_days: 7            # how much history to fold into the baseline
+    rebuild_hours: 6            # rebuild baseline from disk every N hours
+    rate_alpha_percent: 10      # EWMA smoothing (10 = α=0.10)
+    rate_sigma_threshold: 5     # σ above mean to fire a rate spike
+    rate_min_history: 24        # min windows before scoring rate
+    rate_min_events: 100        # absolute floor below which rate alerts suppress
+
+  # Phase 3: fleet hub upload. Empty url = standalone (no upload).
+  hub:
+    url: ""                     # e.g. https://xhub.example.com:18444
+    upload_interval_min: 5
+    host_tag: ""                # default = os.Hostname()
+    role_tag: ""                # e.g. "web", "db" — used for cross-fleet bucketing
+    auth_token: ""              # bearer
+    tls_insecure_skip_verify: false
+    queue_dir: ""               # default = state_dir/hubqueue

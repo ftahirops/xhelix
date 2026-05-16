@@ -1,0 +1,15 @@
+Package: xhub
+Version: 0.0.11-4
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: xhelix authors <maintainers@xhelix.dev>
+Depends: libc6
+Description: xhelix fleet baseline hub
+ xhub receives per-binary behavioural feature aggregates from xhelix
+ agents across a fleet and serves cross-fleet "rare endpoint" lists
+ back to agents for elevated-confidence detection.
+ .
+ Single static binary, runs under systemd. Pair with one or more
+ xhelix agents that have baseline.hub.url pointed at this server.
+Homepage: https://github.com/xhelix/xhelix

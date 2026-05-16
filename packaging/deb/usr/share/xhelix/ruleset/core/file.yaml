@@ -1,0 +1,129 @@
+# File / FIM plane rules.
+---
+id: tamper_passwd
+desc: Write to /etc/passwd (or any /passwd file under a watched dir)
+severity: critical
+mitre: [T1098, T1136]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (path == "/etc/passwd" || path.endsWith("/etc/passwd") || path.endsWith("/passwd"))
+tags: [persistence, credential_access]
+remediation: Compare diff against backup; identify writer pid and uid.
+test_id: F-01
+---
+id: tamper_shadow
+desc: Write to /etc/shadow from a non-system tool
+severity: critical
+mitre: [T1098]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (path == "/etc/shadow" || path.endsWith("/etc/shadow") || path.endsWith("/shadow")) &&
+  !(event.comm in ["passwd", "chpasswd", "useradd", "usermod", "userdel", "vipw"])
+tags: [credential_access]
+remediation: Only the listed system tools should write shadow. Investigate.
+test_id: F-01
+---
+id: ld_so_preload_modified
+desc: /etc/ld.so.preload was created or modified (classic rootkit)
+severity: critical
+mitre: [T1574.006]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (path == "/etc/ld.so.preload" || path.endsWith("/ld.so.preload"))
+tags: [persistence, hijack]
+remediation: Classic rootkit technique. Capture the file; identify the writer.
+test_id: F-02
+---
+id: ssh_key_added_root
+desc: New entry added to root's authorized_keys
+severity: high
+mitre: [T1098.004]
+match: |
+  event.sensor == "fim" &&
+  path == "/root/.ssh/authorized_keys" &&
+  event.tags["write"] == "true" &&
+  !(event.comm in ["sshd", "ssh-copy-id"])
+tags: [persistence, credential_access]
+remediation: Diff against backup. Identify new public-key fingerprint.
+test_id: F-03
+---
+id: ssh_key_added_user
+desc: New authorized_keys entry on any user account
+severity: warn
+mitre: [T1098.004]
+match: |
+  event.sensor == "fim" &&
+  path.matches("^/home/[^/]+/.ssh/authorized_keys$") &&
+  event.tags["write"] == "true" &&
+  !(event.comm in ["sshd", "ssh-copy-id"])
+tags: [persistence]
+remediation: Verify the user added the key intentionally.
+test_id: F-03
+---
+id: pam_module_drop
+desc: New shared object placed in PAM module directory
+severity: critical
+mitre: [T1556.003]
+match: |
+  event.sensor == "fim" &&
+  (path.startsWith("/lib/security/") ||
+   path.startsWith("/lib64/security/") ||
+   path.startsWith("/usr/lib/security/") ||
+   path.startsWith("/usr/lib64/security/")) &&
+  path.endsWith(".so") &&
+  event.tags["create"] == "true"
+tags: [persistence, credential_access]
+remediation: Backdoor PAM module. Identify writer; hash file; check vs package manifest.
+test_id: F-04
+---
+id: cron_new_unit
+desc: New cron job created
+severity: high
+mitre: [T1053.003]
+match: |
+  event.sensor == "fim" &&
+  (path.startsWith("/etc/cron.") ||
+   path == "/etc/crontab" ||
+   path.startsWith("/var/spool/cron/")) &&
+  event.tags["create"] == "true"
+tags: [persistence]
+remediation: Verify against ops change log; cron implants are common.
+test_id: FIM-02
+---
+id: systemd_unit_new
+desc: New systemd unit installed outside the package manager
+severity: high
+mitre: [T1543.002]
+match: |
+  event.sensor == "fim" &&
+  path.startsWith("/etc/systemd/system/") &&
+  event.tags["create"] == "true" &&
+  event.tags["package_managed"] != "true"
+tags: [persistence]
+remediation: Inspect unit file ExecStart and User= directive.
+test_id: FIM-02
+---
+id: package_diff_critical_binary
+desc: A critical system binary differs from package manifest
+severity: critical
+mitre: [T1554]
+match: |
+  event.sensor == "fim.posture" &&
+  event.tags["package_diff"] == "true" &&
+  event.tags["binary"] in ["/usr/bin/sudo", "/bin/su", "/usr/sbin/sshd",
+                           "/usr/bin/ssh", "/bin/login", "/usr/bin/passwd"]
+tags: [persistence, defense_evasion]
+remediation: Possible backdoored system binary. Reinstall package; capture altered.
+test_id: FIM-01
+---
+id: webshell_heuristic
+desc: PHP/JSP file in web root contains code-execution patterns
+severity: high
+mitre: [T1505.003]
+match: |
+  event.sensor == "fim.scanner" &&
+  event.tags["webshell_match"] == "true" &&
+  int(event.tags["score"]) >= 5
+tags: [persistence, web]
+remediation: Inspect file content; correlate with web access logs.
+test_id: FIM-03

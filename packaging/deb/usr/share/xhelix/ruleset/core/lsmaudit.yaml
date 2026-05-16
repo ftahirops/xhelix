@@ -1,0 +1,50 @@
+# AppArmor / SELinux denial rules.
+#
+# A DENIED record means the kernel's own LSM policy already stopped
+# a malicious operation. xhelix surfaces these as Critical because
+# the false-positive rate is essentially the host's own policy
+# hygiene — operators tune by adjusting their AppArmor profiles or
+# SELinux booleans, not by suppressing xhelix.
+---
+id: lsm_apparmor_denied
+desc: AppArmor denied a forbidden operation
+severity: critical
+mitre: [T1562, T1068]
+match: |
+  event.sensor == "lsm.audit" &&
+  event.tags["lsm"] == "apparmor" &&
+  event.tags["action"] == "DENIED"
+tags: [defense_evasion, privilege_escalation, lsm]
+remediation: |
+  AppArmor denied an action: profile=tags.profile path=tags.path
+  comm=event.comm. Investigate the originating process; tune the
+  profile in /etc/apparmor.d only after confirming the action is
+  legitimate.
+---
+id: lsm_selinux_denied
+desc: SELinux denied a forbidden operation
+severity: critical
+mitre: [T1562, T1068]
+match: |
+  event.sensor == "lsm.audit" &&
+  event.tags["lsm"] == "selinux" &&
+  event.tags["action"] == "denied"
+tags: [defense_evasion, privilege_escalation, lsm]
+remediation: |
+  SELinux denied an action: scontext=tags.scontext tcontext=tags.tcontext
+  tclass=tags.tclass operation=tags.operation. Investigate; if
+  legitimate, adjust booleans (setsebool) or extend policy with
+  audit2allow only after careful review.
+---
+id: lsm_apparmor_audit_mode
+desc: AppArmor in complain/audit mode flagged an operation
+severity: warn
+match: |
+  event.sensor == "lsm.audit" &&
+  event.tags["lsm"] == "apparmor" &&
+  event.tags["action"] == "AUDIT"
+tags: [defense_evasion, lsm]
+remediation: |
+  Profile is in complain/audit mode; the operation was permitted
+  but logged. Use this signal to tune the profile before promoting
+  to enforce.

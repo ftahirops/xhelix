@@ -1,0 +1,21 @@
+[package]
+name = "xhelix-watchdog"
+version = "0.1.0"
+edition = "2021"
+description = "Tiny independent watchdog for the xhelix daemon. Detects silent agent kill + missed heartbeats and triggers restart via systemd."
+license = "Apache-2.0"
+
+[[bin]]
+name = "xhelix-watchdog"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Stdlib only — no dependencies. Keeps the watchdog binary tiny
+# (~300KB stripped) and the supply chain trivial.
+[dependencies]

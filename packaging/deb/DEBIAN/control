@@ -1,0 +1,22 @@
+Package: xhelix
+Version: 0.0.11-4
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: xhelix authors <maintainers@xhelix.dev>
+Depends: libc6
+Recommends: nftables, auditd
+Suggests: apparmor
+Description: Real-time Linux runtime security agent
+ xhelix observes processes, files, network, identity, and memory
+ events in real time and produces high-signal security alerts. It
+ ships with an active response engine, TLS-protected enterprise UI,
+ integrated security audit (xhelix doctor), elite-tier detection
+ (beacon, tamperguard, kintegrity, threat feeds, DNS exfil), and a
+ per-binary behavioural baseline aggregator with set-diff + EWMA
+ anomaly scoring. Optional fleet-hub upload (see xhub) for
+ cross-host baselines.
+ .
+ Single static binary, no external dependencies, runs under systemd
+ with strict capability hardening.
+Homepage: https://github.com/xhelix/xhelix

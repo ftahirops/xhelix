@@ -1,0 +1,127 @@
+# Process plane rules. See docs/RULES.md for grammar.
+---
+id: web_server_spawns_shell
+desc: A web server worker spawned an interactive shell
+severity: high
+mitre: [T1059.004, T1190]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.tags["parent_comm"] in ["nginx", "apache2", "httpd", "php-fpm", "caddy", "haproxy", "lighttpd"] &&
+  event.comm in ["bash", "sh", "dash", "zsh", "ash", "ksh"]
+tags: [post_exploitation, web]
+remediation: |
+  Investigate the web request that triggered this. A web server
+  should never fork an interactive shell in normal operation.
+test_id: K-01
+---
+id: binary_runs_from_tmp
+desc: A binary in /tmp, /var/tmp, or /dev/shm was invoked
+severity: warn
+mitre: [T1059, T1204.002]
+match: |
+  event.sensor == "ebpf.proc" &&
+  (event.image.startsWith("/tmp/") ||
+   event.image.startsWith("/var/tmp/") ||
+   event.image.startsWith("/dev/shm/"))
+tags: [post_exploitation, dropper]
+remediation: Capture and hash the binary; check it against threat-intel.
+test_id: K-03
+---
+id: uid0_no_transition
+desc: Process gained uid 0 without observed setuid transition
+severity: critical
+mitre: [T1068, T1548.001]
+match: |
+  event.sensor == "ebpf.proc.cred" &&
+  event.tags["new_uid"] == "0" &&
+  event.tags["old_uid"] != "0" &&
+  !("setuid_binary" in event.tags) &&
+  !("legitimate_su" in event.tags)
+tags: [privilege_escalation]
+remediation: |
+  Possible kernel exploit or cred-struct corruption. Snapshot
+  process memory; check dmesg for kernel oops; run integrity scan.
+test_id: K-02
+---
+id: ptrace_sensitive_target
+desc: ptrace attached to sshd, init, systemd, or the agent itself
+severity: critical
+mitre: [T1055.008, T1003]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.tags["ptrace_attach"] == "true" &&
+  event.tags["ptrace_target"] in ["sshd", "systemd", "init", "xhelix"]
+tags: [credential_access, defense_evasion]
+remediation: Investigate immediately. Possible memory injection or credential dump.
+test_id: K-05
+---
+id: memfd_run_pattern
+desc: Process invoked from memfd (fileless)
+severity: high
+mitre: [T1055.009, T1620]
+match: |
+  event.sensor == "ebpf.proc" &&
+  (event.image.startsWith("/proc/self/fd/") ||
+   event.tags["from_memfd"] == "true")
+tags: [defense_evasion, fileless]
+remediation: Fileless payload. Capture memory of the running pid.
+test_id: S-01
+---
+id: shell_with_socket_fd
+desc: Shell started with stdin or stdout pointing at a TCP socket
+severity: critical
+mitre: [T1059, T1041]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.comm in ["bash", "sh", "dash"] &&
+  (event.tags["stdin_is_socket"] == "true" ||
+   event.tags["stdout_is_socket"] == "true")
+tags: [post_exploitation, c2]
+remediation: Reverse shell pattern. Identify peer; isolate host; snapshot.
+test_id: S-01
+---
+id: kernel_module_load
+desc: A kernel module was loaded
+severity: warn
+mitre: [T1547.006]
+match: |
+  event.sensor == "ebpf.module" &&
+  event.tags["mod_load"] == "true"
+tags: [persistence, defense_evasion]
+remediation: Module loads on stable systems are rare. Verify expected baseline.
+---
+id: bpf_syscall_unexpected
+desc: A non-allowlisted process used the bpf syscall
+severity: high
+mitre: [T1562]
+match: |
+  event.sensor == "ebpf.self" &&
+  event.tags["bpf_syscall"] == "true"
+tags: [defense_evasion]
+remediation: Possible attempt to detach or load BPF programs. Investigate.
+test_id: SD-02
+---
+id: container_escape_mount
+desc: A container mounted the host filesystem
+severity: critical
+mitre: [T1611]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.container != "" &&
+  event.tags["mount_target"].startsWith("/proc/1/root")
+tags: [container, escape]
+remediation: Container escape attempt. Stop the container; capture image.
+test_id: S-05
+---
+id: download_then_run
+desc: A binary newly seen on disk was invoked from a download tool ancestor
+severity: high
+mitre: [T1105, T1059]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.tags["first_seen_image"] == "true" &&
+  size(tree) > 1 &&
+  tree.exists(p, p.comm in ["curl", "wget", "fetch"])
+tags: [post_exploitation, dropper]
+remediation: Inspect the URL the downloader contacted and the dropped binary.
+test_id: K-04

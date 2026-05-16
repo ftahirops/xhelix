@@ -1,0 +1,54 @@
+policy_module(xhelix, 0.0.1)
+
+# SELinux policy module for xhelix.
+# Build:  make -f /usr/share/selinux/devel/Makefile xhelix.pp
+# Install: semodule -i xhelix.pp
+#
+# This is a starting skeleton — the policy author will extend it as
+# the agent's syscall surface grows. RHEL / Fedora / Rocky / Alma
+# operators in enforcing mode are the primary audience.
+
+require {
+    type unconfined_t;
+    type kernel_t;
+    type proc_t;
+    type sysfs_t;
+    type bpf_t;
+    type var_lib_t;
+    type var_log_t;
+    type var_run_t;
+    class capability { net_admin sys_ptrace dac_read_search };
+    class capability2 { perfmon };
+    class bpf { map_create map_read map_write prog_load prog_run };
+    class file { read getattr open };
+    class dir { read getattr open search };
+    class lnk_file read;
+}
+
+# xhelix runs in its own domain
+type xhelix_t;
+type xhelix_exec_t;
+
+# State directories
+type xhelix_var_lib_t;
+type xhelix_var_log_t;
+type xhelix_var_run_t;
+
+allow xhelix_t self:capability { net_admin sys_ptrace dac_read_search };
+allow xhelix_t self:capability2 perfmon;
+allow xhelix_t self:bpf { map_create map_read map_write prog_load prog_run };
+
+# Read-only across the host fs to support FIM and process tree.
+allow xhelix_t kernel_t:file read;
+allow xhelix_t proc_t:dir { read getattr open search };
+allow xhelix_t proc_t:file { read getattr open };
+allow xhelix_t proc_t:lnk_file read;
+allow xhelix_t sysfs_t:dir { read getattr open search };
+allow xhelix_t sysfs_t:file { read getattr open };
+allow xhelix_t bpf_t:dir { read getattr open search };
+allow xhelix_t bpf_t:file { read getattr open };
+
+# Read-write to xhelix state.
+allow xhelix_t xhelix_var_lib_t:dir { read getattr open search };
+allow xhelix_t xhelix_var_log_t:dir { read getattr open search };
+allow xhelix_t xhelix_var_run_t:dir { read getattr open search };

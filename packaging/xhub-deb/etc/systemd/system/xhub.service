@@ -1,0 +1,29 @@
+[Unit]
+Description=xhelix fleet baseline hub
+Documentation=https://github.com/xhelix/xhelix
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/xhub run --bind 127.0.0.1:18444 --data /var/lib/xhub --token-file /etc/xhub/token
+Restart=always
+RestartSec=2s
+WatchdogSec=30s
+NotifyAccess=main
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/xhub
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+# xhelix example config: desktop preset
+# Recommended for: workstations and developer machines.
+# Tighter LOLBin baseline tolerance, fewer FIM watch paths.
+
+preset: desktop
+
+logging:
+  level: info
+
+storage:
+  hot:
+    path: /var/lib/xhelix/hot.db
+
+ruleset:
+  bundled: core
+
+sensors:
+  heartbeat:
+    enabled: true
+    interval: 5s     # quieter on a workstation
+
+alerts:
+  sinks:
+    - kind: stdout
+  severity_threshold: warn      # noisier ambient on desktops; raise the bar

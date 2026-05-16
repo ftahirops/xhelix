@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+mkdir -p /var/lib/xhub /etc/xhub
+chmod 0700 /var/lib/xhub /etc/xhub
+if [ ! -f /etc/xhub/token ]; then
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/xhub/token
+    chmod 0600 /etc/xhub/token
+    echo "xhub auth token generated at /etc/xhub/token (share with agents)"
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    if [ "$1" = "configure" ]; then
+        echo "xhub installed. Enable with:"
+        echo "    systemctl enable --now xhub"
+    fi
+fi
+exit 0

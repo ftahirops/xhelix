@@ -1,0 +1,74 @@
+# AppArmor profile for the xhelix runtime-security agent.
+#
+# Constrains the agent to its declared paths and capabilities.
+# Even if a vulnerability in xhelix were exploited, AppArmor stops
+# the attacker from pivoting beyond what the agent legitimately
+# needs.
+#
+# Install: copy to /etc/apparmor.d/usr.local.bin.xhelix and run
+#   apparmor_parser -r /etc/apparmor.d/usr.local.bin.xhelix
+# To enforce: aa-enforce /usr/local/bin/xhelix
+# To complain (audit-only): aa-complain /usr/local/bin/xhelix
+
+#include <tunables/global>
+
+/usr/local/bin/xhelix {
+  #include <abstractions/base>
+  #include <abstractions/openssl>
+
+  capability bpf,
+  capability perfmon,
+  capability net_admin,
+  capability sys_ptrace,
+  capability dac_read_search,
+
+  # Read-only across the host filesystem (we observe; we do not
+  # modify outside our state dirs).
+  / r,
+  /** r,
+
+  # State + logs we own.
+  /var/lib/xhelix/ rw,
+  /var/lib/xhelix/** rwk,
+  /var/log/xhelix/ rw,
+  /var/log/xhelix/** rw,
+  /run/xhelix/ rw,
+  /run/xhelix/** rw,
+
+  # BPF FS pin path.
+  /sys/fs/bpf/xhelix/ rw,
+  /sys/fs/bpf/xhelix/** rwk,
+
+  # Self-defence: refuse exec of anything the agent doesn't ship.
+  /usr/local/bin/xhelix mr,
+  /usr/local/bin/xhelixctl mr,
+
+  # Networking — egress to alert sinks (webhook, syslog, hub).
+  network inet stream,
+  network inet6 stream,
+  network unix stream,
+  network unix dgram,
+  network packet raw,
+  network packet dgram,
+
+  # Suricata supervisor (Phase 4) launches a subprocess.
+  /usr/bin/suricata Cx -> child_suricata,
+
+  profile child_suricata {
+    #include <abstractions/base>
+    capability net_admin,
+    capability net_raw,
+    capability sys_nice,
+    /usr/bin/suricata mr,
+    /etc/xhelix/suricata.yaml r,
+    /etc/xhelix/suricata-rules.d/ r,
+    /etc/xhelix/suricata-rules.d/** r,
+    /var/log/xhelix/suricata/ rw,
+    /var/log/xhelix/suricata/** rw,
+    /var/run/xhelix/eve.json rw,
+    /run/xhelix/suricata.pid rw,
+    network inet raw,
+    network inet6 raw,
+    network packet raw,
+  }
+}

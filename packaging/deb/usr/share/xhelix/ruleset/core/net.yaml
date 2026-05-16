@@ -1,0 +1,61 @@
+# Network plane rules. v0.2 NetIDS adds the heavy hitters.
+---
+id: outbound_to_known_bad
+desc: Connection to an address in the bundled threat-intel set
+severity: critical
+mitre: [T1071, T1090]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["outbound"] == "true" &&
+  event.tags["bad_ip_match"] == "true"
+tags: [c2]
+remediation: Investigate; isolate; correlate with process spawn events.
+test_id: N-01
+---
+id: metadata_svc_unexpected
+desc: Cloud metadata service contacted by a non-allowlisted process
+severity: high
+mitre: [T1552.005]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["outbound"] == "true" &&
+  event.tags["dst_ip"] == "169.254.169.254" &&
+  !(event.comm in ["cloud-init", "amazon-ssm-agent", "google_metadata", "waagent"])
+tags: [credential_access, cloud]
+remediation: Possible cloud-cred theft. Identify originating workload.
+test_id: N-02
+---
+id: outbound_to_tor
+desc: Connection to a known Tor relay
+severity: high
+mitre: [T1090.003]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["outbound"] == "true" &&
+  event.tags["tor_node"] == "true"
+tags: [c2]
+remediation: Investigate. Tor is sometimes legitimate; align with policy.
+---
+id: unexpected_listener
+desc: Process opened a listening socket on a non-baseline port
+severity: warn
+mitre: [T1571]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["listen"] == "true" &&
+  event.tags["baseline_match"] != "true"
+tags: [persistence]
+remediation: Compare to baseline; new listeners are suspicious on a stable host.
+test_id: N-03
+---
+id: outbound_from_db_to_internet
+desc: A database process initiated outbound traffic to the public internet
+severity: critical
+mitre: [T1041]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["outbound"] == "true" &&
+  event.comm in ["mysqld", "postgres", "mariadbd", "mongod", "redis-server"] &&
+  event.tags["dst_is_private"] != "true"
+tags: [exfiltration]
+remediation: Databases should not phone the public internet. Investigate.

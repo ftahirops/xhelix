@@ -1,0 +1,33 @@
+# xhelix example config: container-host preset
+# Recommended for: Docker / k8s nodes.
+# Adds container runtime watch paths; relaxes exec rules for the
+# orchestrator daemons (rules tuned per-image baseline in v0.2+).
+
+preset: container-host
+
+logging:
+  level: info
+
+storage:
+  hot:
+    path: /var/lib/xhelix/hot.db
+
+ruleset:
+  bundled: core
+
+sensors:
+  heartbeat:
+    enabled: true
+    interval: 1s
+  # Phase 2+ FIM extends watch paths with /etc/docker, /var/lib/kubelet,
+  # /etc/kubernetes, /etc/containerd via the container-host preset.
+  fim:
+    enabled: false
+  decoys:
+    enabled: false
+
+alerts:
+  sinks:
+    - kind: stdout
+    - kind: file
+      path: /var/log/xhelix/alerts.jsonl

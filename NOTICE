@@ -1,0 +1,34 @@
+xhelix
+Copyright 2026 The xhelix Authors.
+
+This product includes software developed by The xhelix Authors and
+contributors, distributed under the Apache License, Version 2.0.
+
+Third-party dependencies (Phase 0):
+
+- Bubble Tea (charmbracelet/bubbletea)
+  Copyright (c) Charmbracelet, Inc.
+  Licensed under the MIT License.
+
+- lipgloss (charmbracelet/lipgloss)
+  Copyright (c) Charmbracelet, Inc.
+  Licensed under the MIT License.
+
+- ulid/v2 (oklog/ulid)
+  Copyright (c) The Authors
+  Licensed under the Apache License 2.0.
+
+- cobra (spf13/cobra)
+  Copyright (c) The Authors
+  Licensed under the Apache License 2.0.
+
+- yaml.v3 (gopkg.in/yaml.v3)
+  Copyright (c) The Authors
+  Licensed under the Apache License 2.0 / MIT.
+
+- modernc.org/sqlite
+  Copyright (c) The Authors
+  Licensed under the BSD-3-Clause License.
+
+Future-phase dependencies (Suricata, YARA, LKRG, etc.) will be added
+to this NOTICE file as they are integrated.

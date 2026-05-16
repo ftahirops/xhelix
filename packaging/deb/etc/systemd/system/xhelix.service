@@ -1,0 +1,41 @@
+[Unit]
+Description=xhelix runtime security agent
+Documentation=https://github.com/xhelix/xhelix
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/xhelix run --config /etc/xhelix/xhelix.yaml
+Restart=always
+RestartSec=2s
+StartLimitInterval=0
+
+# Watchdog (Phase 0: agent sends READY=1; periodic kicks land in Phase 1)
+WatchdogSec=30s
+NotifyAccess=main
+
+# Capabilities. Phase 0 needs almost nothing; later phases require
+# CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_SYS_PTRACE, CAP_DAC_READ_SEARCH.
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/xhelix /var/log/xhelix /run/xhelix
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target

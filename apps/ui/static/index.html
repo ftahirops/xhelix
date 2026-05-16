@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>xhelix — host network controller</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>xhelix</h1>
+    <nav>
+      <button class="tab" data-view="overview" data-letter="◯">overview</button>
+      <button class="tab active" data-view="processes" data-letter="▤">processes</button>
+      <button class="tab" data-view="live" data-letter="≋">live feed</button>
+      <button class="tab" data-view="alerts" data-letter="!">alerts</button>
+      <button class="tab" data-view="journal" data-letter="≡">journal</button>
+      <button class="tab" data-view="graph" data-letter="◴">graph</button>
+      <button class="tab" data-view="geo" data-letter="◐">geo</button>
+      <button class="tab" data-view="sankey" data-letter="⇶">flow</button>
+      <button class="tab" data-view="rules" data-letter="◈">policy</button>
+    </nav>
+    <div class="status" id="status">connecting...</div>
+  </header>
+
+  <main>
+
+    <!-- ── OVERVIEW ───────────────────────────────────────────── -->
+    <section id="view-overview" class="view">
+      <div class="view-head">
+        <h2>Overview</h2>
+        <span class="lead" id="overview-stats">loading...</span>
+      </div>
+      <div class="tiles" id="overview-tiles"></div>
+      <div class="card">
+        <h3 style="margin:0 0 12px 0;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:var(--fg-muted);">Top talkers (last 30 s)</h3>
+        <div id="overview-top"></div>
+      </div>
+    </section>
+
+    <!-- ── PROCESSES ──────────────────────────────────────────── -->
+    <section id="view-processes" class="view active">
+      <div class="view-head">
+        <h2>Processes</h2>
+        <span class="lead" id="proc-stats">loading...</span>
+      </div>
+
+      <div class="filters">
+        <input type="text" id="proc-filter" placeholder="filter: comm, exe, destination, group...">
+        <button id="proc-refresh">refresh</button>
+        <label class="muted"><input type="checkbox" id="proc-auto" checked> auto-refresh</label>
+        <label class="muted"><input type="checkbox" id="proc-group" checked> grouped</label>
+        <button id="proc-reset" style="margin-left:auto;">show all (clear filters)</button>
+      </div>
+
+      <div class="filters">
+        <div class="filter-row">
+          <span class="group-label">State</span>
+          <label class="chip"><input type="checkbox" class="proc-state-filter" value="R" checked> running</label>
+          <label class="chip"><input type="checkbox" class="proc-state-filter" value="S" checked> sleeping</label>
+          <label class="chip"><input type="checkbox" class="proc-state-filter" value="D" checked> disk-wait</label>
+          <label class="chip"><input type="checkbox" class="proc-state-filter" value="I" checked> idle</label>
+          <label class="chip"><input type="checkbox" class="proc-state-filter" value="Z" checked> zombie</label>
+          <label class="chip"><input type="checkbox" class="proc-state-filter" value="T"> stopped</label>
+          <label class="chip"><input type="checkbox" class="proc-state-filter" value="dead"> dead</label>
+        </div>
+        <div class="filter-row">
+          <span class="group-label">Show</span>
+          <label class="chip"><input type="checkbox" id="proc-only-alive"> alive only</label>
+          <label class="chip"><input type="checkbox" id="proc-only-traffic"> with traffic</label>
+          <label class="chip"><input type="checkbox" id="proc-only-anomaly"> anomalies</label>
+          <label class="chip"><input type="checkbox" id="proc-only-non-allow"> non-allow verdicts</label>
+        </div>
+      </div>
+
+      <div id="processes-table"></div>
+    </section>
+
+    <!-- ── LIVE FEED ──────────────────────────────────────────── -->
+    <section id="view-live" class="view">
+      <div class="view-head">
+        <h2>Live event stream</h2>
+        <span class="lead" id="live-stats">disconnected</span>
+      </div>
+      <div class="filters">
+        <button id="live-toggle">pause</button>
+        <span class="muted small">Real-time alerts + 2-second connstate snapshots from the daemon.</span>
+      </div>
+      <div id="live-feed" class="live-feed"></div>
+    </section>
+
+    <!-- ── ALERTS ─────────────────────────────────────────────── -->
+    <section id="view-alerts" class="view">
+      <div class="view-head">
+        <h2>Alerts</h2>
+        <span class="lead" id="alerts-stats">loading...</span>
+      </div>
+      <div class="filters">
+        <button id="alerts-refresh">refresh</button>
+        <span class="muted small">Alert clusters from the dedupe engine, sorted by score.</span>
+      </div>
+      <div id="alerts-list"></div>
+    </section>
+
+    <!-- ── JOURNAL ────────────────────────────────────────────── -->
+    <section id="view-journal" class="view">
+      <div class="view-head">
+        <h2>Activity journal</h2>
+        <span class="lead">Per-process connection summaries persisted to disk.</span>
+      </div>
+      <div class="filters">
+        <label>since:
+          <select id="since">
+            <option value="1h">1 hour</option>
+            <option value="24h" selected>today</option>
+            <option value="7d">7 days</option>
+            <option value="30d">30 days</option>
+          </select>
+        </label>
+        <label>verdict:
+          <select id="verdict-filter">
+            <option value="">all</option>
+            <option value="green">green</option>
+            <option value="amber">amber</option>
+            <option value="red">red</option>
+          </select>
+        </label>
+        <button id="refresh">refresh</button>
+      </div>
+      <div id="activities"></div>
+    </section>
+
+    <!-- ── GRAPH (force) ──────────────────────────────────────── -->
+    <section id="view-graph" class="view">
+      <div class="view-head">
+        <h2>Connection graph</h2>
+        <span class="lead" id="graph-stats">processes → destinations</span>
+      </div>
+      <div class="filters">
+        <button id="graph-refresh">refresh</button>
+        <span class="muted small">Force-directed view. Renders from live connstate; nodes are processes (grey) and destinations (blue), edges weighted by flow count.</span>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <svg id="force-graph" viewBox="0 0 1000 600"
+             preserveAspectRatio="xMidYMid meet"
+             style="display:block;width:100%;height:640px;background:var(--bg-0);"></svg>
+      </div>
+    </section>
+
+    <!-- ── GEO ─────────────────────────────────────────────────── -->
+    <section id="view-geo" class="view">
+      <div class="view-head">
+        <h2>Destinations · geo</h2>
+        <span class="lead" id="geo-stats">requires GeoIP database</span>
+      </div>
+      <div class="card">
+        <p class="muted small">GeoIP lookup not yet wired into the verdict engine (Phase F5.5 pending). When it lands, this view will plot every recent destination on a world map and let you click-to-block by country.</p>
+        <p class="muted small">In the meantime, the <strong>processes</strong> tab shows every destination IP under each process row — sort by rate to find the heaviest talkers.</p>
+      </div>
+    </section>
+
+    <!-- ── SANKEY (flow) ──────────────────────────────────────── -->
+    <section id="view-sankey" class="view">
+      <div class="view-head">
+        <h2>Flow distribution</h2>
+        <span class="lead" id="sankey-stats">group → destination categories</span>
+      </div>
+      <div class="filters">
+        <button id="sankey-refresh">refresh</button>
+        <span class="muted small">Renders bytes per process group → known-good / telemetry / unclassified destination buckets.</span>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <svg id="sankey-flow" viewBox="0 0 1000 480"
+             preserveAspectRatio="xMidYMid meet"
+             style="display:block;width:100%;height:520px;background:var(--bg-0);"></svg>
+      </div>
+    </section>
+
+    <!-- ── POLICY (rules) ──────────────────────────────────────── -->
+    <section id="view-rules" class="view">
+      <div class="view-head">
+        <h2>Policy &amp; enforcement</h2>
+        <span class="lead" id="rules-status">loading...</span>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 12px 0;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:var(--fg-muted);">Quick controls</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <label class="chip" style="justify-content:flex-start;padding:10px 14px;">
+            <input type="checkbox" id="rules-block-telemetry">
+            <span><strong>Block all telemetry</strong><br><span class="small" style="color:var(--fg-muted);">Mozilla, MS, Google, Ubuntu, Apple, JetBrains, etc.</span></span>
+          </label>
+          <label class="chip" style="justify-content:flex-start;padding:10px 14px;border-color:rgba(255,107,107,0.4);">
+            <input type="checkbox" id="enforce-armed">
+            <span><strong style="color:var(--err);">Enforcement: ARM</strong><br>
+              <span class="small" style="color:var(--fg-muted);">
+                Mode:
+                <label><input type="radio" name="enforce-mode" value="soft" checked> soft (alerts only)</label>
+                <label><input type="radio" name="enforce-mode" value="hard"> hard (drop packets)</label>
+                <br>
+                Soak (s): <input type="number" id="enforce-soak" value="30" min="0" max="600" style="width:60px;background:var(--bg-0);color:var(--fg);border:1px solid var(--border);padding:2px 6px;border-radius:4px;">
+                &nbsp;·&nbsp; <span id="enforce-status">disarmed</span>
+              </span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 12px 0;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:var(--fg-muted);">policy.yaml</h3>
+        <p class="small" id="rules-path" style="color:var(--fg-muted);margin-bottom:8px;"></p>
+        <textarea id="rules-yaml" spellcheck="false" rows="22"></textarea>
+        <div class="drill-actions">
+          <button id="rules-save" class="btn-primary">save &amp; hot-reload</button>
+          <button id="rules-reload">reload from disk</button>
+        </div>
+        <p class="small" style="color:var(--fg-muted);">Saved policies hot-reload immediately. The verdict cache is flushed so new rules apply on the next flow.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <aside id="drilldown" class="hidden">
+    <button class="close" id="drill-close">×</button>
+    <div id="drill-content"></div>
+  </aside>
+
+  <div id="intent-overlay" class="hidden">
+    <div class="intent-modal">
+      <h2 id="intent-title">Confirm</h2>
+      <p id="intent-body"></p>
+      <div class="intent-actions">
+        <button id="intent-allow" class="btn-primary">Allow</button>
+        <button id="intent-suppress">Allow + suppress</button>
+        <button id="intent-deny" class="btn-danger">Quarantine</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script src="viz.js"></script>
+  <script src="alerts.js"></script>
+  <script src="live.js"></script>
+  <script src="processes.js"></script>
+  <script src="rules.js"></script>
+  <script src="overview.js"></script>
+</body>
+</html>

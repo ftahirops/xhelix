@@ -1,0 +1,151 @@
+# Advanced detection rules — Phase 7 additions.
+# Covers kernel LPE, container escape, cloud metadata, and supply-chain.
+---
+id: kernel_lpe_exploit
+desc: Kernel exploit indicators (ptrace abuse, unprivileged userns, suspicious modprobe)
+severity: critical
+mitre: [T1068, T1548.001]
+match: |
+  event.sensor == "ebpf.proc" &&
+  (
+    (event.tags["unprivileged_userns"] == "true" && event.tags["modprobe_path_write"] == "true") ||
+    (event.tags["ptrace_attach"] == "true" && event.tags["ptrace_target"] == "init")
+  )
+tags: [privilege_escalation, kernel]
+remediation: |
+  Likely kernel LPE (DirtyPipe, CVE-2022-0847, or similar).
+  Capture dmesg, snapshot /proc/<pid>, and isolate host.
+test_id: ADV-01
+---
+id: container_escape_privileged
+desc: Container escape via privileged capability abuse (mount, mknod, chroot)
+severity: critical
+mitre: [T1611]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.container != "" &&
+  (
+    event.tags["cap_sys_admin"] == "true" &&
+    (event.tags["mount_host_fs"] == "true" || event.tags["chroot_host"] == "true")
+  )
+tags: [container, escape]
+remediation: |
+  Container with CAP_SYS_ADMIN is mounting host filesystem.
+  Stop container immediately; audit image build for dropped capabilities.
+test_id: ADV-02
+---
+id: cloud_metadata_from_container
+desc: Cloud metadata service accessed from inside a container
+severity: high
+mitre: [T1552.005]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.container != "" &&
+  event.tags["dst_ip"] == "169.254.169.254"
+tags: [credential_access, cloud, container]
+remediation: |
+  Containers should not reach the metadata service.
+  Review network policies and IAM role attachments.
+test_id: ADV-03
+---
+id: ebpf_program_load_unexpected
+desc: Unexpected eBPF program or map load by a non-system process
+severity: high
+mitre: [T1562.001]
+match: |
+  event.sensor == "ebpf.self" &&
+  event.tags["bpf_prog_load"] == "true" &&
+  !(event.comm in ["xhelix", "systemd", "dockerd", "containerd", "sshd"])
+tags: [defense_evasion, bpf]
+remediation: |
+  Unauthorized BPF program load detected.
+  Verify the process; inspect loaded program with bpftool.
+test_id: ADV-04
+---
+id: docker_socket_access
+desc: Non-docker process accessed the Docker Unix socket
+severity: high
+mitre: [T1610]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["unix_socket"] == "/var/run/docker.sock" &&
+  !(event.comm in ["docker", "dockerd", "containerd", "buildkitd"])
+tags: [container, lateral_movement]
+remediation: |
+  Docker socket access from an unexpected process indicates
+  potential container breakout or lateral movement.
+test_id: ADV-05
+---
+id: suid_binary_created
+desc: A new SUID binary appeared outside known package paths
+severity: critical
+mitre: [T1548.001]
+match: |
+  event.sensor == "fim" &&
+  event.tags["suid_set"] == "true" &&
+  event.tags["package_managed"] != "true"
+tags: [persistence, privilege_escalation]
+remediation: |
+  SUID binaries are a classic persistence mechanism.
+  Hash the file; check against threat intel; review ownership.
+test_id: ADV-06
+---
+id: hidden_process_reuse
+desc: PID reuse detected with different comm/image but same start_ns
+severity: high
+mitre: [T1055]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.tags["pid_reuse"] == "true" &&
+  event.tags["image_changed"] == "true"
+tags: [defense_evasion, process_injection]
+remediation: |
+  A PID was reused but the executable image changed without a
+  corresponding fork/exec. Possible process hollowing or injection.
+test_id: ADV-07
+---
+id: supply_chain_liblzma_backdoor
+desc: liblzma hash mismatch — possible XZ backdoor (CVE-2024-3094)
+severity: critical
+mitre: [T1195.001]
+match: |
+  event.sensor == "sbom.drift" &&
+  event.tags["type"] == "modified_binary" &&
+  (
+    event.tags["path"] == "/usr/lib/x86_64-linux-gnu/liblzma.so.5" ||
+    event.tags["path"] == "/lib/x86_64-linux-gnu/liblzma.so.5"
+  )
+tags: [supply_chain, backdoor]
+remediation: |
+  liblzma hash changed outside package manager.
+  Immediately isolate host; reinstall from trusted media.
+test_id: ADV-08
+---
+id: suspicious_interpreter_network
+desc: Python/Perl/Ruby opened a network connection to a public IP
+severity: high
+mitre: [T1059, T1071]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["outbound"] == "true" &&
+  event.comm in ["python", "python3", "perl", "ruby", "php"] &&
+  event.tags["dst_is_private"] != "true"
+tags: [c2, scripting]
+remediation: |
+  Scripting interpreters making outbound connections are a common
+  C2 pattern. Inspect the script and the destination.
+test_id: ADV-09
+---
+id: kernel_module_unsigned
+desc: Unsigned or unknown kernel module loaded
+severity: high
+mitre: [T1547.006]
+match: |
+  event.sensor == "ebpf.module" &&
+  event.tags["mod_load"] == "true" &&
+  event.tags["signed"] != "true"
+tags: [persistence, kernel]
+remediation: |
+  Unsigned module load on a system with Secure Boot enabled
+  indicates possible rootkit installation.
+test_id: ADV-10

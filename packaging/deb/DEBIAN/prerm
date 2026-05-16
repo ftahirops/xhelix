@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+if command -v systemctl >/dev/null 2>&1; then
+    if [ "$1" = "remove" ] || [ "$1" = "upgrade" ]; then
+        systemctl stop xhelix.service 2>/dev/null || true
+        systemctl disable xhelix.service 2>/dev/null || true
+    fi
+fi
+
+exit 0

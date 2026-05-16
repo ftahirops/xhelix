@@ -1,0 +1,23 @@
+# Generic detectors that fire on any sample of a sensor type.
+# Used by the test harness; in production these are noisy.
+---
+id: any_ptrace
+desc: Any ptrace attach was observed
+severity: notice
+match: |
+  event.sensor == "ebpf.proc" &&
+  ("ptrace_attach" in event.tags) &&
+  event.tags["ptrace_attach"] == "true"
+tags: [observer]
+remediation: |
+  Generic notice that a ptrace_attach was seen. Operators tune this
+  out in production; harness uses it to verify the decoder fires.
+---
+id: fim.drift
+desc: Any FIM drift event
+severity: high
+match: |
+  event.sensor == "fim.drift"
+tags: [observer]
+remediation: |
+  A monitored file's hash changed.

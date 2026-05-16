@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+# Create state and log directories owned by root.
+mkdir -p /var/lib/xhelix /var/log/xhelix /run/xhelix
+chmod 0750 /var/lib/xhelix /var/log/xhelix /run/xhelix
+
+# Reload systemd on install/upgrade.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    if [ "$1" = "configure" ]; then
+        # Don't auto-start on install; operator opts in.
+        echo "xhelix installed. Enable with:"
+        echo "    systemctl enable --now xhelix"
+    fi
+fi
+
+exit 0
