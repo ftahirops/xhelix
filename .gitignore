@@ -24,6 +24,7 @@
 *.md
 !ARCHITECTURE.md
 !ROADMAP.md
+!DEFENSE_PRIORITIES.md
 
 # Local state for development
 /var/
