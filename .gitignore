@@ -19,7 +19,11 @@
 .claude/
 
 # Documentation (deliberately excluded from public push)
+# Exceptions: ARCHITECTURE.md + ROADMAP.md are the canonical design
+# references and ARE tracked. Everything else stays out.
 *.md
+!ARCHITECTURE.md
+!ROADMAP.md
 
 # Local state for development
 /var/
