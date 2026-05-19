@@ -1,0 +1,109 @@
+# DLCF Data Catalog — v1
+#
+# Classifies sensitive data and assigns sensitivity points.
+# Loaded by pkg/catalog at daemon start; hot-reloadable via the
+# catalog.reload LocalAPI handler.
+#
+# Points are denominators for the Sensitivity Budget (P7.1.3). The
+# values below are starting heuristics; tune per deployment.
+
+version: 1
+
+sensitivity_points:
+  public: 1                # post titles, product names
+  pii: 20                  # email, name
+  contact: 40              # phone, postal address
+  customer_order: 30       # order rows
+  credentials: 100         # password hashes
+  payment_token: 300       # card tokens, IBANs
+  api_key: 1000            # static API keys, OAuth client secrets
+  source_code: 50          # repo contents
+  backup: 200              # full DB / app dumps
+  canary: 10000            # never legitimately touched
+
+# Table classifications. Match strings are compared case-insensitively
+# against the table name reported by the app DB tap (P7.2.4) or the
+# DB-native digest poller (P7.2.2 / P7.2.3).
+tables:
+  - match: [wp_users, wp_usermeta]
+    classes: [pii, credentials]
+
+  - match: [wp_woocommerce_orders, wp_wc_order_stats, wp_wc_order_product_lookup]
+    classes: [pii, customer_order]
+
+  - match: [wp_wc_customer_lookup]
+    classes: [pii, contact]
+
+  - match: [wp_options]
+    classes: [credentials]   # contains site secrets, auth keys
+
+# File path globs. Evaluated in declaration order; first match wins.
+paths:
+  - glob: "/etc/xhelix/keys/*.pem"
+    classes: [credentials]
+
+  - glob: "/etc/xhelix/keys/*.key"
+    classes: [credentials]
+
+  - glob: "/var/www/*/wp-config.php"
+    classes: [credentials]
+
+  - glob: "/srv/backups/*.tar.gz"
+    classes: [backup]
+
+  - glob: "/srv/backups/*.sql.gz"
+    classes: [backup]
+
+  - glob: "/var/www/*/.git/config"
+    classes: [source_code]
+
+  - glob: "/root/.ssh/*"
+    classes: [credentials]
+
+  - glob: "/root/.aws/credentials"
+    classes: [api_key]
+
+  - glob: "/var/lib/xhelix/canary/*"
+    classes: [canary]
+
+# Secret patterns. First match wins. Used by the egress valve and
+# response valve to detect raw secrets in transit.
+secrets:
+  - name: aws_access_key
+    regex: "AKIA[0-9A-Z]{16}"
+    classes: [api_key]
+
+  - name: github_classic_token
+    regex: "ghp_[A-Za-z0-9]{36}"
+    classes: [api_key]
+
+  - name: github_fine_grained
+    regex: "github_pat_[A-Za-z0-9_]{82}"
+    classes: [api_key]
+
+  - name: slack_bot_token
+    regex: "xoxb-[0-9]+-[0-9]+-[A-Za-z0-9]+"
+    classes: [api_key]
+
+  - name: stripe_secret
+    regex: "sk_(live|test)_[A-Za-z0-9]{24,}"
+    classes: [api_key, payment_token]
+
+  - name: canary_marker
+    regex: "xc-canary-[A-Za-z0-9]{8,}"
+    classes: [canary]
+
+# Route → allowed classes. The rule engine alerts when a route
+# touches data outside its allow-list (P7.1.5).
+routes:
+  - match: ["/product/search", "/products", "/", "/wp-json/wp/v2/posts"]
+    allowed_classes: [public]
+
+  - match: ["/wp-login.php", "/wp-json/wp/v2/users/me"]
+    allowed_classes: [pii, credentials]
+
+  - match: ["/admin/export/orders", "/wp-admin/edit.php?post_type=shop_order"]
+    allowed_classes: [pii, customer_order, contact]
+
+  - match: ["/wp-admin/admin.php?page=settings"]
+    allowed_classes: [credentials, api_key]
