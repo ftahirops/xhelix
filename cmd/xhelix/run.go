@@ -700,6 +700,31 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 	}
 
+	// Load DLCF rule packs (canary, future budget/passport rules).
+	// Lives alongside bundled rules but in a sibling directory; same
+	// install-path-then-cwd fallback used by core rules.
+	dlcfRulesDir := ""
+	for _, p := range []string{"/usr/share/xhelix/ruleset/dlcf", "ruleset/dlcf"} {
+		if _, err := os.Stat(p); err == nil {
+			dlcfRulesDir = p
+			break
+		}
+	}
+	if dlcfRulesDir != "" {
+		dlcfRules, err := rules.LoadDir(dlcfRulesDir)
+		if err != nil {
+			log.Warn("failed to load DLCF rules", "dir", dlcfRulesDir, "err", err)
+		} else if len(dlcfRules) > 0 {
+			combined := append(bundledRules, dlcfRules...)
+			if err := ruleEngine.Load(combined); err != nil {
+				log.Warn("failed to compile DLCF rules", "err", err)
+			} else {
+				bundledRules = combined
+				log.Info("dlcf rules loaded", "count", len(dlcfRules), "dir", dlcfRulesDir)
+			}
+		}
+	}
+
 	// Load custom rules
 	if cfg.Ruleset.CustomDir != "" {
 		customRules, err := rules.LoadDir(cfg.Ruleset.CustomDir)

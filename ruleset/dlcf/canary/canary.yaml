@@ -1,0 +1,179 @@
+# DLCF canary rules pack (P7.1.5).
+#
+# These rules fire on the catalog-declared canary paths and tokens.
+# A canary touch is near-zero false-positive: the assets below should
+# never legitimately be opened, read, or referenced.
+#
+# Two arms in each rule:
+#   - Static path/marker match — fires today against the well-known
+#     canary roots shipped in ruleset/dlcf/catalog.yaml.
+#   - event.tags["data_classes"] arm — forward-compatible; lights up
+#     once the enrichment pipeline (P7.2) starts stamping
+#     catalog-derived class strings onto events.
+---
+id: dlcf_canary_file_opened
+desc: A canary file was opened (catalog-declared canary path)
+severity: critical
+mitre: [T1552.001, T1005]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (
+    path.startsWith("/var/lib/xhelix/canary/") ||
+    path.startsWith("/srv/backups/canary-") ||
+    path.startsWith("/etc/xhelix/canary/") ||
+    event.tags["data_classes"].contains("canary")
+  )
+tags: [dlcf, canary, credential_access]
+remediation: |
+  Canary files have no legitimate consumer. Treat the originating
+  process and user as compromised; rotate any credentials in the
+  same lineage; capture forensics before takedown.
+test_id: DLCF-CAN-01
+---
+id: dlcf_canary_backup_read
+desc: A canary backup archive was read
+severity: critical
+mitre: [T1005, T1041]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (
+    path.matches("^/srv/backups/canary-.*\\.(tar\\.gz|sql\\.gz|zip)$") ||
+    event.tags["data_classes"].contains("canary")
+  )
+tags: [dlcf, canary, collection]
+remediation: |
+  No legitimate workflow reads canary backups. Investigate the
+  process and its outbound activity in the same lineage.
+test_id: DLCF-CAN-02
+---
+id: dlcf_canary_ssh_key_touched
+desc: A canary SSH private key was opened or copied
+severity: critical
+mitre: [T1552.004, T1098.004]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (
+    path.matches("^/root/\\.ssh/canary_.*$") ||
+    path.matches("^/home/[^/]+/\\.ssh/canary_.*$") ||
+    event.tags["data_classes"].contains("canary")
+  )
+tags: [dlcf, canary, credential_access]
+remediation: |
+  Canary SSH keys are tripwires. The user/process that touched the
+  key is compromised; revoke any real keys in adjacent paths and
+  audit ~/.ssh/authorized_keys on related hosts.
+test_id: DLCF-CAN-03
+---
+id: dlcf_canary_aws_key_referenced
+desc: A canary AWS access key string appeared in an event
+severity: critical
+mitre: [T1552.001, T1078.004]
+match: |
+  event.tags["argv"].matches("AKIA[0-9A-Z]{16}CANARY|xc-canary-[A-Za-z0-9]+") ||
+  event.tags["env"].matches("AKIA[0-9A-Z]{16}CANARY|xc-canary-[A-Za-z0-9]+") ||
+  event.tags["data_classes"].contains("canary")
+tags: [dlcf, canary, credential_access]
+remediation: |
+  Canary AWS keys are never used by legitimate workloads. If a real
+  process is reading or referencing one, that process is exfiltrating
+  credentials. Identify the source and contain.
+test_id: DLCF-CAN-04
+---
+id: dlcf_canary_token_in_argv
+desc: A canary marker appeared on a process command line
+severity: critical
+mitre: [T1059]
+match: |
+  (event.sensor == "ebpf.proc" || event.sensor == "ebpf.proc.cred") &&
+  event.tags["argv"].matches("xc-canary-[A-Za-z0-9]{4,}")
+tags: [dlcf, canary, exfiltration]
+remediation: |
+  The canary marker on the command line means an attacker is
+  shipping the planted bait through a tool. Capture the full argv
+  + lineage; rotate adjacent real credentials.
+test_id: DLCF-CAN-05
+---
+id: dlcf_canary_path_unlinked
+desc: A canary file was deleted (anti-forensics attempt)
+severity: critical
+mitre: [T1070.004]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  event.tags["op"] == "unlink" &&
+  (
+    path.startsWith("/var/lib/xhelix/canary/") ||
+    path.startsWith("/srv/backups/canary-") ||
+    path.startsWith("/etc/xhelix/canary/") ||
+    event.tags["data_classes"].contains("canary")
+  )
+tags: [dlcf, canary, defense_evasion]
+remediation: |
+  An attacker is removing tripwires. Snapshot the system state
+  immediately; the deletion is itself the highest-confidence
+  intrusion indicator.
+test_id: DLCF-CAN-06
+---
+id: dlcf_canary_path_renamed
+desc: A canary file was renamed or moved
+severity: high
+mitre: [T1070.004]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  event.tags["op"] == "rename" &&
+  (
+    path.startsWith("/var/lib/xhelix/canary/") ||
+    path.startsWith("/srv/backups/canary-") ||
+    path.startsWith("/etc/xhelix/canary/")
+  )
+tags: [dlcf, canary, defense_evasion]
+remediation: |
+  Rename of a canary asset is anti-forensics. Investigate the
+  originating process; consider the host compromised.
+test_id: DLCF-CAN-07
+---
+id: dlcf_canary_dir_listed
+desc: A canary directory was listed (recon)
+severity: high
+mitre: [T1083]
+match: |
+  (event.sensor == "fim" || event.sensor == "lsm.audit") &&
+  event.tags["op"] == "readdir" &&
+  (
+    path == "/var/lib/xhelix/canary" ||
+    path == "/srv/backups" ||
+    path.startsWith("/var/lib/xhelix/canary/")
+  )
+tags: [dlcf, canary, discovery]
+remediation: |
+  Directory enumeration on a canary root is reconnaissance.
+  Identify the listing process and its lineage before further
+  movement occurs.
+test_id: DLCF-CAN-08
+---
+id: dlcf_canary_outbound_after_touch
+desc: Process that touched a canary then made an outbound connection
+severity: critical
+mitre: [T1041]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["outbound"] == "true" &&
+  event.tags["lineage_tainted_with"].contains("canary")
+tags: [dlcf, canary, exfiltration]
+remediation: |
+  Tainted lineage made an outbound call after a canary touch.
+  This is exfiltration in progress. Sever the connection and
+  capture the destination + payload metadata.
+test_id: DLCF-CAN-09
+---
+id: dlcf_canary_data_classes_tag
+desc: Generic forward-compatible canary detector via data_classes tag
+severity: critical
+mitre: [T1005]
+match: |
+  event.tags["data_classes"].contains("canary")
+tags: [dlcf, canary]
+remediation: |
+  Any event tagged by the enrichment pipeline as touching a canary
+  class is a high-confidence indicator. Resolve which sensor
+  produced the event and follow its specific remediation playbook.
+test_id: DLCF-CAN-10
