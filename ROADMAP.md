@@ -18,7 +18,7 @@
 | P6    | Hardened mode (optional add-on)   |    3 | planned    |
 | P7    | Data Leak Containment Fabric      |   55 | planned    |
 | P-RC  | Request Contract layer            |   13 | planned    |
-| P-BEHAVIOR | Behavioral Defense (valid-looking attacks) | 18 | planned |
+| P-BEHAVIOR | Behavioral Defense (valid-looking attacks) | 28 | planned |
 
 Total core ship: 17 days (P1–P4). Polished release: 23 days (P1–P6).
 DLCF subsystem (P7): adds ~11 weeks on top, split into v1/v2/v3 (see § Phase 7).
@@ -573,6 +573,9 @@ probabilistic ones.
 
 | Task    | Description                                              | Tier | Days |
 | ------- | -------------------------------------------------------- | ---- | ---: |
+| P-B.0a  | **WebAuthn assertion verification (hardware-bound)** in Request Contract policy | T1 | 4 |
+| P-B.0b  | **Admin route IP/ASN allow-list** policy enforcement     | T1   |    2 |
+| P-B.0c  | **Passive device fingerprint** capture (JA3/JA4/ASN + optional JS) | T2 | 4 |
 | P-B.1   | Canary users + canary routes (extend P7.1.5)             | T1   |    2 |
 | P-B.2   | Replay-resistance HMAC nonces on sensitive endpoints     | T1   |    4 |
 | P-B.3   | Causal-chain divergence detector (baseline + comparator) | T1   |    7 |

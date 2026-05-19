@@ -96,6 +96,8 @@ operator backlash.
 
 | Technique | What it detects | FP source |
 |---|---|---|
+| **WebAuthn / FIDO2 hardware-bound assertion (3.12-a)** | "sensitive route requires fresh hardware-key signature — none/expired" | Lost/forgotten hardware key (recovery flow) |
+| **Admin route IP/ASN allow-list (3.12-b)** | "source outside operator-declared allowed network" | Admin traveling (recovery flow) |
 | **Data Passport / JIT capability** | "this action requires an active signed passport for class X — none was presented" | Operator failed to issue passport (their fault, not ours) |
 | **Canary users / routes / tokens** | "this asset was touched; no legitimate consumer exists" | Operator misconfiguration (canary leaks into real code) |
 | **Single-use nonce / replay protection** | "this nonce was already redeemed" | Buggy app double-submits a form |
@@ -110,6 +112,7 @@ freeze the session. Do not hard-block.
 | Technique | What it detects | Realistic FP rate |
 |---|---|---:|
 | **Session-to-lineage binding** | Cookie reappears with new JA3 / ASN mid-session | 1–5% |
+| **Passive device fingerprint (3.12-c)** | First-request fingerprint capture, mid-session dramatic mismatch | 5–15% |
 | **Per-(user, route) baseline EWMA** | This account is doing something it has never done before in N weeks of observation | 5–15% |
 | **Living-off-the-land lineage scoring** | curl / nc / bash -i spawned from a web-facing lineage in a way this app has never produced | 5–15% |
 | **Velocity caps per (account, action_class)** | More destructive actions than the cap allows | 0–10% (depends on cap tuning) |
@@ -370,6 +373,93 @@ free-tier cohort generates constant FPs.
 
 **Response posture**: Score-only.
 
+### 3.12-a Hardware-bound device identity (WebAuthn / FIDO2) — Tier 1
+
+**Detection**: Sensitive routes (admin, bulk export, destructive
+actions) refuse requests that do not carry a recent WebAuthn / FIDO2
+assertion from a registered authenticator. The cryptographic
+challenge-response requires the physical hardware key (TPM, Secure
+Enclave, YubiKey) — stolen cookies, stolen sessions, replayed
+fingerprints all fail because they can't produce a fresh signature.
+
+**Implementation status**: New. App must implement WebAuthn registration
++ challenge endpoints. xhelix's role: enforce that the Request Contract
+for sensitive routes carries `webauthn_assertion_id` and `webauthn_ts <
+60s ago`. Refuse otherwise.
+
+**FP source**:
+- User physically lost their hardware key (recovery flow needed)
+- Cross-device login on a device with no registered authenticator
+- WebAuthn assertion endpoint outage
+
+**Response posture**: Hard block on missing/expired assertion for
+operator-declared sensitive routes. This is the **strongest available
+defense** against stolen credentials — even kernel-mode malware on the
+victim machine cannot extract the hardware-bound private key (on
+attested hardware).
+
+**This is the answer to "what makes stolen credentials almost
+impossible to abuse".** No fingerprint, no JA3 binding, no behavioral
+baseline approaches its strength. **All other techniques in this
+document are second-line defenses if WebAuthn cannot be deployed.**
+
+### 3.12-b Admin route IP/ASN allow-list — Tier 1
+
+**Detection**: Operator declares allowed source CIDRs / ASNs per
+sensitive route. Connections outside the allow-list are refused
+unconditionally — not flagged, refused. Policy fact, not behavioral
+inference.
+
+**Implementation status**: Enforced in the Request Contract layer.
+Catalog grows per-route `allowed_source_cidrs` and `allowed_source_asns`
+fields.
+
+**FP source**:
+- Admin traveling on a new network (recovery flow needed)
+- IP rotation on cellular networks (mitigate by ASN-level allow-list)
+- Operator forgot to update the allow-list after VPN range change
+
+**Response posture**: Hard block. Zero FP by construction — the policy
+either matches or doesn't.
+
+**Why it's distinct from session-binding (3.6)**: Session-binding
+detects *mid-session* changes (cookie reappears from new ASN).
+Allow-list refuses the *first* request from an unauthorised network.
+Both layers compose.
+
+### 3.12-c Passive device fingerprint (browser + TLS) — Tier 2
+
+**Detection**: At first authenticated request per session, capture
+30+ attributes: TLS JA3/JA4, ASN, OS family, user-agent class, screen
+resolution, language, timezone, canvas/WebGL hashes if app integration
+exposes them. Bind the session to this fingerprint. Mid-session
+mismatch fires.
+
+**Implementation status**: TLS-layer signals (JA3/ASN/OS class) captured
+by `xhelix-bridge` with no app integration. Richer browser-level
+signals require an optional JS snippet the app embeds.
+
+**FP source** (honest):
+- Browser auto-updates change 5–15 attributes per month
+- Mobile users switch wifi ↔ cellular ↔ ethernet
+- Corporate fleets share identical fingerprints (still useful — only
+  fires when fingerprint DRAMATICALLY changes, not minor drift)
+- Anti-detect browsers (Octobrowser, Multilogin) can clone any
+  fingerprint
+- EvilProxy-style phishing replays the live victim fingerprint —
+  this detector does not catch that attack
+
+**Response posture**: Soft enforce. Score contributor to the ladder.
+Combine with other signals before any user-visible action.
+
+**Honest framing**: this raises the floor against opportunistic
+credential-stuffing (most attackers don't bother with fingerprint
+matching). Against targeted attackers using modern tooling
+(EvilProxy, anti-detect browsers, cookie-stealer malware that also
+exfiltrates device profile), passive fingerprinting adds maybe 10–30%
+to attacker cost — useful but **not** "almost impossible". For
+"almost impossible" you need WebAuthn (3.12-a).
+
 ### 3.12 Soft enforcement ladder (response mechanism, not detector)
 
 **Detection**: N/A — this is a response policy.
@@ -398,18 +488,20 @@ techniques fire (and at what confidence)?
 
 | Attack | T1 deterministic catch | T2 high-precision | T3 score |
 |---|---|---|---|
-| Stolen password (first login) | — | Session-binding (new JA3/ASN if from datacenter) | Time-of-day, geo |
-| Stolen session cookie (replay from new device) | Replay nonce | Session-binding (JA3/ASN mismatch) | Per-route baseline |
+| Stolen password (first login) | **WebAuthn missing**, **ASN allow-list miss** | Session-binding, fingerprint mismatch | Time-of-day, geo |
+| Stolen session cookie (replay from new device) | **WebAuthn (re-challenge)**, Replay nonce | Session-binding, fingerprint mismatch | Per-route baseline |
 | Stolen API key | — | Baseline (volume, distinct endpoints) | Cohort |
-| Session hijack on shared net | — | Session-binding (if device differs) | Time-of-day |
+| Session hijack on shared net | **WebAuthn re-challenge if route requires** | Session-binding (if device differs) | Time-of-day |
 | Insider abuse (real account, bad intent) | Canary if they touch one; velocity caps if they exceed | Behavioral baseline (acting outside historical norm) | Blast radius |
 | Post-auth IDOR | Canary user id reads | Per-route baseline (touching others' data) | Blast radius |
 | Post-auth RCE (exploit after valid auth) | **Causal-chain divergence (KILLER signal)** | LOTL lineage scoring | — |
-| Stolen admin cookie | **JIT passport missing** | Session-binding | Time-of-day |
+| **Stolen admin cookie** | **WebAuthn missing**, **JIT passport missing**, **ASN allow-list miss** | Session-binding, fingerprint | Time-of-day |
 | Supply-chain (malicious npm update) | **Causal-chain divergence** (new binary in chain) | LOTL (curl from build step that's never used it) | — |
-| Mass credential stuffing | — | Session-binding (datacenter ASN), velocity caps on login attempts | Cohort |
+| Mass credential stuffing | **ASN allow-list miss** for non-public endpoints | Session-binding (datacenter ASN), velocity caps on login attempts | Cohort |
 | Slow data scraping | Velocity caps (cumulative) | Blast radius, baseline | — |
-| Account-takeover-then-export | **JIT passport missing**, canary rows in export | Baseline (volume), session-binding | — |
+| Account-takeover-then-export | **WebAuthn missing**, **JIT passport missing**, canary rows in export | Baseline (volume), session-binding | — |
+| **EvilProxy / Tycoon-2FA phishing (live MITM)** | **WebAuthn (per-action re-challenge required)** | — passive fingerprint defeated | — |
+| **Cookie-stealer malware (Lumma / Redline)** | **WebAuthn (cookie can't replicate hardware key)** | Session-binding partial | — |
 
 **The two killer signals against the dangerous attacks are:**
 1. **Causal-chain divergence** — catches post-auth RCE and supply-chain
