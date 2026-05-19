@@ -26,6 +26,7 @@ func main() {
 	root.AddCommand(newRulesCmd())
 	root.AddCommand(newPostureCmd())
 	root.AddCommand(newHistoryCmd())
+	root.AddCommand(newPassportCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

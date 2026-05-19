@@ -17,6 +17,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/egress"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/localapi"
+	"github.com/xhelix/xhelix/pkg/passport"
 )
 
 // defaultCatalogPaths lists candidate paths for the DLCF catalog,
@@ -50,9 +51,10 @@ type foundationContext struct {
 	Classes  *lineage.ClassRegistry
 
 	// DLCF subsystem (P7). May be nil if no catalog is configured.
-	Catalog *catalog.Catalog
-	Budgets *budget.Tracker
-	Egress  *egress.Policy
+	Catalog   *catalog.Catalog
+	Budgets   *budget.Tracker
+	Egress    *egress.Policy
+	Passports *passport.Store
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -128,6 +130,21 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		}
 	}
 
+	// Data Passport store. Key lives separately from the chain
+	// signing key — different responsibilities.
+	passportKeyPath := "/var/lib/xhelix/passport.key"
+	if priv, err := loadOrGenerateEd25519Key(passportKeyPath); err == nil {
+		fc.Passports = passport.NewStore(priv)
+		fc.Egress.AttachPassportSource(fc.Passports)
+	} else {
+		// Verify-only store with no key — issuance will error
+		// clearly, but the Valve still works against static rules.
+		fc.Passports = passport.NewStore(nil)
+	}
+
+	// Passport sweeper — drop expired/old-revoked records every minute.
+	go fc.sweepPassports(parent)
+
 	fc.EAC.Start(parent)
 
 	// Sweep ancient origin metadata every minute. Keeps the store
@@ -143,6 +160,21 @@ func (fc *foundationContext) Stop() {
 		return
 	}
 	fc.EAC.Stop()
+}
+
+func (fc *foundationContext) sweepPassports(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if fc.Passports != nil {
+				fc.Passports.Sweep(time.Now().UTC())
+			}
+		}
+	}
 }
 
 func (fc *foundationContext) sweepOrigins(ctx context.Context) {
@@ -183,6 +215,8 @@ type healthDLCFBlock struct {
 	EgressRules    int    `json:"egress_rules,omitempty"`
 	EgressChecks   uint64 `json:"egress_checks"`
 	EgressDenied   uint64 `json:"egress_denied"`
+	PassportActive int    `json:"passport_active"`
+	PassportKeyID  string `json:"passport_key_id,omitempty"`
 }
 
 type healthSelfBlock struct {
@@ -328,6 +362,47 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 		}
 		return map[string]any{"reloaded": true, "stats": fc.Egress.Stats()}, nil
 	})
+	srv.RegisterHandler("passport.issue", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Passports == nil {
+			return nil, errors.New("passport store not initialised")
+		}
+		var p passport.IssueParams
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+		signed, err := fc.Passports.Issue(p)
+		if err != nil {
+			return nil, err
+		}
+		return signed, nil
+	})
+	srv.RegisterHandler("passport.list", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.Passports == nil {
+			return map[string]any{"active": 0, "passports": []any{}}, nil
+		}
+		list := fc.Passports.List()
+		return map[string]any{
+			"active":    len(list),
+			"passports": list,
+			"stats":     fc.Passports.Stats(),
+		}, nil
+	})
+	srv.RegisterHandler("passport.revoke", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Passports == nil {
+			return nil, errors.New("passport store not initialised")
+		}
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.ID == "" {
+			return nil, errors.New("passport.revoke: id required")
+		}
+		fc.Passports.Revoke(req.ID)
+		return map[string]any{"revoked": req.ID}, nil
+	})
 	srv.RegisterHandler("egress.check", func(_ context.Context, raw json.RawMessage) (any, error) {
 		if fc.Egress == nil {
 			return nil, errors.New("egress policy not initialised")
@@ -367,6 +442,11 @@ func (fc *foundationContext) dlcfBlock() healthDLCFBlock {
 		}
 		b.EgressChecks = es.Checks
 		b.EgressDenied = es.Denied
+	}
+	if fc.Passports != nil {
+		ps := fc.Passports.Stats()
+		b.PassportActive = ps.Active
+		b.PassportKeyID = ps.KeyID
 	}
 	if fc.Catalog == nil {
 		return b
