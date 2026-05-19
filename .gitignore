@@ -30,6 +30,7 @@
 !SUPPLY_CHAIN_DEFENSE.md
 !CI_CD_GUARD.md
 !AUTO_ADVISOR.md
+!POST_COMPROMISE_DEFENSE.md
 
 # Local state for development
 /var/
