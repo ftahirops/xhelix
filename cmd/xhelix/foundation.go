@@ -8,10 +8,13 @@ import (
 	"runtime"
 	"time"
 
+	"net"
+
 	"github.com/xhelix/xhelix/pkg/budget"
 	"github.com/xhelix/xhelix/pkg/canonical"
 	"github.com/xhelix/xhelix/pkg/catalog"
 	"github.com/xhelix/xhelix/pkg/eac"
+	"github.com/xhelix/xhelix/pkg/egress"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/localapi"
 )
@@ -22,6 +25,13 @@ import (
 var defaultCatalogPaths = []string{
 	"/etc/xhelix/dlcf/catalog.yaml",
 	"/usr/lib/xhelix/ruleset/dlcf/catalog.yaml",
+}
+
+// defaultEgressPaths is the analogous list for the Egress Valve
+// destination policy.
+var defaultEgressPaths = []string{
+	"/etc/xhelix/dlcf/egress.yaml",
+	"/usr/share/xhelix/ruleset/dlcf/egress.yaml",
 }
 
 // foundationContext groups the Phase-1 evidence-truth primitives:
@@ -42,6 +52,7 @@ type foundationContext struct {
 	// DLCF subsystem (P7). May be nil if no catalog is configured.
 	Catalog *catalog.Catalog
 	Budgets *budget.Tracker
+	Egress  *egress.Policy
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -104,6 +115,19 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// so callers can register ad-hoc keys.
 	fc.Budgets = budget.NewTracker(budget.Caps{})
 
+	// Egress Valve: load destination policy from disk if present.
+	// Missing file = empty policy = every tainted lineage denied
+	// outbound until the operator opts in to destinations.
+	fc.Egress = egress.New(fc.Classes)
+	for _, p := range defaultEgressPaths {
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		if err := fc.Egress.Load(p); err == nil {
+			break
+		}
+	}
+
 	fc.EAC.Start(parent)
 
 	// Sweep ancient origin metadata every minute. Keeps the store
@@ -154,6 +178,11 @@ type healthDLCFBlock struct {
 	CatalogTables  int    `json:"catalog_tables,omitempty"`
 	CatalogRoutes  int    `json:"catalog_routes,omitempty"`
 	TrackedBudgets int    `json:"tracked_budgets"`
+	EgressLoaded   bool   `json:"egress_loaded"`
+	EgressSource   string `json:"egress_source,omitempty"`
+	EgressRules    int    `json:"egress_rules,omitempty"`
+	EgressChecks   uint64 `json:"egress_checks"`
+	EgressDenied   uint64 `json:"egress_denied"`
 }
 
 type healthSelfBlock struct {
@@ -284,6 +313,43 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 			"entries":      all,
 		}, nil
 	})
+	srv.RegisterHandler("egress.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.Egress == nil {
+			return map[string]any{"loaded": false}, nil
+		}
+		return fc.Egress.Stats(), nil
+	})
+	srv.RegisterHandler("egress.reload", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.Egress == nil {
+			return nil, errors.New("egress policy not initialised")
+		}
+		if err := fc.Egress.Reload(); err != nil {
+			return nil, err
+		}
+		return map[string]any{"reloaded": true, "stats": fc.Egress.Stats()}, nil
+	})
+	srv.RegisterHandler("egress.check", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Egress == nil {
+			return nil, errors.New("egress policy not initialised")
+		}
+		var req struct {
+			Classes  []string `json:"classes"`
+			DestIP   string   `json:"dest_ip"`
+			DestHost string   `json:"dest_host"`
+			DestPort uint16   `json:"dest_port"`
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &req); err != nil {
+				return nil, err
+			}
+		}
+		ip := net.ParseIP(req.DestIP)
+		if ip == nil {
+			return nil, errors.New("egress.check: dest_ip is required and must parse")
+		}
+		ts, _ := fc.Classes.SetFromNames(req.Classes)
+		return fc.Egress.Allow(ts, ip, req.DestHost, req.DestPort), nil
+	})
 }
 
 // dlcfBlock returns the DLCF summary embedded in health.snapshot.
@@ -291,6 +357,16 @@ func (fc *foundationContext) dlcfBlock() healthDLCFBlock {
 	b := healthDLCFBlock{}
 	if fc.Budgets != nil {
 		b.TrackedBudgets = fc.Budgets.Size()
+	}
+	if fc.Egress != nil {
+		es := fc.Egress.Stats()
+		if es.Source != "" {
+			b.EgressLoaded = true
+			b.EgressSource = es.Source
+			b.EgressRules = es.RuleCount
+		}
+		b.EgressChecks = es.Checks
+		b.EgressDenied = es.Denied
 	}
 	if fc.Catalog == nil {
 		return b
