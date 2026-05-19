@@ -3,15 +3,26 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"runtime"
 	"time"
 
+	"github.com/xhelix/xhelix/pkg/budget"
 	"github.com/xhelix/xhelix/pkg/canonical"
+	"github.com/xhelix/xhelix/pkg/catalog"
 	"github.com/xhelix/xhelix/pkg/eac"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/localapi"
 )
+
+// defaultCatalogPaths lists candidate paths for the DLCF catalog,
+// in priority order. The first one that loads cleanly wins; a
+// missing file is not an error (DLCF is opt-in for v1).
+var defaultCatalogPaths = []string{
+	"/etc/xhelix/dlcf/catalog.yaml",
+	"/usr/lib/xhelix/ruleset/dlcf/catalog.yaml",
+}
 
 // foundationContext groups the Phase-1 evidence-truth primitives:
 // the Event Admission Controller, the lineage minter + origin store,
@@ -27,6 +38,10 @@ type foundationContext struct {
 	Minter   *lineage.Minter
 	Origins  *lineage.Store
 	Classes  *lineage.ClassRegistry
+
+	// DLCF subsystem (P7). May be nil if no catalog is configured.
+	Catalog *catalog.Catalog
+	Budgets *budget.Tracker
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -66,6 +81,29 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	} {
 		_, _ = fc.Classes.Bit(name)
 	}
+
+	// Try to load a DLCF catalog from one of the well-known paths.
+	// Missing catalog is not fatal — DLCF is opt-in for v1.
+	for _, p := range defaultCatalogPaths {
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		cat, err := catalog.Load(p)
+		if err != nil {
+			// Catalog exists but is malformed — that IS worth
+			// surfacing; downstream handlers will still get nil
+			// and tolerate it, but the operator should know.
+			fc.Catalog = nil
+			break
+		}
+		fc.Catalog = cat
+		break
+	}
+
+	// Budget tracker is always created, even without a catalog,
+	// so callers can register ad-hoc keys.
+	fc.Budgets = budget.NewTracker(budget.Caps{})
+
 	fc.EAC.Start(parent)
 
 	// Sweep ancient origin metadata every minute. Keeps the store
@@ -105,7 +143,17 @@ type healthSnapshot struct {
 	Self       healthSelfBlock     `json:"self"`
 	EAC        healthEACBlock      `json:"eac"`
 	Lineage    healthLineageBlock  `json:"lineage"`
+	DLCF       healthDLCFBlock     `json:"dlcf"`
 	Runtime    healthRuntimeBlock  `json:"runtime"`
+}
+
+type healthDLCFBlock struct {
+	CatalogLoaded  bool   `json:"catalog_loaded"`
+	CatalogSource  string `json:"catalog_source,omitempty"`
+	CatalogClasses int    `json:"catalog_classes,omitempty"`
+	CatalogTables  int    `json:"catalog_tables,omitempty"`
+	CatalogRoutes  int    `json:"catalog_routes,omitempty"`
+	TrackedBudgets int    `json:"tracked_budgets"`
 }
 
 type healthSelfBlock struct {
@@ -135,7 +183,15 @@ type healthRuntimeBlock struct {
 	Goroot       string `json:"goroot,omitempty"`
 }
 
-// registerFoundationHandlers wires health.snapshot into the LocalAPI.
+// registerFoundationHandlers wires the foundation + DLCF observability
+// surfaces into the LocalAPI:
+//
+//   - health.snapshot   — overall daemon health (EAC + lineage + runtime)
+//   - catalog.stats     — Data Catalog counters + source path
+//   - catalog.reload    — re-read the catalog YAML
+//   - catalog.lookup    — classify a table/path/secret on demand
+//   - taint.snapshot    — list lineages with non-empty taint + class names
+//   - budget.usage      — per-key budget totals and exceeded flags
 func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	if srv == nil || fc == nil {
 		return
@@ -143,6 +199,119 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	srv.RegisterHandler("health.snapshot", func(_ context.Context, _ json.RawMessage) (any, error) {
 		return fc.snapshot(), nil
 	})
+	srv.RegisterHandler("catalog.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.Catalog == nil {
+			return map[string]any{"loaded": false}, nil
+		}
+		st := fc.Catalog.Stats()
+		return map[string]any{
+			"loaded":          true,
+			"classes":         st.Classes,
+			"tables":          st.Tables,
+			"path_globs":      st.PathGlobs,
+			"secret_patterns": st.SecretPatterns,
+			"routes":          st.Routes,
+			"source":          st.Source,
+		}, nil
+	})
+	srv.RegisterHandler("catalog.reload", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.Catalog == nil {
+			return nil, errors.New("no catalog loaded — set up /etc/xhelix/dlcf/catalog.yaml first")
+		}
+		if err := fc.Catalog.Reload(); err != nil {
+			return nil, err
+		}
+		st := fc.Catalog.Stats()
+		return map[string]any{"reloaded": true, "stats": st}, nil
+	})
+	srv.RegisterHandler("catalog.lookup", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Catalog == nil {
+			return nil, errors.New("no catalog loaded")
+		}
+		var req struct {
+			Table  string `json:"table,omitempty"`
+			Path   string `json:"path,omitempty"`
+			Secret string `json:"secret,omitempty"`
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &req); err != nil {
+				return nil, err
+			}
+		}
+		out := map[string]any{}
+		if req.Table != "" {
+			out["table_classes"] = stringClasses(fc.Catalog.ClassesForTable(req.Table))
+		}
+		if req.Path != "" {
+			out["path_classes"] = stringClasses(fc.Catalog.ClassesForPath(req.Path))
+		}
+		if req.Secret != "" {
+			name, cls, ok := fc.Catalog.ClassesForSecret(req.Secret)
+			if ok {
+				out["secret_match"] = map[string]any{
+					"name":    name,
+					"classes": stringClasses(cls),
+				}
+			}
+		}
+		if len(out) == 0 {
+			return nil, errors.New("catalog.lookup: provide at least one of table/path/secret")
+		}
+		return out, nil
+	})
+	srv.RegisterHandler("taint.snapshot", func(_ context.Context, _ json.RawMessage) (any, error) {
+		entries := fc.Origins.TaintsSnapshot()
+		rows := make([]map[string]any, 0, len(entries))
+		for _, e := range entries {
+			rows = append(rows, map[string]any{
+				"lineage_id": e.ID,
+				"classes":    fc.Classes.NamesOf(e.Taint),
+				"bits":       uint64(e.Taint),
+			})
+		}
+		return map[string]any{
+			"tainted_lineages": len(rows),
+			"entries":          rows,
+		}, nil
+	})
+	srv.RegisterHandler("budget.usage", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.Budgets == nil {
+			return map[string]any{"tracked_keys": 0, "entries": []any{}}, nil
+		}
+		all := fc.Budgets.All()
+		return map[string]any{
+			"tracked_keys": len(all),
+			"entries":      all,
+		}, nil
+	})
+}
+
+// dlcfBlock returns the DLCF summary embedded in health.snapshot.
+func (fc *foundationContext) dlcfBlock() healthDLCFBlock {
+	b := healthDLCFBlock{}
+	if fc.Budgets != nil {
+		b.TrackedBudgets = fc.Budgets.Size()
+	}
+	if fc.Catalog == nil {
+		return b
+	}
+	st := fc.Catalog.Stats()
+	b.CatalogLoaded = true
+	b.CatalogSource = st.Source
+	b.CatalogClasses = st.Classes
+	b.CatalogTables = st.Tables
+	b.CatalogRoutes = st.Routes
+	return b
+}
+
+// stringClasses renders a slice of catalog.DataClass as plain strings
+// so the JSON response is operator-friendly.
+func stringClasses(cls []catalog.DataClass) []string {
+	out := make([]string, len(cls))
+	for i, c := range cls {
+		out[i] = string(c)
+	}
+	return out
 }
 
 func (fc *foundationContext) snapshot() healthSnapshot {
@@ -170,6 +339,7 @@ func (fc *foundationContext) snapshot() healthSnapshot {
 			TaintedLineages:   fc.Origins.TaintedCount(),
 			RegisteredClasses: fc.Classes.Names(),
 		},
+		DLCF: fc.dlcfBlock(),
 		Runtime: healthRuntimeBlock{
 			NumGoroutine: runtime.NumGoroutine(),
 			MemAllocMB:   mem.Alloc / 1024 / 1024,

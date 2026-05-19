@@ -252,3 +252,29 @@ func (t *Tracker) Keys() []string {
 	}
 	return out
 }
+
+// KeyedSnapshot pairs a tracker key with its current Snapshot.
+type KeyedSnapshot struct {
+	Key      string   `json:"key"`
+	Snapshot Snapshot `json:"snapshot"`
+}
+
+// All returns a snapshot of every tracked key. Allocates fresh
+// memory and copies under the read lock, so callers may use the
+// result without further synchronisation.
+func (t *Tracker) All() []KeyedSnapshot {
+	t.mu.RLock()
+	keys := make([]string, 0, len(t.budgets))
+	for k := range t.budgets {
+		keys = append(keys, k)
+	}
+	t.mu.RUnlock()
+
+	out := make([]KeyedSnapshot, 0, len(keys))
+	for _, k := range keys {
+		if snap, ok := t.Snapshot(k); ok {
+			out = append(out, KeyedSnapshot{Key: k, Snapshot: snap})
+		}
+	}
+	return out
+}

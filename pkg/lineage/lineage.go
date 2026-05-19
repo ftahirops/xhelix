@@ -361,3 +361,37 @@ func (s *Store) TaintedCount() int {
 	}
 	return n
 }
+
+// TaintEntry is one row in the taint snapshot.
+type TaintEntry struct {
+	ID    LineageID
+	Taint TaintSet
+}
+
+// TaintsSnapshot returns all non-empty taint records. Allocates fresh
+// slices, safe to publish to callers. Ordered by LineageID ascending
+// (cheap, makes the LocalAPI response stable).
+func (s *Store) TaintsSnapshot() []TaintEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]TaintEntry, 0, len(s.taints))
+	for id, t := range s.taints {
+		if t.IsEmpty() {
+			continue
+		}
+		out = append(out, TaintEntry{ID: id, Taint: t})
+	}
+	// Tiny in practice; bubble sort would be fine, but keep stdlib.
+	sortTaintEntries(out)
+	return out
+}
+
+func sortTaintEntries(s []TaintEntry) {
+	// Simple insertion sort — N is typically small (number of
+	// tainted lineages, not total events).
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1].ID > s[j].ID; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
