@@ -17,9 +17,15 @@
 | P5    | UI / RCA / operator workflow      |    3 | planned    |
 | P6    | Hardened mode (optional add-on)   |    3 | planned    |
 | P7    | Data Leak Containment Fabric      |   55 | planned    |
+| P-RC  | Request Contract layer            |   13 | planned    |
+| P-BEHAVIOR | Behavioral Defense (valid-looking attacks) | 18 | planned |
 
 Total core ship: 17 days (P1–P4). Polished release: 23 days (P1–P6).
 DLCF subsystem (P7): adds ~11 weeks on top, split into v1/v2/v3 (see § Phase 7).
+P-RC + P-BEHAVIOR (see [BEHAVIORAL_DEFENSE.md](BEHAVIORAL_DEFENSE.md)):
+~6 additional weeks. Targets the ~60–80% of real breaches that pass the
+perimeter cleanly (stolen credentials, session hijack, post-auth abuse).
+Slots between P2 and P7.2 — P2 is its data substrate.
 
 P1–P4 are sequential. P5 can start in parallel with P4 once P3 is done.
 P6 has no dependencies on P5 and can be deferred indefinitely.
@@ -519,6 +525,109 @@ Bulk-export accountability + role posture.
 - IDOR detection without app-supplied object identity.
 - Business-logic leak detection without semantics.
 - Response Valve (deferred to `xhelix-bridge` track, not DLCF).
+
+---
+
+## Phase P-RC — Request Contract layer
+
+**Goal**: Carry `request_contract_id`, `account_id`, `session_id` from
+the HTTP request through eBPF socket-cookie / cgroup correlation all
+the way to kernel-level events. The substrate for P-BEHAVIOR. Full
+design in [BEHAVIORAL_DEFENSE.md](BEHAVIORAL_DEFENSE.md) §6.
+
+| Task   | Description                                                | Days |
+| ------ | ---------------------------------------------------------- | ---: |
+| P-RC.1 | `pkg/reqcontract`: ID issuance, signing, TTL, lookup       |    3 |
+| P-RC.2 | `xhelix-bridge` L7 hop: parse, issue contract, forward     |    4 |
+| P-RC.3 | eBPF socket-cookie correlation: tag worker process         |    3 |
+| P-RC.4 | Event enrichment: stamp every event with contract_id       |    2 |
+| P-RC.5 | LocalAPI: `reqcontract.lookup`, `reqcontract.stats`        |    1 |
+
+### Success criteria
+
+- Every event the daemon emits that has a traceable request origin
+  carries `request_contract_id` in `event.tags`.
+- `reqcontract.lookup` returns the full contract (route, account,
+  session, JA3, TTL) for any in-flight request id in under 50 µs.
+- Lost contract correlation (e.g. process forks into a daemon that
+  outlives the request) is counted, not silently dropped.
+
+### Out of scope (P-RC)
+
+- TLS termination — that lives in nginx / Envoy upstream.
+- HTTP schema validation — same; we *consume* the schema_hash, we
+  don't validate.
+- The behavioral detectors themselves — those are P-BEHAVIOR.
+
+---
+
+## Phase P-BEHAVIOR — Behavioral Defense for valid-looking attacks
+
+**Goal**: Detect attacks that pass the perimeter cleanly because they
+carry valid credentials and emit valid-shaped requests. Full design in
+[BEHAVIORAL_DEFENSE.md](BEHAVIORAL_DEFENSE.md).
+
+Tasks ordered Tier-1 first (deterministic, hard-blockable, zero-FP)
+so the highest-confidence detections ship before any of the
+probabilistic ones.
+
+| Task    | Description                                              | Tier | Days |
+| ------- | -------------------------------------------------------- | ---- | ---: |
+| P-B.1   | Canary users + canary routes (extend P7.1.5)             | T1   |    2 |
+| P-B.2   | Replay-resistance HMAC nonces on sensitive endpoints     | T1   |    4 |
+| P-B.3   | Causal-chain divergence detector (baseline + comparator) | T1   |    7 |
+| P-B.4   | Workflow state-machine declarative engine                | T1/T2|    5 |
+| P-B.5   | Session-to-lineage binding (JA3 + ASN + cohort)          | T2   |    3 |
+| P-B.6   | Per-(user, route) baseline EWMA (repoint pkg/baseline)   | T2   |    4 |
+| P-B.7   | LOTL lineage scoring matrix                              | T2   |    3 |
+| P-B.8   | Velocity caps via Request Contract                       | T1   |    2 |
+| P-B.9   | Soft enforcement ladder (score → delay → step-up → freeze) | n/a |    5 |
+| P-B.10  | Blast-radius set tracking                                | T3   |    3 |
+
+### Success criteria
+
+- **P-B.3 (causal-chain divergence)** detects a synthetic
+  post-auth-RCE test (valid login + spawn unexpected child + outbound)
+  in under 200 ms, hard-blocks if catalog has the route marked
+  enforce.
+- **P-B.1 (canaries)** detects any touch on a planted canary user id
+  with zero FP across a 7-day stress test of a baseline WordPress
+  workload.
+- **P-B.9 (soft enforcement)** demonstrates a 1-second delay tier that
+  reduces a scripted 10k-req/hr scraper to <500 req/hr while real
+  users see no measurable impact.
+- Composition rule enforced in code: no Tier-2 signal in isolation
+  can trigger a hard block.
+
+### Performance implementation spec
+
+| Target                              | Mechanism                          |
+| ----------------------------------- | ---------------------------------- |
+| Contract lookup per event < 1 µs    | hashmap keyed on socket-cookie     |
+| Causal-chain comparison < 50 µs     | pre-hashed signature set per route |
+| Velocity cap check < 200 ns         | reuse pkg/budget (P7.1.3)          |
+| Soft-enforce decision < 10 µs       | scored once per request, cached    |
+
+### Honest non-promises (operator contract)
+
+This phase ships with explicit operator-facing non-promises (see
+BEHAVIORAL_DEFENSE.md §7):
+
+1. xhelix does not promise to detect a perfectly-mimicking
+   stolen-cookie attacker who stays under every cap. Such an
+   attacker is visible only in the post-action audit trail.
+2. xhelix does not ship a "block everything suspicious" mode.
+   Tier-2 signals always combine before a hard block fires.
+3. xhelix does not require external threat feeds. Every detection
+   fires from operator-declared policy or observed baselines.
+
+### Out of scope (P-BEHAVIOR)
+
+- Network-perimeter WAF / schema validation (use Envoy / nginx).
+- TLS termination & mTLS (same — perimeter concern).
+- Application-layer step-up UI (apps already have password-reset
+  flows we hook into).
+- Threat-intel feeds (deliberately not built in).
 
 ---
 
