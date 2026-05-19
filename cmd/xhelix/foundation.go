@@ -45,10 +45,11 @@ type foundationContext struct {
 	StartedAt   time.Time
 	SelfProcKey canonical.ProcKey
 
-	EAC      *eac.Controller
-	Minter   *lineage.Minter
-	Origins  *lineage.Store
-	Classes  *lineage.ClassRegistry
+	EAC       *eac.Controller
+	Minter    *lineage.Minter
+	Origins   *lineage.Store
+	Classes   *lineage.ClassRegistry
+	ProcCache *canonical.ProcKeyCache
 
 	// DLCF subsystem (P7). May be nil if no catalog is configured.
 	Catalog   *catalog.Catalog
@@ -80,10 +81,14 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 			MaxBufferSize: 16384,
 			SelfPID:       selfPID,
 		}),
-		Minter:  lineage.NewMinter(),
-		Origins: lineage.NewStore(),
-		Classes: lineage.NewClassRegistry(),
+		Minter:    lineage.NewMinter(),
+		Origins:   lineage.NewStore(),
+		Classes:   lineage.NewClassRegistry(),
+		ProcCache: canonical.NewProcKeyCache(canonical.CacheOptions{}),
 	}
+	// Prime the cache with the daemon's own ProcKey — every
+	// self-exclusion check pays the cold cost otherwise.
+	fc.ProcCache.Put(self)
 	// Pre-register the well-known DLCF data classes so bit positions
 	// are deterministic at startup (rather than depending on the
 	// order in which sensors first touch them).
@@ -198,6 +203,7 @@ type healthSnapshot struct {
 	UptimeSecs int64               `json:"uptime_secs"`
 	Self       healthSelfBlock     `json:"self"`
 	EAC        healthEACBlock      `json:"eac"`
+	ProcCache  healthProcCacheBlock `json:"proc_cache"`
 	Lineage    healthLineageBlock  `json:"lineage"`
 	DLCF       healthDLCFBlock     `json:"dlcf"`
 	Runtime    healthRuntimeBlock  `json:"runtime"`
@@ -233,6 +239,16 @@ type healthEACBlock struct {
 	ReorderWindow string `json:"reorder_window"`
 }
 
+type healthProcCacheBlock struct {
+	Size     int     `json:"size"`
+	MaxSize  int     `json:"max_size"`
+	TTLSecs  int     `json:"ttl_secs"`
+	Hits     uint64  `json:"hits"`
+	Misses   uint64  `json:"misses"`
+	Evicts   uint64  `json:"evicts"`
+	HitRatio float64 `json:"hit_ratio"`
+}
+
 type healthLineageBlock struct {
 	StoredOrigins   int      `json:"stored_origins"`
 	TaintedLineages int      `json:"tainted_lineages"`
@@ -261,6 +277,35 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	}
 	srv.RegisterHandler("health.snapshot", func(_ context.Context, _ json.RawMessage) (any, error) {
 		return fc.snapshot(), nil
+	})
+	srv.RegisterHandler("proccache.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.ProcCache == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		return fc.ProcCache.Stats(), nil
+	})
+	srv.RegisterHandler("proccache.resolve", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.ProcCache == nil {
+			return nil, errors.New("proc cache not initialised")
+		}
+		var req struct {
+			PID uint32 `json:"pid"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.PID == 0 {
+			return nil, errors.New("pid required")
+		}
+		pk, err := fc.ProcCache.Resolve(req.PID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"pid":         pk.PID,
+			"start_ticks": pk.StartTicks,
+			"proc_key":    pk.String(),
+		}, nil
 	})
 	srv.RegisterHandler("catalog.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
 		if fc.Catalog == nil {
@@ -427,6 +472,23 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	})
 }
 
+// procCacheBlock returns the ProcKey cache summary for health.snapshot.
+func (fc *foundationContext) procCacheBlock() healthProcCacheBlock {
+	if fc.ProcCache == nil {
+		return healthProcCacheBlock{}
+	}
+	s := fc.ProcCache.Stats()
+	return healthProcCacheBlock{
+		Size:     s.Size,
+		MaxSize:  s.MaxSize,
+		TTLSecs:  s.TTLSecs,
+		Hits:     s.Hits,
+		Misses:   s.Misses,
+		Evicts:   s.Evicts,
+		HitRatio: fc.ProcCache.HitRatio(),
+	}
+}
+
 // dlcfBlock returns the DLCF summary embedded in health.snapshot.
 func (fc *foundationContext) dlcfBlock() healthDLCFBlock {
 	b := healthDLCFBlock{}
@@ -490,6 +552,7 @@ func (fc *foundationContext) snapshot() healthSnapshot {
 			BufferSize:    stats.BufferSize,
 			ReorderWindow: "100ms",
 		},
+		ProcCache: fc.procCacheBlock(),
 		Lineage: healthLineageBlock{
 			StoredOrigins:     fc.Origins.Size(),
 			TaintedLineages:   fc.Origins.TaintedCount(),
