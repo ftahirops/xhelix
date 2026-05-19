@@ -28,6 +28,8 @@
 !ZERO_DAY_GUARDIAN.md
 !ENTERPRISE_ARCHITECTURE.md
 !SUPPLY_CHAIN_DEFENSE.md
+!CI_CD_GUARD.md
+!AUTO_ADVISOR.md
 
 # Local state for development
 /var/
