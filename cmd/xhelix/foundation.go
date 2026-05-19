@@ -26,6 +26,7 @@ type foundationContext struct {
 	EAC      *eac.Controller
 	Minter   *lineage.Minter
 	Origins  *lineage.Store
+	Classes  *lineage.ClassRegistry
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -53,6 +54,17 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		}),
 		Minter:  lineage.NewMinter(),
 		Origins: lineage.NewStore(),
+		Classes: lineage.NewClassRegistry(),
+	}
+	// Pre-register the well-known DLCF data classes so bit positions
+	// are deterministic at startup (rather than depending on the
+	// order in which sensors first touch them).
+	for _, name := range []string{
+		"public", "pii", "contact", "customer_order",
+		"credentials", "payment_token", "api_key",
+		"source_code", "backup", "canary",
+	} {
+		_, _ = fc.Classes.Bit(name)
 	}
 	fc.EAC.Start(parent)
 
@@ -111,7 +123,9 @@ type healthEACBlock struct {
 }
 
 type healthLineageBlock struct {
-	StoredOrigins int `json:"stored_origins"`
+	StoredOrigins   int      `json:"stored_origins"`
+	TaintedLineages int      `json:"tainted_lineages"`
+	RegisteredClasses []string `json:"registered_classes,omitempty"`
 }
 
 type healthRuntimeBlock struct {
@@ -152,7 +166,9 @@ func (fc *foundationContext) snapshot() healthSnapshot {
 			ReorderWindow: "100ms",
 		},
 		Lineage: healthLineageBlock{
-			StoredOrigins: fc.Origins.Size(),
+			StoredOrigins:     fc.Origins.Size(),
+			TaintedLineages:   fc.Origins.TaintedCount(),
+			RegisteredClasses: fc.Classes.Names(),
 		},
 		Runtime: healthRuntimeBlock{
 			NumGoroutine: runtime.NumGoroutine(),

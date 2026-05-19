@@ -11,6 +11,7 @@ package lineage
 import (
 	"encoding/binary"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -224,16 +225,21 @@ func (m *Minter) New() LineageID {
 	return LineageID(m.counter.Add(1))
 }
 
-// Store keeps Origin metadata for lineages we've seen. It is
-// process-local and bounded; ancient lineages are evicted by a
-// caller-driven sweep.
+// Store keeps Origin metadata and TaintSets for lineages we've seen.
+// It is process-local and bounded; ancient lineages are evicted by a
+// caller-driven sweep. Safe for concurrent use.
 type Store struct {
+	mu      sync.RWMutex
 	origins map[LineageID]Origin
+	taints  map[LineageID]TaintSet
 }
 
 // NewStore constructs an empty Store.
 func NewStore() *Store {
-	return &Store{origins: make(map[LineageID]Origin)}
+	return &Store{
+		origins: make(map[LineageID]Origin),
+		taints:  make(map[LineageID]TaintSet),
+	}
 }
 
 // Put records or replaces an Origin entry.
@@ -244,12 +250,16 @@ func (s *Store) Put(o Origin) {
 	if o.CreatedAt.IsZero() {
 		o.CreatedAt = time.Now()
 	}
+	s.mu.Lock()
 	s.origins[o.ID] = o
+	s.mu.Unlock()
 }
 
 // Get returns the Origin for an ID, plus whether it was found.
 func (s *Store) Get(id LineageID) (Origin, bool) {
+	s.mu.RLock()
 	o, ok := s.origins[id]
+	s.mu.RUnlock()
 	return o, ok
 }
 
@@ -257,6 +267,8 @@ func (s *Store) Get(id LineageID) (Origin, bool) {
 // origins are skipped silently — caller decides whether that matters.
 func (s *Store) Resolve(c Chain) []Origin {
 	out := make([]Origin, 0, len(c))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, id := range c {
 		if o, ok := s.origins[id]; ok {
 			out = append(out, o)
@@ -265,13 +277,16 @@ func (s *Store) Resolve(c Chain) []Origin {
 	return out
 }
 
-// SweepOlderThan removes origins whose CreatedAt is before cutoff.
-// Returns the number removed.
+// SweepOlderThan removes origins (and their taint records) whose
+// CreatedAt is before cutoff. Returns the number removed.
 func (s *Store) SweepOlderThan(cutoff time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	removed := 0
 	for id, o := range s.origins {
 		if o.CreatedAt.Before(cutoff) {
 			delete(s.origins, id)
+			delete(s.taints, id)
 			removed++
 		}
 	}
@@ -280,5 +295,69 @@ func (s *Store) SweepOlderThan(cutoff time.Time) int {
 
 // Size returns the number of stored origins.
 func (s *Store) Size() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return len(s.origins)
+}
+
+// AddTaint OR-merges the given mask into the lineage's accumulated
+// taint set. Taint is append-only within a lineage's lifetime — once
+// a class has been touched, it stays touched until the lineage is
+// swept away by SweepOlderThan.
+//
+// Returns the new (post-merge) taint set, which is useful to callers
+// that want to detect "this Add introduced new taint" without a
+// follow-up read.
+func (s *Store) AddTaint(id LineageID, mask TaintSet) TaintSet {
+	if id == 0 || mask.IsEmpty() {
+		s.mu.RLock()
+		t := s.taints[id]
+		s.mu.RUnlock()
+		return t
+	}
+	s.mu.Lock()
+	merged := s.taints[id] | mask
+	s.taints[id] = merged
+	s.mu.Unlock()
+	return merged
+}
+
+// Taint returns the accumulated taint set for a single lineage id.
+// Returns the empty set if the id has no recorded taint.
+func (s *Store) Taint(id LineageID) TaintSet {
+	s.mu.RLock()
+	t := s.taints[id]
+	s.mu.RUnlock()
+	return t
+}
+
+// TaintOfChain returns the union of every taint set along the chain.
+// Used by the Egress Valve and rule engine to ask "is anyone in this
+// causal chain tainted with class X?". An empty chain returns the
+// empty set.
+func (s *Store) TaintOfChain(c Chain) TaintSet {
+	if len(c) == 0 {
+		return 0
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out TaintSet
+	for _, id := range c {
+		out |= s.taints[id]
+	}
+	return out
+}
+
+// TaintedCount returns the number of lineages with a non-empty taint
+// set. Useful for the health.snapshot LocalAPI handler.
+func (s *Store) TaintedCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, t := range s.taints {
+		if !t.IsEmpty() {
+			n++
+		}
+	}
+	return n
 }
