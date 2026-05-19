@@ -1720,11 +1720,17 @@ func buildSinks(specs []config.SinkConfig, log *slog.Logger) []model.Sink {
 		case "stdout":
 			out = append(out, alert.NewStdoutSink())
 		case "file":
-			fs, err := alert.NewFileSink(s.Path)
+			opts := alert.FileSinkOptions{
+				MaxSizeBytes: int64(s.RotateSizeMB) * 1024 * 1024,
+				Keep:         int(s.Keep),
+			}
+			fs, err := alert.NewFileSinkWithOptions(s.Path, opts)
 			if err != nil {
 				log.Warn("file sink", "err", err, "path", s.Path)
 				continue
 			}
+			log.Info("file sink configured", "path", s.Path,
+				"rotate_mb", s.RotateSizeMB, "keep", s.Keep)
 			out = append(out, fs)
 		default:
 			log.Warn("unknown sink kind", "kind", s.Kind)
