@@ -31,6 +31,7 @@
 !CI_CD_GUARD.md
 !AUTO_ADVISOR.md
 !POST_COMPROMISE_DEFENSE.md
+!DATA_LEAK_FABRIC.md
 
 # Local state for development
 /var/

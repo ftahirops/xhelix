@@ -146,6 +146,17 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 
+	// Phase-1 evidence-truth primitives: EAC + lineage + canonical self.
+	// Constructed early so they're available to every subsystem.
+	foundation, err := newFoundationContext(ctx)
+	if err != nil {
+		return fmt.Errorf("foundation: %w", err)
+	}
+	defer foundation.Stop()
+	log.Info("foundation primitives started",
+		"self_pid", foundation.SelfProcKey.PID,
+		"self_start_ticks", foundation.SelfProcKey.StartTicks)
+
 	// Bus pump
 	go bus.Run(ctx)
 
@@ -853,6 +864,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	apiSrv.RegisterHandler("enforce.disarm", func(_ context.Context, _ json.RawMessage) (any, error) {
 		return enforceDisarm(enfCtx)
 	})
+	registerFoundationHandlers(apiSrv, foundation)
 	if err := apiSrv.Start(ctx); err != nil {
 		log.Warn("LocalAPI failed to start", "err", err)
 	} else {

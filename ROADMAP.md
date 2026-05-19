@@ -16,8 +16,10 @@
 | P4    | Deterministic decisions           |    4 | planned    |
 | P5    | UI / RCA / operator workflow      |    3 | planned    |
 | P6    | Hardened mode (optional add-on)   |    3 | planned    |
+| P7    | Data Leak Containment Fabric      |   55 | planned    |
 
 Total core ship: 17 days (P1–P4). Polished release: 23 days (P1–P6).
+DLCF subsystem (P7): adds ~11 weeks on top, split into v1/v2/v3 (see § Phase 7).
 
 P1–P4 are sequential. P5 can start in parallel with P4 once P3 is done.
 P6 has no dependencies on P5 and can be deferred indefinitely.
@@ -430,6 +432,93 @@ explicit configuration.
 
 - Remote attestation server (out of single-host scope)
 - Cross-host PCR-comparison (out of scope)
+
+---
+
+## Phase 7 — Data Leak Containment Fabric (DLCF)
+
+**Goal**: Detect and block data exfiltration without firehose recording.
+Built on the lineage chain from P1. Full design in
+[DATA_LEAK_FABRIC.md](DATA_LEAK_FABRIC.md). Three sub-phases.
+
+### P7 v1 — cheap tier (~5 weeks, ~25 days)
+
+Builds the core fabric using only event-tier infrastructure already paid
+for by P1–P4. No new in-band components.
+
+| Task   | Description                                                | Days |
+| ------ | ---------------------------------------------------------- | ---: |
+| P7.1.1 | Data Catalog: YAML schema + loader + sensitivity table     |    3 |
+| P7.1.2 | Extend `pkg/lineage` with `TaintSet` (bitset) + propagator |    4 |
+| P7.1.3 | Sensitivity Budget counters (bucketed sliding window)      |    5 |
+| P7.1.4 | LocalAPI: `taint.snapshot`, `budget.usage`, `passport.list`|    2 |
+| P7.1.5 | Canary rules pack (~10 detectors over alert bus)           |    3 |
+| P7.1.6 | Egress Valve: extend `pkg/netban` with taint-aware policy  |    5 |
+| P7.1.7 | Data Passport: issuance CLI + ed25519 verifier             |    3 |
+
+**Success criteria (v1)**
+- Catalog loads from `ruleset/dlcf/catalog.yaml` and is hot-reloadable.
+- `pkg/lineage` carries a `TaintSet` per lineage root; propagation is
+  atomic and append-only.
+- Sensitivity budgets enforce per-hour and per-day caps; overflow
+  raises an alert with the contributing lineage chain.
+- Canary touch raises a `severity=critical` alert in < 50 ms.
+- Egress Valve blocks outbound connection when destination is not in
+  the passport for the lineage's taint set.
+- Daemon refuses to start in DLCF mode without a valid Control Plane
+  pubkey for passport verification.
+
+### P7 v2 — DB observation (~3 weeks, ~15 days)
+
+Non-proxy DB visibility. Four layers; no SQL proxy in v2.
+
+| Task   | Description                                                          | Days |
+| ------ | -------------------------------------------------------------------- | ---: |
+| P7.2.1 | eBPF DB socket watcher (labels endpoints from catalog, byte counts)  |    4 |
+| P7.2.2 | MySQL `performance_schema` digest poller                             |    3 |
+| P7.2.3 | PostgreSQL `pg_stat_statements` poller                               |    2 |
+| P7.2.4 | App DB tap protocol over Unix socket (route/user/query-shape/rows)   |    3 |
+| P7.2.5 | WordPress `wpdb` drop-in reference implementation                    |    3 |
+
+**Success criteria (v2)**
+- eBPF watcher reports bytes-in/out per (pid, DB endpoint) without
+  parsing SQL.
+- Digest poller surfaces new query shapes within 60 s of first
+  execution.
+- WordPress drop-in emits `db.query` events with route, user,
+  shape hash, tables, row count — verified end-to-end against a live
+  WP install.
+- Tap, eBPF, and digest disagreement (e.g., app reports 10 rows but
+  bytes suggest 10 MB) raises a `signal_disagreement` alert.
+
+### P7 v3 — broker tier (~3 weeks, ~15 days)
+
+Bulk-export accountability + role posture.
+
+| Task   | Description                                              | Days |
+| ------ | -------------------------------------------------------- | ---: |
+| P7.3.1 | `cmd/xhelix-exportd/` daemon (Unix-socket IPC)           |    6 |
+| P7.3.2 | Watermarking (CSV ordering + manifest signature)         |    3 |
+| P7.3.3 | DB role posture lint in `xhelixctl posture db`           |    3 |
+| P7.3.4 | Selective audit-plugin integration (MariaDB + Postgres)  |    3 |
+
+**Success criteria (v3)**
+- All bulk exports flow through `xhelix-exportd`; direct exports from
+  php-fpm/nginx/node are denied by LSM hook.
+- Every approved export carries a watermark traceable to passport id
+  + operator id.
+- `xhelixctl posture db` flags overprivileged DB users with concrete
+  remediation steps.
+
+### Out of scope (P7)
+
+- Full SQL proxy (latency-sensitive, per-engine protocol burden — explicitly NOT planned).
+- Byte-level memory taint tracking.
+- Per-row value capture (shape + count only).
+- Always-on DB audit of every statement.
+- IDOR detection without app-supplied object identity.
+- Business-logic leak detection without semantics.
+- Response Valve (deferred to `xhelix-bridge` track, not DLCF).
 
 ---
 
