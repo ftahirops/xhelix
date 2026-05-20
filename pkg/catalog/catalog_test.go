@@ -258,6 +258,111 @@ func TestReload_BadFileLeavesOldDataIntact(t *testing.T) {
 	}
 }
 
+const canaryYAML = `
+version: 1
+sensitivity_points:
+  pii: 20
+  canary: 10000
+canary_uids:
+  - uid: 999998
+  - uid: 999999
+  - from: 9000000
+    to:   9000099
+canary_routes:
+  - /admin-legacy
+  - /api/v0/
+  - /debug/
+`
+
+func TestIsCanaryUID(t *testing.T) {
+	c, err := Load(writeTmp(t, canaryYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, uid := range []uint64{999998, 999999, 9000000, 9000050, 9000099} {
+		if !c.IsCanaryUID(uid) {
+			t.Errorf("uid %d should be canary", uid)
+		}
+	}
+	for _, uid := range []uint64{1, 100, 999997, 9000100, 9999999} {
+		if c.IsCanaryUID(uid) {
+			t.Errorf("uid %d should NOT be canary", uid)
+		}
+	}
+}
+
+func TestIsCanaryRoute(t *testing.T) {
+	c, _ := Load(writeTmp(t, canaryYAML))
+
+	// Exact match.
+	if !c.IsCanaryRoute("/admin-legacy") {
+		t.Error("/admin-legacy exact match should be canary")
+	}
+	if c.IsCanaryRoute("/admin-legacy/sub") {
+		t.Error("/admin-legacy/sub should NOT match exact (no trailing slash)")
+	}
+
+	// Prefix match.
+	if !c.IsCanaryRoute("/api/v0/anything") {
+		t.Error("/api/v0/anything should match /api/v0/ prefix")
+	}
+	if !c.IsCanaryRoute("/debug/foo/bar") {
+		t.Error("/debug/foo/bar should match /debug/ prefix")
+	}
+
+	// Negative.
+	if c.IsCanaryRoute("/api/v1/users") {
+		t.Error("/api/v1/users should NOT be canary")
+	}
+	if c.IsCanaryRoute("/") {
+		t.Error("/ should NOT be canary")
+	}
+}
+
+func TestCanaryStats(t *testing.T) {
+	c, _ := Load(writeTmp(t, canaryYAML))
+	st := c.Stats()
+	if st.CanaryUIDs != 2 {
+		t.Errorf("CanaryUIDs = %d, want 2", st.CanaryUIDs)
+	}
+	if st.CanaryRanges != 1 {
+		t.Errorf("CanaryRanges = %d, want 1", st.CanaryRanges)
+	}
+	if st.CanaryRoutes != 3 {
+		t.Errorf("CanaryRoutes = %d, want 3", st.CanaryRoutes)
+	}
+}
+
+func TestCanaryReversedRangeIsNormalised(t *testing.T) {
+	// to < from should still produce a valid range.
+	yaml := `
+version: 1
+sensitivity_points: {canary: 10000}
+canary_uids:
+  - from: 200
+    to:   100
+`
+	c, _ := Load(writeTmp(t, yaml))
+	if !c.IsCanaryUID(150) {
+		t.Error("range with reversed from/to should still match interior uid")
+	}
+}
+
+func BenchmarkIsCanaryUID(b *testing.B) {
+	c, _ := Load(writeTmp(&testing.T{}, canaryYAML))
+	for i := 0; i < b.N; i++ {
+		_ = c.IsCanaryUID(9000050)
+	}
+}
+
+func BenchmarkIsCanaryRoute(b *testing.B) {
+	c, _ := Load(writeTmp(&testing.T{}, canaryYAML))
+	for i := 0; i < b.N; i++ {
+		_ = c.IsCanaryRoute("/api/v0/debug")
+	}
+}
+
 func BenchmarkClassesForTable(b *testing.B) {
 	c, _ := Load(writeTmp(&testing.T{}, validYAML))
 	for i := 0; i < b.N; i++ {

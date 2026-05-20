@@ -737,14 +737,19 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 			return map[string]any{"loaded": false}, nil
 		}
 		st := fc.Catalog.Stats()
+		// Wrap the whole Stats so future fields don't need a
+		// hand-rolled mapping per addition.
 		return map[string]any{
-			"loaded":          true,
-			"classes":         st.Classes,
-			"tables":          st.Tables,
-			"path_globs":      st.PathGlobs,
-			"secret_patterns": st.SecretPatterns,
-			"routes":          st.Routes,
-			"source":          st.Source,
+			"loaded":            true,
+			"classes":           st.Classes,
+			"tables":            st.Tables,
+			"path_globs":        st.PathGlobs,
+			"secret_patterns":   st.SecretPatterns,
+			"routes":            st.Routes,
+			"canary_uids":       st.CanaryUIDs,
+			"canary_uid_ranges": st.CanaryRanges,
+			"canary_routes":     st.CanaryRoutes,
+			"source":            st.Source,
 		}, nil
 	})
 	srv.RegisterHandler("catalog.reload", func(_ context.Context, _ json.RawMessage) (any, error) {
@@ -756,6 +761,29 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 		}
 		st := fc.Catalog.Stats()
 		return map[string]any{"reloaded": true, "stats": st}, nil
+	})
+	srv.RegisterHandler("catalog.is_canary", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Catalog == nil {
+			return nil, errors.New("no catalog loaded")
+		}
+		var req struct {
+			UID   uint64 `json:"uid,omitempty"`
+			Route string `json:"route,omitempty"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		out := map[string]any{}
+		if req.UID != 0 {
+			out["uid_is_canary"] = fc.Catalog.IsCanaryUID(req.UID)
+		}
+		if req.Route != "" {
+			out["route_is_canary"] = fc.Catalog.IsCanaryRoute(req.Route)
+		}
+		if len(out) == 0 {
+			return nil, errors.New("catalog.is_canary: provide uid or route")
+		}
+		return out, nil
 	})
 	srv.RegisterHandler("catalog.lookup", func(_ context.Context, raw json.RawMessage) (any, error) {
 		if fc.Catalog == nil {

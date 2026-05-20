@@ -107,3 +107,38 @@ routes:
 
   - match: ["/wp-admin/admin.php?page=settings"]
     allowed_classes: [credentials, api_key]
+
+# ── Canary users (P-B.1) ──
+# Operator-planted user identifiers with NO legitimate consumer. Any
+# auth attempt, profile read, or session creation against these is a
+# zero-FP intrusion signal. The App DB tap (P7.2.5) consults this
+# list at query time; matching rows get data_classes=canary stamped
+# on the resulting event, which the canary rule pack (P7.1.5) fires
+# on instantly.
+#
+# Choose values that are:
+#   - outside any legitimate auto-increment range (e.g. high uids
+#     unlikely to be reached for years)
+#   - distinctive in shape (an attacker scanning uid 1..N hits these;
+#     a real workflow never references them)
+canary_uids:
+  # Explicit per-uid entries
+  - uid: 999998     # canary admin
+  - uid: 999999     # canary support user
+  # Inclusive ranges — e.g., a swath above the realistic ceiling
+  - from: 9000000
+    to:   9000099
+
+# ── Canary routes (P-B.1) ──
+# Operator-planted HTTP paths that NO legitimate client should hit.
+# Scanner traffic touching them is a recon indicator; authenticated
+# traffic touching them is a near-certain compromise.
+#
+# Trailing "/" means prefix match (covers sub-paths); no trailing
+# slash = exact match.
+canary_routes:
+  - /admin-legacy            # operator removed this years ago — scanners still try
+  - /api/v0/                 # we're on v1+ now; v0 only exists for the trap
+  - /wp-admin/setup-config.php  # WP install bait
+  - /.git/                   # source-code recon
+  - /debug/                  # generic dev-leftover bait

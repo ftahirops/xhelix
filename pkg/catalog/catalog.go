@@ -69,6 +69,18 @@ type Catalog struct {
 	// detect a route touching data it shouldn't.
 	routeAllowed map[string]map[DataClass]struct{}
 
+	// Canary users: explicit uids and inclusive ranges. No
+	// legitimate consumer touches these — see P-B.1 in
+	// BEHAVIORAL_DEFENSE.md. Lookup is O(N) over ranges + O(1) for
+	// explicit uids; total entries are operator-bounded.
+	canaryUIDs   map[uint64]struct{}
+	canaryRanges []uidRange
+
+	// Canary routes: exact and prefix patterns. Trailing "/" means
+	// prefix; otherwise exact. /admin-legacy/, /api/v0/, etc.
+	canaryRouteExact  map[string]struct{}
+	canaryRoutePrefix []string
+
 	// Source path, for reload + diagnostics.
 	source string
 }
@@ -76,6 +88,11 @@ type Catalog struct {
 type pathGlob struct {
 	Glob    string
 	Classes []DataClass
+}
+
+// uidRange is a closed inclusive range of canary user ids.
+type uidRange struct {
+	Low, High uint64
 }
 
 type secretPattern struct {
@@ -110,6 +127,14 @@ type fileSchema struct {
 		Match   []string `yaml:"match"`
 		Allowed []string `yaml:"allowed_classes"`
 	} `yaml:"routes"`
+
+	CanaryUIDs []struct {
+		UID  uint64 `yaml:"uid,omitempty"`
+		From uint64 `yaml:"from,omitempty"`
+		To   uint64 `yaml:"to,omitempty"`
+	} `yaml:"canary_uids"`
+
+	CanaryRoutes []string `yaml:"canary_routes"`
 }
 
 // Load reads and validates a catalog from path. Returns a *Catalog
@@ -146,6 +171,10 @@ func (c *Catalog) Reload() error {
 	c.pathGlobs = fresh.pathGlobs
 	c.secretPatterns = fresh.secretPatterns
 	c.routeAllowed = fresh.routeAllowed
+	c.canaryUIDs = fresh.canaryUIDs
+	c.canaryRanges = fresh.canaryRanges
+	c.canaryRouteExact = fresh.canaryRouteExact
+	c.canaryRoutePrefix = fresh.canaryRoutePrefix
 	return nil
 }
 
@@ -159,9 +188,11 @@ func parse(raw []byte) (*Catalog, error) {
 	}
 
 	c := &Catalog{
-		pointsByClass: make(map[DataClass]Points, len(f.Points)),
-		tableClasses:  make(map[string][]DataClass),
-		routeAllowed:  make(map[string]map[DataClass]struct{}),
+		pointsByClass:    make(map[DataClass]Points, len(f.Points)),
+		tableClasses:     make(map[string][]DataClass),
+		routeAllowed:     make(map[string]map[DataClass]struct{}),
+		canaryUIDs:       make(map[uint64]struct{}),
+		canaryRouteExact: make(map[string]struct{}),
 	}
 
 	for k, v := range f.Points {
@@ -209,6 +240,30 @@ func parse(raw []byte) (*Catalog, error) {
 		c.secretPatterns = append(c.secretPatterns, secretPattern{
 			Name: s.Name, Re: re, Classes: classes,
 		})
+	}
+
+	for _, cu := range f.CanaryUIDs {
+		if cu.UID != 0 {
+			c.canaryUIDs[cu.UID] = struct{}{}
+		}
+		if cu.From != 0 || cu.To != 0 {
+			lo, hi := cu.From, cu.To
+			if hi < lo {
+				lo, hi = hi, lo
+			}
+			c.canaryRanges = append(c.canaryRanges, uidRange{Low: lo, High: hi})
+		}
+	}
+
+	for _, route := range f.CanaryRoutes {
+		if route == "" {
+			continue
+		}
+		if strings.HasSuffix(route, "/") {
+			c.canaryRoutePrefix = append(c.canaryRoutePrefix, route)
+		} else {
+			c.canaryRouteExact[route] = struct{}{}
+		}
 	}
 
 	for _, r := range f.Routes {
@@ -305,6 +360,47 @@ func (c *Catalog) RouteAllows(route string, cl DataClass) (allowed, hasPolicy bo
 	return allowed, true
 }
 
+// IsCanaryUID reports whether the given user id matches any declared
+// canary uid or range. Used by the App DB tap and other identity-
+// aware sensors to stamp `data_classes=canary` on events that touch
+// a planted user. Zero false positives by construction — operators
+// declare canary uids that no legitimate workflow references.
+func (c *Catalog) IsCanaryUID(uid uint64) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if _, ok := c.canaryUIDs[uid]; ok {
+		return true
+	}
+	for _, r := range c.canaryRanges {
+		if uid >= r.Low && uid <= r.High {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCanaryRoute reports whether the given HTTP route is a planted
+// canary. Operators name routes that no legitimate client should
+// ever request (e.g. /api/v0/debug, /admin-legacy/). Used by the
+// Request Contract layer to tag the contract — and every downstream
+// event — with `data_classes=canary` for instant-fire detection.
+//
+// Trailing "/" in a declared pattern means prefix match; otherwise
+// exact match.
+func (c *Catalog) IsCanaryRoute(route string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if _, ok := c.canaryRouteExact[route]; ok {
+		return true
+	}
+	for _, p := range c.canaryRoutePrefix {
+		if strings.HasPrefix(route, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // Stats returns counters useful for the health.snapshot LocalAPI
 // handler and operator introspection.
 type Stats struct {
@@ -313,6 +409,9 @@ type Stats struct {
 	PathGlobs      int    `json:"path_globs"`
 	SecretPatterns int    `json:"secret_patterns"`
 	Routes         int    `json:"routes"`
+	CanaryUIDs     int    `json:"canary_uids"`
+	CanaryRanges   int    `json:"canary_uid_ranges"`
+	CanaryRoutes   int    `json:"canary_routes"`
 	Source         string `json:"source,omitempty"`
 }
 
@@ -325,6 +424,9 @@ func (c *Catalog) Stats() Stats {
 		PathGlobs:      len(c.pathGlobs),
 		SecretPatterns: len(c.secretPatterns),
 		Routes:         len(c.routeAllowed),
+		CanaryUIDs:     len(c.canaryUIDs),
+		CanaryRanges:   len(c.canaryRanges),
+		CanaryRoutes:   len(c.canaryRouteExact) + len(c.canaryRoutePrefix),
 		Source:         c.source,
 	}
 }
