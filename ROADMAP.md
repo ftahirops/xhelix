@@ -22,6 +22,7 @@
 | P-CJ  | Crown-Jewel Profile (SMB post-compromise)| 50 | planned    |
 | P-FT  | Full Takeover Detection + containment cell | 91 | planned    |
 | P-REFACTOR | Architecture reconciliation (ActionPlan/CapabilitySet/ContainmentState) | 31 | planned |
+| P-PS | Protected Services — three-ring web defense (refuse + trap + contain) | 65 | planned |
 
 Total core ship: 17 days (P1–P4). Polished release: 23 days (P1–P6).
 DLCF subsystem (P7): adds ~11 weeks on top, split into v1/v2/v3 (see § Phase 7).
@@ -847,6 +848,88 @@ consumer, not theoretical structure.
 - Per-tenant aggregation
 - Backwards-compatibility shims for old LocalAPI clients (LocalAPI
   envelope stays stable; only internal types refactor)
+
+---
+
+## Phase P-PS — Protected Services (web defense + deception trap)
+
+**Goal**: nginx/apache compromise becomes useless to the attacker.
+Three-ring defense (refuse / trap / contain) with the trap layer as
+the A+ value-add — fake shell, sinkhole socket, decoy FS, DNS
+poison, tarpit. Full design in
+[PROTECTED_SERVICES_TRAP.md](PROTECTED_SERVICES_TRAP.md).
+
+Sequences AFTER P-RF.7 + P-RF.9 (executor extraction) because Ring 2
+needs a clean executor backend to attach deception actions.
+
+| Task    | Description                                                                | Days |
+| ------- | -------------------------------------------------------------------------- | ---: |
+| P-PS.1  | `pkg/protectedsvc` types + `pkg/profiles/serviceid` matcher               |    3 |
+| P-PS.2  | `pkg/profiles/contracts` + built-in nginx/apache contracts                 |    4 |
+| P-PS.3  | `pkg/prevent/seccomp` profile generator (Ring 1 syscall denial)            |    5 |
+| P-PS.4  | `pkg/prevent/apparmor` profile generator (Ring 1 fs/exec denial)           |    5 |
+| P-PS.5  | Signal wiring — every Ring-1 refusal emits a takeover.Signal               |    4 |
+| P-PS.6  | Ring 2: honey-sh + bpf_override_return exec redirect                       |    7 |
+| P-PS.7  | Ring 2: sinkhole socket listener + tc redirect                             |    7 |
+| P-PS.8  | Ring 2: decoy filesystem (LSM overlay + canary credentials)                |    5 |
+| P-PS.9  | Ring 2: DNS poison (local resolver shim → sinkhole IP)                     |    3 |
+| P-PS.10 | Crash-loop trap sensor (3 segfaults in 60s → Tier-1 signal)                |    4 |
+| P-PS.11 | Forensic harvest + IOC extraction pipeline                                 |    4 |
+| P-PS.12 | Two-tier learning + crypto-signed profile lock                             |    6 |
+| P-PS.13 | Operator UX (services list, contract view, residual-risk, deception cov)   |    5 |
+| P-PS.14 | Acceptance tests — external red-team scenario suite                        |    3 |
+
+### Success criteria
+
+- `execve("/bin/sh")` from nginx routes to honey-sh; attacker gets a
+  functional fake shell for 60s+ before SuspendProcess fires.
+- Forbidden outbound `connect()` succeeds, lands in sinkhole;
+  attacker's real C2 sees zero callbacks.
+- `cat /etc/shadow` from nginx-cgroup returns decoy shadow with
+  watermarked honey-hashes.
+- Score-to-Suspended latency < 90s for standard exploit chains.
+- Cost-asymmetry ratio (attacker real-time : xhelix CPU-time)
+  ≥ 100×, verified via load test.
+- `xhelix-verify` validates deception evidence chain end-to-end.
+- Operator can disable Ring 2 per-service with single config flag
+  for compliance environments.
+
+### Sequencing
+
+  P-PS.1 → P-PS.2 → P-PS.3 → P-PS.4 → P-PS.5
+                                         ↓
+                P-PS.6 + P-PS.7 + P-PS.8 + P-PS.9 (parallel-friendly)
+                                         ↓
+                P-PS.10 → P-PS.11 → P-PS.12 → P-PS.13 → P-PS.14
+
+P-PS.1 + P-PS.2 can start immediately (data-only, no dispatch
+coupling). P-PS.3..P-PS.5 add Ring 1 prevention. P-PS.6..P-PS.9 are
+the trap layer (the A+ value); each can be developed independently
+once P-PS.5 wires signals to the planner. P-PS.10+ are operator
+surfaces and acceptance work.
+
+### Honest non-promises
+
+1. Does NOT stop in-memory exploitation pre-trigger. If attacker
+   never tries a forbidden primitive, nothing here fires.
+2. Does NOT replace patching. Sandbox + deception means a compromised
+   nginx is contained — but still compromised.
+3. Does NOT detect business-logic abuse. That's BEHAVIORAL_DEFENSE.md
+   territory.
+4. AppArmor only for v1 (skip SELinux); pick one MAC.
+5. Deception evidence retention is separate from normal evidence;
+   legal hold may apply in regulated environments.
+6. ~65 days for full coverage; ~35 for refuse-only MVP (skip Ring 2)
+   but that drops the security grade from A+ to B.
+
+### Out of scope (P-PS)
+
+- Non-web services (databases, message queues) — pattern generalises
+  but contracts must be authored separately.
+- WAF replacement; deep HTTP payload inspection is explicit non-goal.
+- Cloud canary credential integration (AWS/GCP IAM canary tokens) —
+  decoys generated locally; remote registration is a follow-on.
+- SELinux profile generator (skip in v1).
 
 ---
 

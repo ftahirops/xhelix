@@ -39,6 +39,7 @@
 !FULL_TAKEOVER_DETECTION.md
 !CONTAINMENT_DESIGN.md
 !REFACTOR_ROADMAP.md
+!PROTECTED_SERVICES_TRAP.md
 
 # Local state for development
 /var/
