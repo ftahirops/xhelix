@@ -181,6 +181,61 @@ func TestRender_DangerousCapabilitiesAbsent(t *testing.T) {
 	}
 }
 
+func TestRender_DeceptionMode_OmitsRedirectedDenies(t *testing.T) {
+	svc := newSvc(t, protectedsvc.KindNginx, protectedsvc.RoleReverseProxy)
+	svc.Response.Deception = protectedsvc.AllOn()
+	p, err := Render(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Shells/interpreters/downloaders should NOT have deny lines —
+	// they're routed via Px transition.
+	forbidden := []string{
+		"deny /bin/sh xm,",
+		"deny /bin/bash xm,",
+		"deny /usr/bin/python3 xm,",
+		"deny /usr/bin/curl xm,",
+		"deny /usr/bin/sudo xm,",
+	}
+	for _, line := range forbidden {
+		if strings.Contains(p.Body, line) {
+			t.Errorf("deception mode should NOT contain %q (bind-mount routes it instead)", line)
+		}
+	}
+	// Honey-sh transition MUST be present.
+	if !strings.Contains(p.Body, "/usr/lib/xhelix/honey-sh rPx -> xhelix.honeysh,") {
+		t.Fatal("deception mode missing honey-sh transition")
+	}
+	// Redirected paths get rPx — verify a few.
+	for _, line := range []string{
+		"/bin/sh rPx -> xhelix.honeysh,",
+		"/bin/bash rPx -> xhelix.honeysh,",
+		"/usr/bin/python3 rPx -> xhelix.honeysh,",
+	} {
+		if !strings.Contains(p.Body, line) {
+			t.Errorf("deception mode missing transition for %q", line)
+		}
+	}
+	// Non-redirected staging tools should STILL be denied
+	// (base64/xxd/openssl aren't in the redirect set).
+	if !strings.Contains(p.Body, "deny /usr/bin/base64 xm,") {
+		t.Fatal("staging tools should still be denied even in deception mode")
+	}
+}
+
+func TestRender_DeceptionDisabled_KeepsDeniesNormal(t *testing.T) {
+	svc := newSvc(t, protectedsvc.KindNginx, protectedsvc.RoleReverseProxy)
+	svc.Response.Deception = protectedsvc.AllOff() // compliance mode
+	p, _ := Render(svc)
+	// All never-learnable execs should be denied.
+	if !strings.Contains(p.Body, "deny /bin/sh xm,") {
+		t.Fatal("non-deception mode must keep deny lines")
+	}
+	if strings.Contains(p.Body, "xhelix.honeysh") {
+		t.Fatal("non-deception mode must NOT mention honeysh")
+	}
+}
+
 func mustContain(t *testing.T, body string, needles ...string) {
 	t.Helper()
 	for _, n := range needles {

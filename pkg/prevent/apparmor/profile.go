@@ -132,7 +132,25 @@ func Render(svc *protectedsvc.ProtectedService) (Profile, error) {
 	}
 	fmt.Fprintln(&b)
 
-	// Denies — the heart of Ring 1.
+	// Denies — the heart of Ring 1. If deception.fake_exec is on,
+	// the redirected exec paths (shell/interp/downloader/recon/priv)
+	// are NOT denied here — bind-mounts route them to honey-sh and
+	// AppArmor needs to allow the resolved path. See execroute pkg.
+	if svc.Response.Deception.Enabled && svc.Response.Deception.FakeExec {
+		fmt.Fprintf(&b, "  # Ring 2 redirect target (honey-sh) — profile transition\n")
+		fmt.Fprintln(&b, "  /usr/lib/xhelix/honey-sh rPx -> xhelix.honeysh,")
+		fmt.Fprintln(&b)
+		// Allow exec on the bind-mounted targets so the redirect can
+		// complete. The bind-mount makes /bin/sh literally be the
+		// honey-sh inode; AppArmor matches on the requested path
+		// string, so we need each redirected path to be ix or Px.
+		fmt.Fprintf(&b, "  # Ring 2 redirected paths (bind-mount → honey-sh)\n")
+		for _, p := range redirectedPaths() {
+			fmt.Fprintf(&b, "  %s rPx -> xhelix.honeysh,\n", p)
+		}
+		fmt.Fprintln(&b)
+	}
+
 	denies := buildDenies(svc)
 	if len(denies) > 0 {
 		fmt.Fprintf(&b, "  # Ring 1 denials (PROTECTED_SERVICES_TRAP.md §5.4)\n")
@@ -186,15 +204,50 @@ func ProfileName(svc string) string {
 
 // --- internals ---
 
+// redirectedPaths returns NeverLearnableExec entries that get
+// bind-mounted to honey-sh under deception mode. Same paths the
+// execroute package generates BindReadOnlyPaths for. Keep the two
+// in sync.
+func redirectedPaths() []string {
+	out := make([]string, 0, len(contracts.NeverLearnableExec))
+	for _, p := range contracts.NeverLearnableExec {
+		switch contracts.ClassifyExecAttempt(p) {
+		case "shell_attempt", "interp_attempt", "downloader",
+			"recon_tool", "priv_tool":
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // buildDenies returns the deny lines: NeverLearnable execs + any
 // operator-supplied DenyExecPaths (already unioned by contracts.Merge).
+//
+// When deception.fake_exec is enabled, the redirected exec
+// categories (shell/interp/downloader/recon/priv) are EXCLUDED —
+// the bind-mount + Px transition handles them. The deny list still
+// catches operator-declared customs + the non-redirected staging
+// tools (base64/xxd/openssl).
 func buildDenies(svc *protectedsvc.ProtectedService) []string {
+	redirected := map[string]struct{}{}
+	if svc.Response.Deception.Enabled && svc.Response.Deception.FakeExec {
+		for _, p := range redirectedPaths() {
+			redirected[p] = struct{}{}
+		}
+	}
+
 	// Use a set to absorb duplicates between built-in + override.
 	set := map[string]struct{}{}
 	for _, p := range contracts.NeverLearnableExec {
+		if _, skip := redirected[p]; skip {
+			continue
+		}
 		set[p] = struct{}{}
 	}
 	for _, p := range svc.Contract.DenyExecPaths {
+		if _, skip := redirected[p]; skip {
+			continue
+		}
 		set[p] = struct{}{}
 	}
 
