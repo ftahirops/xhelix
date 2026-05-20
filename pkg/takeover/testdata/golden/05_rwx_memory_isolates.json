@@ -1,0 +1,31 @@
+{
+  "name": "rwx_memory single signal (weight 95) → isolated",
+  "signals": [
+    {
+      "kind": "rwx_memory",
+      "remote_ip": "1.1.1.1"
+    }
+  ],
+  "lineage_id": 5,
+  "alert": {
+    "rule_id": ""
+  },
+  "expected": {
+    "tier": "isolated",
+    "actions": [
+      "snapshot",
+      "memscan",
+      "suspend_process",
+      "isolate_cgroup",
+      "ban_remote_ip",
+      "lock_local_user"
+    ],
+    "reversible": true,
+    "score": 95,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "takeover score=95 last=rwx_memory"
+    ]
+  }
+}

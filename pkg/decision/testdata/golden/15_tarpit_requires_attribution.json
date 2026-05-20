@@ -1,0 +1,33 @@
+{
+  "name": "Contained plan with attributed IP — tarpit attribution reason present",
+  "alert": {
+    "rule_id": "rule.tarpit",
+    "mode": "detect"
+  },
+  "score": 100,
+  "lineage_id": 15,
+  "attributed_ips": [
+    "9.9.9.9"
+  ],
+  "bastion_available": true,
+  "off_host_mirror_available": true,
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "contained",
+    "actions": [
+      "snapshot",
+      "memscan",
+      "suspend_process",
+      "isolate_cgroup",
+      "ban_remote_ip",
+      "isolate_host",
+      "lock_local_user"
+    ],
+    "reversible": true,
+    "score": 100,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false
+  }
+}

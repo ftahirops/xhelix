@@ -1,0 +1,29 @@
+{
+  "name": "shell_attempt with remote_ip → BanRemoteIP enabled in suspend plan",
+  "signals": [
+    {
+      "kind": "shell_attempt",
+      "remote_ip": "10.20.30.40"
+    }
+  ],
+  "lineage_id": 10,
+  "alert": {
+    "rule_id": ""
+  },
+  "expected": {
+    "tier": "suspended",
+    "actions": [
+      "snapshot",
+      "suspend_process",
+      "isolate_cgroup",
+      "ban_remote_ip"
+    ],
+    "reversible": true,
+    "score": 80,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "takeover score=80 last=shell_attempt"
+    ]
+  }
+}

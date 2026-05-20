@@ -1,0 +1,29 @@
+{
+  "name": "Current state isolated + new low-score event → hold at isolated",
+  "alert": {
+    "rule_id": "rule.hold",
+    "mode": "detect"
+  },
+  "score": 55,
+  "lineage_id": 12,
+  "caps_preset": "all",
+  "state_preset": "isolated",
+  "expected": {
+    "tier": "isolated",
+    "actions": [
+      "snapshot",
+      "memscan",
+      "suspend_process",
+      "isolate_cgroup",
+      "lock_local_user"
+    ],
+    "reversible": true,
+    "score": 55,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs"
+    ]
+  }
+}

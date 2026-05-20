@@ -1,0 +1,28 @@
+{
+  "name": "score 80 + attributed_ip → BanRemoteIP enabled",
+  "alert": {
+    "rule_id": "test.suspend.attr",
+    "mode": "detect"
+  },
+  "score": 80,
+  "lineage_id": 4,
+  "attributed_ips": [
+    "10.20.30.40"
+  ],
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "suspended",
+    "actions": [
+      "snapshot",
+      "suspend_process",
+      "isolate_cgroup",
+      "ban_remote_ip"
+    ],
+    "reversible": true,
+    "score": 80,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false
+  }
+}

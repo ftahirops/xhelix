@@ -1,0 +1,29 @@
+{
+  "name": "Crown-jewel L1 forces ≥suspended at low score; reason carries CJ tier",
+  "alert": {
+    "rule_id": "rule.cj",
+    "mode": "detect"
+  },
+  "score": 20,
+  "lineage_id": 10,
+  "crown_jewel_tier": "L1",
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "suspended",
+    "actions": [
+      "snapshot",
+      "suspend_process",
+      "isolate_cgroup"
+    ],
+    "reversible": true,
+    "score": 20,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs",
+      "crown-jewel tier=L1"
+    ]
+  }
+}

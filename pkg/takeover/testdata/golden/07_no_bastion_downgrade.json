@@ -1,0 +1,40 @@
+{
+  "name": "would be contained but no bastion → downgrade to isolated + warning",
+  "signals": [
+    {
+      "kind": "canary_touch",
+      "remote_ip": "9.9.9.9"
+    },
+    {
+      "kind": "defense_evasion"
+    },
+    {
+      "kind": "passport_missing"
+    }
+  ],
+  "lineage_id": 7,
+  "alert": {
+    "rule_id": ""
+  },
+  "expected": {
+    "tier": "isolated",
+    "actions": [
+      "snapshot",
+      "memscan",
+      "suspend_process",
+      "isolate_cgroup",
+      "ban_remote_ip",
+      "lock_local_user"
+    ],
+    "reversible": true,
+    "score": 100,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "takeover score=100 last=passport_missing"
+    ],
+    "warnings_contain": [
+      "isolate_host skipped: missing capability bastion+off-host-mirror"
+    ]
+  }
+}

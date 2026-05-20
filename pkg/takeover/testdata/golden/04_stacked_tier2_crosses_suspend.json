@@ -1,0 +1,37 @@
+{
+  "name": "cred_access + persistence (both Tier-2) stack to ≥75 = suspend",
+  "signals": [
+    {
+      "kind": "cred_access"
+    },
+    {
+      "kind": "persistence",
+      "offset_ms": 500
+    }
+  ],
+  "lineage_id": 4,
+  "alert": {
+    "rule_id": ""
+  },
+  "expected": {
+    "tier": "isolated",
+    "actions": [
+      "snapshot",
+      "memscan",
+      "suspend_process",
+      "isolate_cgroup",
+      "lock_local_user"
+    ],
+    "reversible": true,
+    "score": 100,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs",
+      "takeover score=100 last=persistence"
+    ],
+    "warnings_contain": [
+      "isolate_host skipped: missing capability bastion+off-host-mirror"
+    ]
+  }
+}

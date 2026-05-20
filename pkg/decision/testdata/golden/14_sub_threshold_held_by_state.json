@@ -1,0 +1,27 @@
+{
+  "name": "Score 10 but current state suspended → hold at suspended (plan still emits)",
+  "alert": {
+    "rule_id": "rule.lowscore.heldstate",
+    "mode": "detect"
+  },
+  "score": 10,
+  "lineage_id": 14,
+  "caps_preset": "all",
+  "state_preset": "suspended",
+  "expected": {
+    "tier": "suspended",
+    "actions": [
+      "snapshot",
+      "suspend_process",
+      "isolate_cgroup"
+    ],
+    "reversible": true,
+    "score": 10,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs"
+    ]
+  }
+}

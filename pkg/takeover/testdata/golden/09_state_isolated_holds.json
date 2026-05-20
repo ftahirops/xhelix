@@ -1,0 +1,31 @@
+{
+  "name": "current state isolated + weak new signal → hold at isolated",
+  "signals": [
+    {
+      "kind": "new_endpoint"
+    }
+  ],
+  "lineage_id": 9,
+  "state_preset": "isolated",
+  "alert": {
+    "rule_id": ""
+  },
+  "expected": {
+    "tier": "isolated",
+    "actions": [
+      "snapshot",
+      "memscan",
+      "suspend_process",
+      "isolate_cgroup",
+      "lock_local_user"
+    ],
+    "reversible": true,
+    "score": 15,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs",
+      "takeover score=15 last=new_endpoint"
+    ]
+  }
+}

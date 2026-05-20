@@ -1,0 +1,27 @@
+{
+  "name": "ModeQuarantine forces at least suspended even with score 10",
+  "alert": {
+    "rule_id": "rule.quarantine",
+    "mode": "quarantine"
+  },
+  "score": 10,
+  "lineage_id": 8,
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "suspended",
+    "actions": [
+      "snapshot",
+      "suspend_process",
+      "isolate_cgroup"
+    ],
+    "reversible": true,
+    "score": 10,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs"
+    ]
+  }
+}

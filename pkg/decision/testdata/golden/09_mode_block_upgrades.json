@@ -1,0 +1,29 @@
+{
+  "name": "ModeBlock forces at least isolated even with score 10",
+  "alert": {
+    "rule_id": "rule.block",
+    "mode": "block"
+  },
+  "score": 10,
+  "lineage_id": 9,
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "isolated",
+    "actions": [
+      "snapshot",
+      "memscan",
+      "suspend_process",
+      "isolate_cgroup",
+      "lock_local_user"
+    ],
+    "reversible": true,
+    "score": 10,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs"
+    ]
+  }
+}

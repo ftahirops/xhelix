@@ -1,0 +1,17 @@
+{
+  "name": "no signals → nil plan",
+  "signals": null,
+  "lineage_id": 1,
+  "alert": {
+    "rule_id": ""
+  },
+  "expected": {
+    "tier": "",
+    "actions": null,
+    "reversible": false,
+    "score": 0,
+    "is_hard_action": false,
+    "has_destructive_action": false
+  },
+  "expect_nil_plan": true
+}

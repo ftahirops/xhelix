@@ -1,0 +1,20 @@
+{
+  "name": "score below 50 with no current state → NoOp",
+  "alert": {
+    "rule_id": "test.low",
+    "mode": "detect"
+  },
+  "score": 25,
+  "lineage_id": 1,
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "observed",
+    "actions": [],
+    "reversible": true,
+    "score": 25,
+    "is_no_op": true,
+    "is_hard_action": false,
+    "has_destructive_action": false
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "score 75 → suspended; no attribution → BanRemoteIP off",
+  "alert": {
+    "rule_id": "test.suspend",
+    "mode": "detect"
+  },
+  "score": 80,
+  "lineage_id": 3,
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "suspended",
+    "actions": [
+      "snapshot",
+      "suspend_process",
+      "isolate_cgroup"
+    ],
+    "reversible": true,
+    "score": 80,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs"
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "stacked Tier-1 + bastion → contained tier",
+  "signals": [
+    {
+      "kind": "canary_touch",
+      "remote_ip": "9.9.9.9"
+    },
+    {
+      "kind": "defense_evasion"
+    },
+    {
+      "kind": "passport_missing"
+    }
+  ],
+  "lineage_id": 6,
+  "bastion_available": true,
+  "off_host_mirror_available": true,
+  "alert": {
+    "rule_id": ""
+  },
+  "expected": {
+    "tier": "contained",
+    "actions": [
+      "snapshot",
+      "memscan",
+      "suspend_process",
+      "isolate_cgroup",
+      "ban_remote_ip",
+      "isolate_host",
+      "lock_local_user"
+    ],
+    "reversible": true,
+    "score": 100,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "takeover score=100 last=passport_missing"
+    ]
+  }
+}

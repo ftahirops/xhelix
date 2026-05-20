@@ -1,0 +1,25 @@
+{
+  "name": "two low-weight new_endpoint signals stay sub-threshold + observed state → nil",
+  "signals": [
+    {
+      "kind": "new_endpoint"
+    },
+    {
+      "kind": "new_endpoint",
+      "offset_ms": 1000
+    }
+  ],
+  "lineage_id": 3,
+  "alert": {
+    "rule_id": ""
+  },
+  "expected": {
+    "tier": "",
+    "actions": null,
+    "reversible": false,
+    "score": 0,
+    "is_hard_action": false,
+    "has_destructive_action": false
+  },
+  "expect_nil_plan": true
+}

@@ -1,0 +1,27 @@
+{
+  "name": "score 50 → triaged tier with delay + step-up",
+  "alert": {
+    "rule_id": "test.triaged",
+    "reason": "passed threshold",
+    "mode": "detect"
+  },
+  "score": 55,
+  "lineage_id": 2,
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "triaged",
+    "actions": [
+      "delay",
+      "require_step_up"
+    ],
+    "reversible": true,
+    "score": 55,
+    "is_no_op": false,
+    "is_hard_action": false,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "passed threshold"
+    ]
+  }
+}

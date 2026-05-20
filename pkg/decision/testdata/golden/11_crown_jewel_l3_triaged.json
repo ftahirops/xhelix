@@ -1,0 +1,27 @@
+{
+  "name": "Crown-jewel L3 forces ≥triaged at low score",
+  "alert": {
+    "rule_id": "rule.cj.l3",
+    "mode": "detect"
+  },
+  "score": 10,
+  "lineage_id": 11,
+  "crown_jewel_tier": "L3",
+  "caps_preset": "all",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "triaged",
+    "actions": [
+      "delay",
+      "require_step_up"
+    ],
+    "reversible": true,
+    "score": 10,
+    "is_no_op": false,
+    "is_hard_action": false,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "crown-jewel tier=L3"
+    ]
+  }
+}

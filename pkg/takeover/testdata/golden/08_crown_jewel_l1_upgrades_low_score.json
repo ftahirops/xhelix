@@ -1,0 +1,31 @@
+{
+  "name": "CJ tier L1 forces ≥suspended even with weak signal",
+  "signals": [
+    {
+      "kind": "new_endpoint"
+    }
+  ],
+  "lineage_id": 8,
+  "crown_jewel_tier": "L1",
+  "use_alert": true,
+  "alert": {
+    "rule_id": "cj.l1",
+    "mode": "detect"
+  },
+  "expected": {
+    "tier": "suspended",
+    "actions": [
+      "snapshot",
+      "suspend_process",
+      "isolate_cgroup"
+    ],
+    "reversible": true,
+    "score": 15,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "reasons_contain": [
+      "ban_remote_ip skipped: no attributed remote IPs",
+      "crown-jewel tier=L1"
+    ]
+  }
+}

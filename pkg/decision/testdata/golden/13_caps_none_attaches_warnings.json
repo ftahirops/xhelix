@@ -1,0 +1,34 @@
+{
+  "name": "Suspend plan with caps_none → every action gets a capability warning",
+  "alert": {
+    "rule_id": "rule.caps",
+    "mode": "detect"
+  },
+  "score": 80,
+  "lineage_id": 13,
+  "attributed_ips": [
+    "1.2.3.4"
+  ],
+  "caps_preset": "none",
+  "state_preset": "observed",
+  "expected": {
+    "tier": "suspended",
+    "actions": [
+      "snapshot",
+      "suspend_process",
+      "isolate_cgroup",
+      "ban_remote_ip"
+    ],
+    "reversible": true,
+    "score": 80,
+    "is_no_op": false,
+    "is_hard_action": true,
+    "has_destructive_action": false,
+    "warnings_contain": [
+      "ban_remote_ip requires runtime support",
+      "isolate_cgroup requires runtime support",
+      "snapshot requires runtime support",
+      "suspend_process requires runtime support"
+    ]
+  }
+}
