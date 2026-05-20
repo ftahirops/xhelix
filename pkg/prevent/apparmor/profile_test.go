@@ -181,6 +181,51 @@ func TestRender_DangerousCapabilitiesAbsent(t *testing.T) {
 	}
 }
 
+func TestRenderWithMode_ComplainSetsFlag(t *testing.T) {
+	svc := newSvc(t, protectedsvc.KindNginx, protectedsvc.RoleStatic)
+	p, err := RenderWithMode(svc, ModeComplain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Mode != ModeComplain {
+		t.Fatalf("Mode=%q want complain", p.Mode)
+	}
+	if !strings.Contains(p.Body, "flags=(complain)") {
+		t.Fatalf("profile body missing flags=(complain):\n%s", p.Body)
+	}
+	// Profile header line must be the FIRST profile declaration —
+	// flags go after the path, before the opening brace.
+	if !strings.Contains(p.Body, " /usr/sbin/nginx flags=(complain) {") {
+		t.Fatalf("flags suffix not in right spot:\n%s", p.Body)
+	}
+}
+
+func TestRenderWithMode_EnforceHasNoFlag(t *testing.T) {
+	svc := newSvc(t, protectedsvc.KindNginx, protectedsvc.RoleStatic)
+	p, _ := RenderWithMode(svc, ModeEnforce)
+	if strings.Contains(p.Body, "flags=(complain)") {
+		t.Fatal("enforce mode must NOT include complain flag")
+	}
+	if p.Mode != ModeEnforce {
+		t.Fatalf("Mode=%q want enforce", p.Mode)
+	}
+}
+
+func TestRender_DefaultsToEnforce(t *testing.T) {
+	svc := newSvc(t, protectedsvc.KindNginx, protectedsvc.RoleStatic)
+	p, _ := Render(svc)
+	if p.Mode != ModeEnforce {
+		t.Fatalf("Mode=%q want enforce (Render default)", p.Mode)
+	}
+}
+
+func TestRenderWithMode_InvalidModeRejected(t *testing.T) {
+	svc := newSvc(t, protectedsvc.KindNginx, protectedsvc.RoleStatic)
+	if _, err := RenderWithMode(svc, Mode("monitor")); err == nil {
+		t.Fatal("invalid mode should fail")
+	}
+}
+
 func TestRender_DeceptionMode_OmitsRedirectedDenies(t *testing.T) {
 	svc := newSvc(t, protectedsvc.KindNginx, protectedsvc.RoleReverseProxy)
 	svc.Response.Deception = protectedsvc.AllOn()

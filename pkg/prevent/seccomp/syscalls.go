@@ -79,6 +79,9 @@ var syscallTable = map[Arch]map[string]uint32{
 		"bpf":              321,
 		"userfaultfd":      323,
 		"pivot_root":       155,
+		// Cross-process memory primitives (kernel 3.2+).
+		"process_vm_readv":  310,
+		"process_vm_writev": 311,
 		// Net-extras some operators add:
 		"sendmmsg":         307,
 		"recvmmsg":         299,
@@ -101,6 +104,9 @@ var syscallTable = map[Arch]map[string]uint32{
 		"bpf":              280,
 		"userfaultfd":      282,
 		"kexec_file_load":  294,
+		// Cross-process memory primitives.
+		"process_vm_readv":  270,
+		"process_vm_writev": 271,
 		"sendmmsg":         269,
 		"recvmmsg":         243,
 	},

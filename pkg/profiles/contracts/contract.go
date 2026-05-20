@@ -76,6 +76,11 @@ var NeverLearnableSyscalls = []string{
 	"mount", "umount2", "pivot_root", "unshare", "setns",
 	"kexec_load", "kexec_file_load", "init_module", "finit_module",
 	"delete_module", "swapon", "swapoff", "reboot",
+	// Cross-process memory access — exploit primitive for reading
+	// other process address spaces. Per the live-exploit-detection
+	// comparison, a sleeper signal worth blocking from any
+	// protected web server.
+	"process_vm_readv", "process_vm_writev",
 }
 
 // NeverLearnableMemory is the always-deny memory primitive set.

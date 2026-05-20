@@ -33,18 +33,47 @@ type Profile struct {
 	Path string
 	// Body is the rendered profile text.
 	Body string
+	// Mode reflects whether the profile was rendered in complain or
+	// enforce mode (cosmetic field — the truth is in Body's
+	// flags=(complain) declaration).
+	Mode Mode
 }
+
+// Mode controls whether a rendered profile enforces denials or just
+// logs them. The recommended operator workflow is:
+//   1. Deploy ModeComplain (audit-only)
+//   2. Watch /var/log/audit/audit.log for apparmor=ALLOWED + DENIED lines
+//   3. Adjust the contract until denials are exclusively
+//      attacker behavior (no false positives)
+//   4. Re-render in ModeEnforce and reload
+type Mode string
+
+const (
+	// ModeEnforce — default; denials block + emit signals.
+	ModeEnforce Mode = "enforce"
+	// ModeComplain — denials log to audit but don't block. Profile
+	// header gets `flags=(complain)` so apparmor_parser flips the
+	// behaviour without us changing rules.
+	ModeComplain Mode = "complain"
+)
 
 // ProfileNamePrefix is the namespace under which xhelix-generated
 // profiles live. Operators can grep /etc/apparmor.d/ for xhelix.*
 // to see everything we install.
 const ProfileNamePrefix = "xhelix"
 
-// Render builds the AppArmor profile text for a ProtectedService.
+// Render builds the AppArmor profile text for a ProtectedService
+// in enforce mode. Thin wrapper around RenderWithMode for callers
+// that don't need a mode toggle.
+func Render(svc *protectedsvc.ProtectedService) (Profile, error) {
+	return RenderWithMode(svc, ModeEnforce)
+}
+
+// RenderWithMode builds the profile in the requested mode.
 // Pure function — does not touch the filesystem. The result is
 // human-readable, deterministic (same input → identical bytes), and
 // loadable by apparmor_parser as-is.
-func Render(svc *protectedsvc.ProtectedService) (Profile, error) {
+func RenderWithMode(svc *protectedsvc.ProtectedService, mode Mode) (Profile, error) {
 	if svc == nil {
 		return Profile{}, fmt.Errorf("apparmor: nil service")
 	}
@@ -53,6 +82,12 @@ func Render(svc *protectedsvc.ProtectedService) (Profile, error) {
 	}
 	if svc.ExecPath == "" {
 		return Profile{}, fmt.Errorf("apparmor %q: exec_path required", svc.Name)
+	}
+	if mode == "" {
+		mode = ModeEnforce
+	}
+	if mode != ModeEnforce && mode != ModeComplain {
+		return Profile{}, fmt.Errorf("apparmor %q: invalid mode %q", svc.Name, mode)
 	}
 
 	name := ProfileName(svc.Name)
@@ -67,7 +102,13 @@ func Render(svc *protectedsvc.ProtectedService) (Profile, error) {
 	fmt.Fprintf(&b, "# See PROTECTED_SERVICES_TRAP.md §5 for the policy model.\n")
 	fmt.Fprintln(&b)
 
-	fmt.Fprintf(&b, "profile %s %s {\n", name, svc.ExecPath)
+	// Mode flag immediately after the profile-name+path header.
+	// AppArmor accepts: `profile NAME PATH flags=(complain) { ... }`.
+	flagSuffix := ""
+	if mode == ModeComplain {
+		flagSuffix = " flags=(complain)"
+	}
+	fmt.Fprintf(&b, "profile %s %s%s {\n", name, svc.ExecPath, flagSuffix)
 	fmt.Fprintln(&b, `  #include <abstractions/base>`)
 	fmt.Fprintln(&b, `  #include <abstractions/nameservice>`)
 	fmt.Fprintln(&b)
@@ -193,6 +234,7 @@ func Render(svc *protectedsvc.ProtectedService) (Profile, error) {
 	return Profile{
 		Name: name,
 		Body: b.String(),
+		Mode: mode,
 	}, nil
 }
 
