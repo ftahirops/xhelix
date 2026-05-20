@@ -28,6 +28,8 @@ func main() {
 	root.AddCommand(newHistoryCmd())
 	root.AddCommand(newPassportCmd())
 	root.AddCommand(newWizardCmd())
+	root.AddCommand(newProtectCmd())
+	root.AddCommand(newForensicCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
