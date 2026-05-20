@@ -28,6 +28,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/correlator"
+	"github.com/xhelix/xhelix/pkg/daemon/wire"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/execguard"
@@ -306,6 +307,29 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		})
 		_ = respEngine.Start(ctx)
 		log.Info("response engine enabled")
+	}
+
+	// P-RF.9b daemon wiring: planner pipeline runs in shadow mode
+	// alongside the legacy response engine. The planner observes
+	// every alert as a takeover.Signal, computes ActionPlans, and
+	// (in shadow mode) logs what the Executor would have done. The
+	// legacy respEngine remains authoritative for actions. Operator
+	// flips to active mode via takeover.active=true once they're
+	// satisfied that the plans match policy on their own traffic.
+	var plannerWiring *wire.PlannerWiring
+	if respEngine != nil {
+		plannerWiring = wire.New(wire.Config{
+			Log:                    log,
+			Active:                 cfg.Takeover.Active,
+			TickInterval:           cfg.Takeover.TickInterval,
+			MinScoreToPlan:         cfg.Takeover.MinScore,
+			BastionAvailable:       cfg.Takeover.BastionAvailable,
+			OffHostMirrorAvailable: cfg.Takeover.OffHostMirror,
+		}, respEngine)
+		go plannerWiring.Tick(ctx)
+		log.Info("planner wiring enabled",
+			"active", cfg.Takeover.Active,
+			"tick", cfg.Takeover.TickInterval)
 	}
 
 	// Exec-deny guard — fanotify FAN_OPEN_EXEC_PERM to prevent execve
@@ -603,6 +627,14 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 		if respEngine != nil {
 			respEngine.OnAlert(a)
+		}
+		// P-RF.9b daemon wiring — planner observes every alert as a
+		// takeover.Signal. Shadow mode by default: the planner runs
+		// but Executor only LOGS what it would do. Operator flips
+		// to active via takeover.active=true once they're confident
+		// the plans match policy.
+		if plannerWiring != nil {
+			plannerWiring.OnAlert(a)
 		}
 		// Feed the dedupe engine so alerts.list returns clusters.
 		dst := a.Event.Tags["dst_ip"]

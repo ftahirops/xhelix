@@ -52,6 +52,28 @@ type Config struct {
 	ThreatFeed  ThreatFeedConfig  `yaml:"threatfeed"`
 	DNSExfil    DNSExfilConfig    `yaml:"dnsexfil"`
 	Baseline    BaselineConfig    `yaml:"baseline"`
+
+	// Takeover — P-RF.9b daemon wiring for the planner pipeline.
+	// Default: shadow mode (planner runs, Executor logs only).
+	Takeover TakeoverConfig `yaml:"takeover"`
+}
+
+// TakeoverConfig — pkg/daemon/wire knobs.
+type TakeoverConfig struct {
+	// Active flips authority: false (default) = shadow mode (log
+	// only), true = planner ActionPlans actually run via Executor.
+	Active bool `yaml:"active"`
+	// TickInterval is how often the planner walks active lineages.
+	// Default 5s.
+	TickInterval time.Duration `yaml:"tick_interval"`
+	// MinScore — sub-threshold scores produce no plan.
+	// Default 50 (the planner's own default).
+	MinScore int `yaml:"min_score"`
+	// BastionAvailable + OffHostMirror — Layer-5 IsolateHost
+	// preconditions. Both required for the planner to emit
+	// contained-tier plans; otherwise it downgrades to isolated.
+	BastionAvailable bool `yaml:"bastion_available"`
+	OffHostMirror    bool `yaml:"off_host_mirror"`
 }
 
 // LoggingConfig configures the agent's own log output.
