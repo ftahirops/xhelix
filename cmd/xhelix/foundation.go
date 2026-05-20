@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/passport"
+	"github.com/xhelix/xhelix/pkg/reqcontract"
 )
 
 // defaultCatalogPaths lists candidate paths for the DLCF catalog,
@@ -68,9 +70,10 @@ type foundationContext struct {
 	Egress     *egress.Policy
 	Passports  *passport.Store
 	AdminGuard *adminguard.Guard
-	HotGraph   *hotgraph.Graph
-	ColdStore  *coldstore.Store
-	Evidence   *evidence.Aggregator
+	HotGraph    *hotgraph.Graph
+	ColdStore   *coldstore.Store
+	Evidence    *evidence.Aggregator
+	ReqContract *reqcontract.Store
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -180,6 +183,17 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	fc.Evidence = evidence.New(evidence.Options{})
 	go fc.sweepEvidence(parent)
 
+	// Request Contract store (P-RC.1). Per-HTTP-request capability
+	// tokens, HMAC-signed, 30s default TTL. Substrate for the
+	// behavioral defenses in BEHAVIORAL_DEFENSE.md.
+	rcKeyPath := "/var/lib/xhelix/reqcontract.key"
+	if rcKey, err := loadOrGenerateRCKey(rcKeyPath); err == nil {
+		if rcStore, err := reqcontract.NewStore(rcKey, 0); err == nil {
+			fc.ReqContract = rcStore
+			go fc.sweepReqContract(parent)
+		}
+	}
+
 	// Cold store (P2.3). Durable per-day-partitioned event store.
 	// Best-effort: failure to open isn't fatal — the daemon still
 	// runs without cold persistence. Path lives under StateDir.
@@ -221,6 +235,44 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.ColdStore != nil {
 		_ = fc.ColdStore.Close()
+	}
+}
+
+// loadOrGenerateRCKey returns the HMAC key for Request Contracts,
+// reading it from disk if present, generating + persisting one
+// otherwise. Distinct from the chain key and passport key (different
+// trust scopes).
+func loadOrGenerateRCKey(path string) ([]byte, error) {
+	if data, err := os.ReadFile(path); err == nil && len(data) >= 32 {
+		return data, nil
+	}
+	k, err := reqcontract.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, k, 0o600); err != nil {
+		return nil, err
+	}
+	return k, nil
+}
+
+func (fc *foundationContext) sweepReqContract(ctx context.Context) {
+	// Tick every 10 s — most expiry happens via lazy-delete on
+	// Lookup, but bursty idle workloads need the periodic broom.
+	t := time.NewTicker(10 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if fc.ReqContract != nil {
+				fc.ReqContract.Sweep(time.Now().UTC())
+			}
+		}
 	}
 }
 
@@ -298,6 +350,7 @@ type healthSnapshot struct {
 	HotGraph   healthHotGraphBlock  `json:"hot_graph"`
 	ColdStore  healthColdStoreBlock `json:"cold_store"`
 	Evidence   healthEvidenceBlock  `json:"evidence"`
+	ReqContract healthReqContractBlock `json:"req_contract"`
 	Lineage    healthLineageBlock  `json:"lineage"`
 	DLCF       healthDLCFBlock     `json:"dlcf"`
 	Runtime    healthRuntimeBlock  `json:"runtime"`
@@ -335,6 +388,17 @@ type healthEACBlock struct {
 	LossEvents    uint64 `json:"loss_events"`
 	BufferSize    int    `json:"buffer_size"`
 	ReorderWindow string `json:"reorder_window"`
+}
+
+type healthReqContractBlock struct {
+	Size     int    `json:"size"`
+	MaxSize  int    `json:"max_size"`
+	Issued   uint64 `json:"issued"`
+	Lookups  uint64 `json:"lookups"`
+	LookupOK uint64 `json:"lookup_ok"`
+	Expired  uint64 `json:"expired"`
+	Rejected uint64 `json:"rejected"`
+	Evicted  uint64 `json:"evicted"`
 }
 
 type healthEvidenceBlock struct {
@@ -526,6 +590,45 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 			return map[string]any{"found": false}, nil
 		}
 		return map[string]any{"found": true, "node": node}, nil
+	})
+	srv.RegisterHandler("reqcontract.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.ReqContract == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		return fc.ReqContract.Stats(), nil
+	})
+	srv.RegisterHandler("reqcontract.issue", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.ReqContract == nil {
+			return nil, errors.New("reqcontract store not initialised")
+		}
+		var p reqcontract.IssueParams
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+		c, err := fc.ReqContract.Issue(p)
+		if err != nil {
+			return nil, err
+		}
+		return c, nil
+	})
+	srv.RegisterHandler("reqcontract.lookup", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.ReqContract == nil {
+			return nil, errors.New("reqcontract store not initialised")
+		}
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.ID == "" {
+			return nil, errors.New("id required")
+		}
+		c, ok := fc.ReqContract.Lookup(req.ID)
+		if !ok {
+			return map[string]any{"found": false}, nil
+		}
+		return map[string]any{"found": true, "contract": c}, nil
 	})
 	srv.RegisterHandler("evidence.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
 		if fc.Evidence == nil {
@@ -825,6 +928,24 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	})
 }
 
+// reqContractBlock returns the Request Contract store summary for health.snapshot.
+func (fc *foundationContext) reqContractBlock() healthReqContractBlock {
+	if fc.ReqContract == nil {
+		return healthReqContractBlock{}
+	}
+	s := fc.ReqContract.Stats()
+	return healthReqContractBlock{
+		Size:     s.Size,
+		MaxSize:  s.MaxSize,
+		Issued:   s.Issued,
+		Lookups:  s.Lookups,
+		LookupOK: s.LookupOK,
+		Expired:  s.Expired,
+		Rejected: s.Rejected,
+		Evicted:  s.Evicted,
+	}
+}
+
 // evidenceBlock returns the evidence-aggregator summary for health.snapshot.
 func (fc *foundationContext) evidenceBlock() healthEvidenceBlock {
 	if fc.Evidence == nil {
@@ -969,6 +1090,7 @@ func (fc *foundationContext) snapshot() healthSnapshot {
 		HotGraph:  fc.hotGraphBlock(),
 		ColdStore: fc.coldStoreBlock(),
 		Evidence:  fc.evidenceBlock(),
+		ReqContract: fc.reqContractBlock(),
 		Lineage: healthLineageBlock{
 			StoredOrigins:     fc.Origins.Size(),
 			TaintedLineages:   fc.Origins.TaintedCount(),
