@@ -95,6 +95,71 @@ QPS before claiming "fast enough".
 
 ---
 
+## `hot.db` grew to 14 GB — retention config exists, pruner does not
+
+**What happened**: `/var/lib/xhelix/hot.db` reached 14 GB on a single
+host. xhelix.yaml correctly declared
+`storage.hot.retention_hours: 24` and `storage.hot.max_size_mb: 2048`
+but neither was enforced at runtime. Filesystem was at 87% capacity
+on a 100 GB volume; one more day would have filled it.
+
+**Root cause**: `pkg/store.HotStore` exposes a `Prune(cutoffNs)`
+method but **no goroutine calls it**. The only `Prune()` call in
+`cmd/xhelix/run.go:2222` operates on the *history* store
+(`pkg/store/history.Store`), not `HotStore`. The two are different
+types; the daemon prunes one and ignores the other.
+
+This is the SECOND occurrence of the "config knob accepted but not
+consumed" class of bug. The first was FileSink rotation. Same shape:
+operator reads config, sees retention/cap, assumes enforcement,
+no error message at startup says otherwise.
+
+**What works**: Set `storage.hot.path: ""` to fall back to
+`:memory:` (existing fallback in run.go:131). Delete the on-disk
+files. Restart. 14 GB reclaimed in seconds.
+
+**For next time**:
+1. When adding a config field, search for its consumer the same
+   way ERRORS.md says to search for unused config knobs. If no
+   consumer exists, the field is a lie.
+2. Daemon should refuse to start if a config knob is declared
+   but no consumer is registered. This needs a `config.MustBeConsumed`
+   audit step at startup.
+3. Hot store needs a periodic pruner goroutine wired the same
+   way the history pruner is. Roadmap task.
+
+Commit: 66b9c2e session — fix applied via config disable, root cause
+fix tracked as a roadmap follow-up.
+
+---
+
+## `cold.db` 4.3 GB and growing (related)
+
+**What happened**: `pkg/coldstore` (P2.3, shipped `daa6aeb`) creates
+per-day partition tables and inserts events forever. No old-day
+pruning. After ~1 day of dispatch wiring, 4.3 GB.
+
+**What works**: not yet — `cold.db` is load-bearing for current
+investigations so deletion is risky. Acceptable in the short term
+because cold.db's growth rate (~4 GB/day at observed event rates)
+won't fill the disk for ~7 days, but a proper fix is:
+
+1. Per-day partition table → `DROP TABLE events_YYYYMMDD` for
+   any day older than `retention_days`. Implementation is a
+   one-liner extension to `pkg/coldstore.Sweep()`.
+2. Default retention: 14 days for the cold store, configurable.
+3. Off-host mirror to S3 Object Lock (P-CJ.10) takes the
+   long-term durability burden off local disk.
+
+Tracked as a new roadmap task in P-FT/P-CJ. Until fixed, operators
+should monitor disk usage of `/var/lib/xhelix/cold.db`.
+
+**For next time**: every persistent store added to xhelix must
+have an explicit retention test in CI that confirms the store
+shrinks (or maintains a bounded size) when the pruner runs.
+
+---
+
 ## Format for new entries
 
 ```markdown
