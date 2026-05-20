@@ -22,6 +22,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/beacon"
 	"github.com/xhelix/xhelix/pkg/cgroupclass"
 	"github.com/xhelix/xhelix/pkg/chain"
+	"github.com/xhelix/xhelix/pkg/coldstore"
 	"github.com/xhelix/xhelix/pkg/config"
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/correlator"
@@ -1191,7 +1192,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		beaconDet, dnsexfilDet, baselineAgg,
 		cgroupClassifier, connTable, dnsCollector,
 		shmDet, brandDet,
-		emit)
+		emit,
+		foundation.ColdStore)
 
 	notifyReady()
 
@@ -1280,12 +1282,21 @@ func dispatch(
 	shmDet *shmguard.Detector,
 	brandDet *brandcheck.Detector,
 	emit func(model.Alert),
+	coldStore *coldstore.Store,
 ) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case ev := <-events:
+			// Durable persistence first. Non-blocking; the cold
+			// store drops on overflow and counts it. Done up front
+			// so even events that the downstream enrichment fails
+			// to process are still recorded.
+			if coldStore != nil {
+				evCopy := ev
+				coldStore.Submit(&evCopy)
+			}
 			// Feed session tracker first — it consumes identity
 			// events to open/close sessions and tags subsequent
 			// process spawns with the active session.
