@@ -22,6 +22,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/hotgraph"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/localapi"
+	"github.com/xhelix/xhelix/pkg/nonce"
 	"github.com/xhelix/xhelix/pkg/passport"
 	"github.com/xhelix/xhelix/pkg/reqcontract"
 )
@@ -74,6 +75,7 @@ type foundationContext struct {
 	ColdStore   *coldstore.Store
 	Evidence    *evidence.Aggregator
 	ReqContract *reqcontract.Store
+	Nonces      *nonce.Store
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -183,6 +185,18 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	fc.Evidence = evidence.New(evidence.Options{})
 	go fc.sweepEvidence(parent)
 
+	// Nonce store (P-B.2). Single-use HMAC nonces for sensitive
+	// endpoints — replay-resistance. Distinct key from reqcontract
+	// because the trust scope is different (nonces only authorise
+	// one redemption; contracts identify a request).
+	nonceKeyPath := "/var/lib/xhelix/nonce.key"
+	if nk, err := loadOrGenerateRCKey(nonceKeyPath); err == nil {
+		if ns, err := nonce.NewStore(nk, 0); err == nil {
+			fc.Nonces = ns
+			go fc.sweepNonces(parent)
+		}
+	}
+
 	// Request Contract store (P-RC.1). Per-HTTP-request capability
 	// tokens, HMAC-signed, 30s default TTL. Substrate for the
 	// behavioral defenses in BEHAVIORAL_DEFENSE.md.
@@ -257,6 +271,21 @@ func loadOrGenerateRCKey(path string) ([]byte, error) {
 		return nil, err
 	}
 	return k, nil
+}
+
+func (fc *foundationContext) sweepNonces(ctx context.Context) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if fc.Nonces != nil {
+				fc.Nonces.Sweep(time.Now().UTC())
+			}
+		}
+	}
 }
 
 func (fc *foundationContext) sweepReqContract(ctx context.Context) {
@@ -351,6 +380,7 @@ type healthSnapshot struct {
 	ColdStore  healthColdStoreBlock `json:"cold_store"`
 	Evidence   healthEvidenceBlock  `json:"evidence"`
 	ReqContract healthReqContractBlock `json:"req_contract"`
+	Nonces      healthNonceBlock       `json:"nonces"`
 	Lineage    healthLineageBlock  `json:"lineage"`
 	DLCF       healthDLCFBlock     `json:"dlcf"`
 	Runtime    healthRuntimeBlock  `json:"runtime"`
@@ -388,6 +418,18 @@ type healthEACBlock struct {
 	LossEvents    uint64 `json:"loss_events"`
 	BufferSize    int    `json:"buffer_size"`
 	ReorderWindow string `json:"reorder_window"`
+}
+
+type healthNonceBlock struct {
+	IssuedOutstanding int    `json:"issued_outstanding"`
+	ConsumedInWindow  int    `json:"consumed_in_window"`
+	IssuedTotal       uint64 `json:"issued_total"`
+	OK                uint64 `json:"ok"`
+	Replayed          uint64 `json:"replayed"`
+	Expired           uint64 `json:"expired"`
+	BadSig            uint64 `json:"bad_signature"`
+	NotIssued         uint64 `json:"not_issued"`
+	InvalidScope      uint64 `json:"invalid_scope"`
 }
 
 type healthReqContractBlock struct {
@@ -590,6 +632,50 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 			return map[string]any{"found": false}, nil
 		}
 		return map[string]any{"found": true, "node": node}, nil
+	})
+	srv.RegisterHandler("nonce.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.Nonces == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		return fc.Nonces.Stats(), nil
+	})
+	srv.RegisterHandler("nonce.issue", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Nonces == nil {
+			return nil, errors.New("nonce store not initialised")
+		}
+		var req struct {
+			Scope      string `json:"scope"`
+			TTLSeconds int    `json:"ttl_seconds"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		n, err := fc.Nonces.Issue(req.Scope, time.Duration(req.TTLSeconds)*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		return n, nil
+	})
+	srv.RegisterHandler("nonce.consume", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Nonces == nil {
+			return nil, errors.New("nonce store not initialised")
+		}
+		var req struct {
+			Nonce *nonce.Nonce `json:"nonce"`
+			Scope string       `json:"scope"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.Nonce == nil || req.Scope == "" {
+			return nil, errors.New("nonce and scope required")
+		}
+		result := fc.Nonces.Consume(req.Nonce, req.Scope)
+		return map[string]any{
+			"result":   result.String(),
+			"ok":       result == nonce.ConsumeOK,
+			"replayed": result == nonce.ConsumeReplayed,
+		}, nil
 	})
 	srv.RegisterHandler("reqcontract.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
 		if fc.ReqContract == nil {
@@ -956,6 +1042,25 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	})
 }
 
+// nonceBlock returns the nonce-store summary for health.snapshot.
+func (fc *foundationContext) nonceBlock() healthNonceBlock {
+	if fc.Nonces == nil {
+		return healthNonceBlock{}
+	}
+	s := fc.Nonces.Stats()
+	return healthNonceBlock{
+		IssuedOutstanding: s.Issued,
+		ConsumedInWindow:  s.Consumed,
+		IssuedTotal:       s.IssuedTotal,
+		OK:                s.OK,
+		Replayed:          s.Replayed,
+		Expired:           s.Expired,
+		BadSig:            s.BadSig,
+		NotIssued:         s.NotIssued,
+		InvalidScope:      s.InvalidScope,
+	}
+}
+
 // reqContractBlock returns the Request Contract store summary for health.snapshot.
 func (fc *foundationContext) reqContractBlock() healthReqContractBlock {
 	if fc.ReqContract == nil {
@@ -1119,6 +1224,7 @@ func (fc *foundationContext) snapshot() healthSnapshot {
 		ColdStore: fc.coldStoreBlock(),
 		Evidence:  fc.evidenceBlock(),
 		ReqContract: fc.reqContractBlock(),
+		Nonces:      fc.nonceBlock(),
 		Lineage: healthLineageBlock{
 			StoredOrigins:     fc.Origins.Size(),
 			TaintedLineages:   fc.Origins.TaintedCount(),
