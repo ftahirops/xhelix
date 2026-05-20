@@ -2,6 +2,7 @@ package forensicingest
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/xhelix/xhelix/pkg/forensic"
 )
@@ -34,6 +35,8 @@ func extractObservations(line []byte) []forensic.Observation {
 type miniCmd struct {
 	SessionID string   `json:"session_id"`
 	Command   string   `json:"command"`
+	Raw       string   `json:"raw"`
+	Response  string   `json:"response"`
 	URLs      []string `json:"urls"`
 	IPs       []string `json:"ips"`
 	Domains   []string `json:"domains"`
@@ -64,6 +67,17 @@ func obsFromHoneyShCommand(body json.RawMessage) []forensic.Observation {
 	}
 	for _, d := range m.Domains {
 		add(forensic.KindDomain, d)
+	}
+	// Pull richer IOCs (AKIA AWS keys, SHA256, IPv6, emails,
+	// base64 payloads) from Raw + Response — same extractor
+	// ProcessLine uses, same Source so CoEngine bucketing works.
+	if m.Raw != "" {
+		out = append(out,
+			forensic.ExtractFromText(m.Raw, forensic.OriginHoneySh, m.SessionID, time.Time{})...)
+	}
+	if m.Response != "" {
+		out = append(out,
+			forensic.ExtractFromText(m.Response, forensic.OriginHoneySh, m.SessionID, time.Time{})...)
 	}
 	return out
 }
