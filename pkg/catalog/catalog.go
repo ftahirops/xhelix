@@ -46,6 +46,60 @@ const (
 // involving the class. Budgets are denominated in Points.
 type Points uint32
 
+// Tier represents the per-route protection tier from
+// CROWN_JEWEL_PROFILE.md §4. Higher tiers demand more proofs.
+// Zero value is TierUnset, meaning "no policy declared" — callers
+// decide whether that is default-allow or default-deny.
+type Tier uint8
+
+const (
+	TierUnset Tier = iota
+	TierL1         // valid session
+	TierL2         // L1 + admin-allow-list source
+	TierL3         // L2 + fresh WebAuthn (default ≤60s)
+	TierL4         // L3 + DBSC device-binding
+	TierL5         // L4 + Data Passport signed by KMS
+	TierL6         // L5 + two distinct passports within 15 min
+)
+
+// String renders a Tier as its canonical YAML/CLI form ("L3" etc.).
+func (t Tier) String() string {
+	switch t {
+	case TierL1:
+		return "L1"
+	case TierL2:
+		return "L2"
+	case TierL3:
+		return "L3"
+	case TierL4:
+		return "L4"
+	case TierL5:
+		return "L5"
+	case TierL6:
+		return "L6"
+	}
+	return "unset"
+}
+
+// ParseTier parses an "L1".."L6" string. Empty / unknown → TierUnset.
+func ParseTier(s string) Tier {
+	switch s {
+	case "L1", "l1":
+		return TierL1
+	case "L2", "l2":
+		return TierL2
+	case "L3", "l3":
+		return TierL3
+	case "L4", "l4":
+		return TierL4
+	case "L5", "l5":
+		return TierL5
+	case "L6", "l6":
+		return TierL6
+	}
+	return TierUnset
+}
+
 // Catalog is the loaded, validated classification table. It is safe
 // for concurrent reads; reloads atomically swap the underlying maps
 // under a write lock.
@@ -68,6 +122,15 @@ type Catalog struct {
 	// Route → allowed classes map. Used by the rule engine to
 	// detect a route touching data it shouldn't.
 	routeAllowed map[string]map[DataClass]struct{}
+
+	// Route → required protection tier (P-CJ.6 / P-B.0a). Used by
+	// pkg/policy to enforce WebAuthn/DBSC/Passport requirements.
+	routeTier map[string]Tier
+
+	// Route → max acceptable WebAuthn-assertion age in seconds.
+	// Zero means "use the tier's default" (60s for L3+, 30s for
+	// L5+).
+	routeWebAuthnMaxAge map[string]int
 
 	// Canary users: explicit uids and inclusive ranges. No
 	// legitimate consumer touches these — see P-B.1 in
@@ -152,8 +215,10 @@ type fileSchema struct {
 	} `yaml:"secrets"`
 
 	Routes []struct {
-		Match   []string `yaml:"match"`
-		Allowed []string `yaml:"allowed_classes"`
+		Match               []string `yaml:"match"`
+		Allowed             []string `yaml:"allowed_classes"`
+		ProtectionTier      string   `yaml:"protection_tier"`           // L1..L6
+		WebAuthnMaxAgeSecs  int      `yaml:"webauthn_max_age_seconds"`  // 0 = use tier default
 	} `yaml:"routes"`
 
 	CanaryUIDs []struct {
@@ -218,6 +283,8 @@ func (c *Catalog) Reload() error {
 	c.canaryRoutePrefix = fresh.canaryRoutePrefix
 	c.lotlBinaries = fresh.lotlBinaries
 	c.lotlParentClasses = fresh.lotlParentClasses
+	c.routeTier = fresh.routeTier
+	c.routeWebAuthnMaxAge = fresh.routeWebAuthnMaxAge
 	return nil
 }
 
@@ -235,8 +302,10 @@ func parse(raw []byte) (*Catalog, error) {
 		tableClasses:     make(map[string][]DataClass),
 		routeAllowed:     make(map[string]map[DataClass]struct{}),
 		canaryUIDs:       make(map[uint64]struct{}),
-		canaryRouteExact: make(map[string]struct{}),
-		lotlBinaries:     make(map[string]lotlBinary),
+		canaryRouteExact:    make(map[string]struct{}),
+		lotlBinaries:        make(map[string]lotlBinary),
+		routeTier:           make(map[string]Tier),
+		routeWebAuthnMaxAge: make(map[string]int),
 	}
 
 	for k, v := range f.Points {
@@ -351,8 +420,15 @@ func parse(raw []byte) (*Catalog, error) {
 		for _, cl := range classes {
 			set[cl] = struct{}{}
 		}
+		tier := ParseTier(r.ProtectionTier)
 		for _, m := range r.Match {
 			c.routeAllowed[m] = set
+			if tier != TierUnset {
+				c.routeTier[m] = tier
+			}
+			if r.WebAuthnMaxAgeSecs > 0 {
+				c.routeWebAuthnMaxAge[m] = r.WebAuthnMaxAgeSecs
+			}
 		}
 	}
 
@@ -475,6 +551,24 @@ func (c *Catalog) IsCanaryRoute(route string) bool {
 		}
 	}
 	return false
+}
+
+// RouteTier returns the protection tier declared for the given route,
+// or TierUnset if no policy exists. Used by pkg/policy to decide
+// what proofs to require.
+func (c *Catalog) RouteTier(route string) Tier {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.routeTier[route]
+}
+
+// RouteWebAuthnMaxAge returns the operator-configured maximum age
+// (in seconds) of an acceptable WebAuthn assertion for the route.
+// Returns 0 if no override is set (caller uses tier-defined default).
+func (c *Catalog) RouteWebAuthnMaxAge(route string) int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.routeWebAuthnMaxAge[route]
 }
 
 // LOTLScore computes the living-off-the-land risk score for an exec

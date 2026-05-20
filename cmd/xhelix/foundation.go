@@ -24,6 +24,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/nonce"
 	"github.com/xhelix/xhelix/pkg/passport"
+	"github.com/xhelix/xhelix/pkg/policy"
 	"github.com/xhelix/xhelix/pkg/reqcontract"
 )
 
@@ -696,6 +697,28 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 			return nil, err
 		}
 		return c, nil
+	})
+	srv.RegisterHandler("policy.check", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Catalog == nil {
+			return nil, errors.New("no catalog loaded")
+		}
+		var req struct {
+			Route      string `json:"route"`
+			ContractID string `json:"contract_id"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.Route == "" {
+			return nil, errors.New("route required")
+		}
+		var c *reqcontract.Contract
+		if req.ContractID != "" && fc.ReqContract != nil {
+			if found, ok := fc.ReqContract.Lookup(req.ContractID); ok {
+				c = found
+			}
+		}
+		return policy.Check(fc.Catalog, req.Route, c), nil
 	})
 	srv.RegisterHandler("reqcontract.lookup", func(_ context.Context, raw json.RawMessage) (any, error) {
 		if fc.ReqContract == nil {

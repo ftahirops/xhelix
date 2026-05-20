@@ -69,6 +69,18 @@ type Contract struct {
 	JA4       string `json:"ja4,omitempty"`
 	UAClass   string `json:"ua_class,omitempty"`
 
+	// WebAuthnTS is when the requesting client most recently
+	// completed a WebAuthn / FIDO2 user-verification ceremony, as
+	// reported by the L7 bridge / portal. Zero value means "no
+	// recent WebAuthn signal". Used by pkg/policy to enforce
+	// protection tier requirements per route.
+	WebAuthnTS time.Time `json:"webauthn_ts,omitempty"`
+
+	// DBSCBound reports whether the session is Device-Bound
+	// Session Credentials (DBSC) verified at the bridge. Read-only
+	// from xhelix's perspective; the bridge sets it.
+	DBSCBound bool `json:"dbsc_bound,omitempty"`
+
 	Signature string `json:"signature"` // hex of HMAC-SHA256 over canonical encoding
 }
 
@@ -94,6 +106,8 @@ type IssueParams struct {
 	JA4        string
 	UAClass    string
 	TTL        time.Duration
+	WebAuthnTS time.Time
+	DBSCBound  bool
 }
 
 // Store is the in-memory contract index. Concurrent-safe.
@@ -174,6 +188,8 @@ func (s *Store) Issue(p IssueParams) (*Contract, error) {
 		JA3:        p.JA3,
 		JA4:        p.JA4,
 		UAClass:    p.UAClass,
+		WebAuthnTS: p.WebAuthnTS,
+		DBSCBound:  p.DBSCBound,
 	}
 	c.Signature = s.sign(c)
 
@@ -286,6 +302,8 @@ func (s *Store) sign(c *Contract) string {
 		fmt.Sprintf("%d", c.ExpiresAt.UnixNano()),
 		c.Account, c.Session, c.Route, c.Method, c.SchemaHash,
 		c.SourceIP, c.SourceASN, c.JA3, c.JA4, c.UAClass,
+		fmt.Sprintf("%d", c.WebAuthnTS.UnixNano()),
+		fmt.Sprintf("%t", c.DBSCBound),
 	} {
 		mac.Write([]byte(f))
 		mac.Write([]byte{0x1f}) // ASCII unit-separator
