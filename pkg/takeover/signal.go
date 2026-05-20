@@ -62,6 +62,50 @@ const (
 	// SignalRuleHit — a CEL rule matched. Score weight depends on
 	// rule severity (handled in scorer).
 	SignalRuleHit SignalKind = "rule_hit"
+
+	// --- Protected Services (PROTECTED_SERVICES_TRAP.md §6) ---
+
+	// SignalShellAttempt — protected service tried to execve a shell.
+	// Tier-1 deterministic. Routed to honey-sh in trap mode.
+	SignalShellAttempt SignalKind = "shell_attempt"
+	// SignalInterpAttempt — protected service tried to execve a
+	// language interpreter (python/perl/ruby/node/php-cgi).
+	SignalInterpAttempt SignalKind = "interp_attempt"
+	// SignalDownloader — protected service tried to execve a
+	// network downloader (curl/wget/fetch/aria2c/axel).
+	SignalDownloader SignalKind = "downloader"
+	// SignalReconTool — protected service tried to execve a recon
+	// tool (nmap/nc/ncat/socat/tcpdump).
+	SignalReconTool SignalKind = "recon_tool"
+	// SignalPrivTool — protected service tried to execve a
+	// privilege-escalation tool (su/sudo/pkexec/doas).
+	SignalPrivTool SignalKind = "priv_tool"
+	// SignalForbiddenSyscall — seccomp denied a syscall.
+	// Tier-2 — most denials are noise; stacks to cross threshold.
+	SignalForbiddenSyscall SignalKind = "forbidden_syscall"
+	// SignalForbiddenWrite — AppArmor denied a write outside
+	// WriteRoots (e.g. /etc/cron.d, /etc/sudoers.d).
+	SignalForbiddenWrite SignalKind = "forbidden_write"
+	// SignalForbiddenConnect — protected service tried to connect()
+	// outside upstream_cidrs (or to a known-bad destination).
+	SignalForbiddenConnect SignalKind = "forbidden_connect"
+	// SignalRWXMemory — anonymous RWX mmap or W→X mprotect
+	// transition from a protected service. Tier-1.
+	SignalRWXMemory SignalKind = "rwx_memory"
+	// SignalC2Beacon — a sinkholed outbound connection produced
+	// repeated traffic patterns consistent with a beacon.
+	SignalC2Beacon SignalKind = "c2_beacon"
+	// SignalDecoyTouch — a decoy file (/etc/shadow decoy, AWS
+	// canary creds, etc) was read. Like SignalCanaryTouch but for
+	// the protected-services deception layer.
+	SignalDecoyTouch SignalKind = "decoy_touch"
+	// SignalCrashLoop — a protected service segfaulted >=3 times
+	// in 60s — indicates exploit-in-progress.
+	SignalCrashLoop SignalKind = "crash_loop"
+	// SignalIdentityMismatch — exe SHA / unit / uid of a running
+	// protected-service process did not match the registered
+	// expectation. Binary-swap or unit hijack indicator.
+	SignalIdentityMismatch SignalKind = "identity_mismatch"
 )
 
 // AllKinds enumerates every defined SignalKind. Useful for
@@ -72,6 +116,12 @@ func AllKinds() []SignalKind {
 		SignalLOTL, SignalCapAbuse, SignalNewBinary, SignalNewEndpoint,
 		SignalParentMismatch, SignalCredAccess, SignalPersistence,
 		SignalDefenseEvasion, SignalLateralMove, SignalRuleHit,
+		// Protected Services
+		SignalShellAttempt, SignalInterpAttempt, SignalDownloader,
+		SignalReconTool, SignalPrivTool, SignalForbiddenSyscall,
+		SignalForbiddenWrite, SignalForbiddenConnect, SignalRWXMemory,
+		SignalC2Beacon, SignalDecoyTouch, SignalCrashLoop,
+		SignalIdentityMismatch,
 	}
 }
 
@@ -128,5 +178,24 @@ func DefaultWeights() Weights {
 		SignalNewEndpoint: 15,
 		// Rule hits depend on rule severity; Weight field overrides.
 		SignalRuleHit: 30,
+
+		// Protected Services (PROTECTED_SERVICES_TRAP.md §6).
+		// Tier-1 — single signal crosses 75 (Suspended).
+		SignalShellAttempt:     80,
+		SignalDownloader:       75,
+		SignalForbiddenWrite:   80,
+		SignalRWXMemory:        95,
+		SignalC2Beacon:         85,
+		SignalDecoyTouch:       85,
+		SignalCrashLoop:        80,
+		SignalIdentityMismatch: 90,
+		// Tier-1 weaker — usually cross alone, but might be a
+		// legitimate operator helper for php-fpm IPC, etc.
+		SignalInterpAttempt: 70,
+		SignalReconTool:     75,
+		SignalPrivTool:      80,
+		// Tier-2 — noise on real systems; needs stacking.
+		SignalForbiddenSyscall: 50,
+		SignalForbiddenConnect: 60,
 	}
 }
