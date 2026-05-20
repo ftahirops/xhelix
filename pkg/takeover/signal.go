@@ -106,6 +106,23 @@ const (
 	// protected-service process did not match the registered
 	// expectation. Binary-swap or unit hijack indicator.
 	SignalIdentityMismatch SignalKind = "identity_mismatch"
+
+	// --- P-PS.21 IDE-Shepherd-borrowed post-RCE droppers ---
+
+	// SignalBase64Decode — service process invoked
+	// `base64 -d` / `openssl base64 -d` / `xxd -r -p`. Borrowed
+	// from IDE Shepherd's `task_base64_decode`: a near-deterministic
+	// indicator of staging an obfuscated payload.
+	SignalBase64Decode SignalKind = "base64_decode"
+	// SignalRecursiveDelete — service process ran `rm -rf` against
+	// a target. Borrowed from `task_rm_rf`. Strong signal for
+	// post-compromise log-tampering or anti-forensics.
+	SignalRecursiveDelete SignalKind = "recursive_delete"
+	// SignalChmodExec — service process ran `chmod +x` on a file
+	// under /tmp, /dev/shm, /var/tmp, or its own cache. Borrowed
+	// from `task_chmod_executable`: classic dropper pattern
+	// (download → chmod +x → exec).
+	SignalChmodExec SignalKind = "chmod_exec"
 )
 
 // AllKinds enumerates every defined SignalKind. Useful for
@@ -122,6 +139,8 @@ func AllKinds() []SignalKind {
 		SignalForbiddenWrite, SignalForbiddenConnect, SignalRWXMemory,
 		SignalC2Beacon, SignalDecoyTouch, SignalCrashLoop,
 		SignalIdentityMismatch,
+		// P-PS.21 borrows
+		SignalBase64Decode, SignalRecursiveDelete, SignalChmodExec,
 	}
 }
 
@@ -189,6 +208,12 @@ func DefaultWeights() Weights {
 		SignalDecoyTouch:       85,
 		SignalCrashLoop:        80,
 		SignalIdentityMismatch: 90,
+		// P-PS.21 borrows — Tier-2 individually; the real strength
+		// comes from co-occurrence with shell_attempt / downloader
+		// via P-PS.22 (handled in scorer co-occur logic).
+		SignalBase64Decode:    35,
+		SignalRecursiveDelete: 40,
+		SignalChmodExec:       45,
 		// Tier-1 weaker — usually cross alone, but might be a
 		// legitimate operator helper for php-fpm IPC, etc.
 		SignalInterpAttempt: 70,

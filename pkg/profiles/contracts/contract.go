@@ -207,6 +207,111 @@ func ClassifyExecAttempt(path string) string {
 	return ""
 }
 
+// ClassifyArgvShape (P-PS.21) inspects the FULL argv of a forbidden
+// exec attempt and returns a more-specific SignalKind name for
+// known dropper patterns:
+//
+//   base64_decode    — `base64 -d`, `openssl base64 -d`, `xxd -r -p`
+//   recursive_delete — `rm -rf` against any path
+//   chmod_exec       — `chmod +x` / `chmod 0?7??` on a path under
+//                       /tmp, /dev/shm, /var/tmp, or /run
+//
+// Returns "" if the argv is not on the dropper list. Cheap; meant
+// to be called from the protectpolicy refusal classifier on every
+// argv-bearing exec event.
+//
+// Borrowed from IDE Shepherd's task_base64_decode / task_rm_rf /
+// task_chmod_executable rules but adapted to per-process exec
+// rather than .vscode/tasks.json.
+func ClassifyArgvShape(path string, argv []string) string {
+	low := strings.ToLower(path)
+	base := low
+	if i := strings.LastIndex(low, "/"); i >= 0 {
+		base = low[i+1:]
+	}
+
+	switch base {
+	case "base64":
+		if argvContains(argv, "-d", "--decode") {
+			return "base64_decode"
+		}
+	case "openssl":
+		if len(argv) >= 2 && argv[0] == "base64" && argvContains(argv, "-d") {
+			return "base64_decode"
+		}
+	case "xxd":
+		if argvContains(argv, "-r") {
+			return "base64_decode"
+		}
+	case "rm":
+		// "rm -rf <path>" or "rm -r -f" etc. Either of the deletion
+		// recursion flags + force is enough.
+		if argvContainsAny(argv, "-rf", "-fr", "--recursive") ||
+			(argvContains(argv, "-r") && argvContains(argv, "-f")) ||
+			(argvContains(argv, "-R") && argvContains(argv, "-f")) {
+			return "recursive_delete"
+		}
+	case "chmod":
+		// chmod +x / chmod 0?7?? on a tempfile path is the
+		// canonical dropper signature.
+		if argvHasChmodExec(argv) && argvTargetsTempfile(argv) {
+			return "chmod_exec"
+		}
+	}
+	return ""
+}
+
+func argvContains(argv []string, needles ...string) bool {
+	for _, a := range argv {
+		for _, n := range needles {
+			if a == n {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func argvContainsAny(argv []string, needles ...string) bool { return argvContains(argv, needles...) }
+
+func argvHasChmodExec(argv []string) bool {
+	for _, a := range argv {
+		if a == "+x" || a == "u+x" || a == "g+x" || a == "o+x" || a == "a+x" {
+			return true
+		}
+		// Numeric modes: any with the exec bit on (xx7, xx5, xx3, xx1).
+		if len(a) == 3 || len(a) == 4 {
+			last := a[len(a)-1]
+			if last == '1' || last == '3' || last == '5' || last == '7' {
+				// Only treat as suspicious if it's pure-digit (real
+				// mode strings start with 0 or 1-7).
+				allDigit := true
+				for _, r := range a {
+					if r < '0' || r > '7' {
+						allDigit = false
+					}
+				}
+				if allDigit {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func argvTargetsTempfile(argv []string) bool {
+	for _, a := range argv {
+		low := strings.ToLower(a)
+		for _, prefix := range []string{"/tmp/", "/dev/shm/", "/var/tmp/", "/run/"} {
+			if strings.HasPrefix(low, prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // --- internals ---
 
 func isNeverLearnable(p string) bool {

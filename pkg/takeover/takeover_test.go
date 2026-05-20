@@ -271,3 +271,88 @@ func TestPlanner_NoSignals_NoPlan(t *testing.T) {
 type capsFunc func(*decision.ActionPlan)
 
 func (f capsFunc) AnnotatePlan(p *decision.ActionPlan) { f(p) }
+
+// --- P-PS.22 co-occurrence bonus tests ---
+
+func TestScorer_CooccurDropperChain(t *testing.T) {
+	s := NewScorer(nil)
+	t0 := time.Unix(1700000000, 0).UTC()
+	r := s.Score([]Signal{
+		{Kind: SignalBase64Decode, At: t0},
+		{Kind: SignalChmodExec, At: t0.Add(30 * time.Second)},
+	})
+	// 35 (base64) + 45 (chmod) = 80, +30 bonus = 100 → clamp
+	if r.Score < 80 {
+		t.Fatalf("dropper-chain co-occurrence should push score high: got %d", r.Score)
+	}
+	found := false
+	for _, b := range r.CoBonuses {
+		if b.RuleID == "cooccur.dropper_chain" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("dropper_chain bonus not recorded: %+v", r.CoBonuses)
+	}
+}
+
+func TestScorer_CooccurWindowExpiry(t *testing.T) {
+	s := NewScorer(nil)
+	t0 := time.Unix(1700000000, 0).UTC()
+	r := s.Score([]Signal{
+		{Kind: SignalBase64Decode, At: t0},
+		// Outside the 60s window for dropper_chain.
+		{Kind: SignalChmodExec, At: t0.Add(5 * time.Minute)},
+	})
+	for _, b := range r.CoBonuses {
+		if b.RuleID == "cooccur.dropper_chain" {
+			t.Fatal("dropper_chain should NOT fire — signals outside window")
+		}
+	}
+}
+
+func TestScorer_CooccurBeaconThenShell(t *testing.T) {
+	s := NewScorer(nil)
+	t0 := time.Unix(1700000000, 0).UTC()
+	r := s.Score([]Signal{
+		{Kind: SignalC2Beacon, At: t0},
+		{Kind: SignalShellAttempt, At: t0.Add(30 * time.Second)},
+	})
+	found := false
+	for _, b := range r.CoBonuses {
+		if b.RuleID == "cooccur.beacon_then_shell" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("beacon+shell co-occurrence not detected: %+v", r.CoBonuses)
+	}
+}
+
+func TestScorer_CooccurExfilChain(t *testing.T) {
+	s := NewScorer(nil)
+	r := s.Score([]Signal{
+		{Kind: SignalDecoyTouch},
+		{Kind: SignalForbiddenConnect},
+	})
+	found := false
+	for _, b := range r.CoBonuses {
+		if b.RuleID == "cooccur.exfil_chain" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("exfil_chain bonus not fired: %+v", r.CoBonuses)
+	}
+}
+
+func TestScorer_NoCooccurWithMissingKind(t *testing.T) {
+	s := NewScorer(nil)
+	// base64_decode alone — no chmod_exec → no dropper_chain
+	r := s.Score([]Signal{{Kind: SignalBase64Decode}})
+	for _, b := range r.CoBonuses {
+		if b.RuleID == "cooccur.dropper_chain" {
+			t.Fatal("dropper_chain must not fire without chmod_exec")
+		}
+	}
+}

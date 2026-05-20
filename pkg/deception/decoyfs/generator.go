@@ -37,6 +37,12 @@ type Set struct {
 	GCPCreds    string // ~/<honey-user>/.config/gcloud/credentials.db (canary-shaped JSON)
 	KubeConfig  string // ~/<honey-user>/.kube/config (canary-shaped)
 	DockerCfg   string // ~/<honey-user>/.docker/config.json (canary-shaped)
+	// IDE-Shepherd-borrowed paths (P-PS.19):
+	Netrc        string // ~/<honey-user>/.netrc — plaintext credentials format
+	GitCreds     string // ~/<honey-user>/.git-credentials — token store
+	BashHistory  string // ~/<honey-user>/.bash_history — fake innocuous command history
+	ZshHistory   string // ~/<honey-user>/.zsh_history — same, zsh format
+	GPGSecKey    string // ~/<honey-user>/.gnupg/secring.gpg — fake PGP secring blob
 
 	// HoneyUser is the username that appears across the decoys —
 	// stable per-host. Attacker who exfiltrates "deploy:NOPASSWD ALL"
@@ -85,6 +91,11 @@ func Generate(spec Spec) (Set, error) {
 	s.GCPCreds = renderGCPCreds(spec.Secret)
 	s.KubeConfig = renderKubeConfig(spec.Secret)
 	s.DockerCfg = renderDockerCfg(spec.Secret)
+	s.Netrc = renderNetrc(spec.Secret)
+	s.GitCreds = renderGitCreds(spec.Secret)
+	s.BashHistory = renderBashHistory(honeyUser)
+	s.ZshHistory = renderZshHistory(honeyUser)
+	s.GPGSecKey = renderGPGSecKey(spec.Secret)
 
 	if spec.IncludeRealRSAKey {
 		priv, pub, err := generateRSAKeyPair()
@@ -216,6 +227,106 @@ users:
   user:
     token: %s
 `, deriveBase64(secret, []byte("kube-ca"), 1024), tok)
+}
+
+// renderNetrc — plaintext credential format that legitimate cli
+// tools (curl, wget, git) still read. Three honey entries.
+func renderNetrc(secret []byte) string {
+	return fmt.Sprintf(`machine github.com
+  login deploy
+  password %s
+
+machine api.gitlab.com
+  login deploy
+  password %s
+
+machine artifacts.internal
+  login ci-deploy
+  password %s
+`,
+		deriveAlpha(secret, []byte("netrc-gh"), 40),
+		deriveAlpha(secret, []byte("netrc-gl"), 40),
+		deriveAlpha(secret, []byte("netrc-art"), 40))
+}
+
+// renderGitCreds — git's .git-credentials format. One line per
+// "https://user:token@host" entry.
+func renderGitCreds(secret []byte) string {
+	return fmt.Sprintf(`https://deploy:%s@github.com
+https://deploy:%s@gitlab.com
+https://ci-deploy:%s@artifacts.internal
+`,
+		deriveAlpha(secret, []byte("git-gh"), 40),
+		deriveAlpha(secret, []byte("git-gl"), 40),
+		deriveAlpha(secret, []byte("git-art"), 40))
+}
+
+// renderBashHistory — fake innocuous command history. The point
+// isn't to hide that this is a honey file (an attacker doing
+// reconnaissance reads it to learn what the user does); it's to
+// make the attacker waste time chasing fake leads.
+func renderBashHistory(honeyUser string) string {
+	return `cd /var/www/html
+ls -la
+sudo -i
+systemctl status nginx
+tail -f /var/log/nginx/access.log
+git pull
+docker ps
+docker logs -f api
+exit
+htop
+free -h
+df -h
+journalctl -u nginx -n 100
+vim /etc/nginx/sites-enabled/default
+nginx -t
+systemctl reload nginx
+psql -h db.internal -U deploy production
+exit
+`
+}
+
+// renderZshHistory — zsh's history has an extended-history format:
+//
+//	: <unix-ts>:<elapsed>;<command>
+//
+// Most attackers grep raw rather than parse it; format-correctness
+// here just makes the file look authentic.
+func renderZshHistory(honeyUser string) string {
+	base := int64(1740000000) // anchored to mid-2025 so timestamps look stable
+	cmds := []string{
+		"cd /var/www/html",
+		"git status",
+		"git log --oneline -20",
+		"ssh deploy@build.internal",
+		"kubectl get pods -A",
+		"kubectl logs -f deploy/api",
+		"aws s3 ls s3://prod-deploys/",
+		"docker compose up -d",
+		"vim ~/.kube/config",
+		"exit",
+	}
+	var b strings.Builder
+	for i, c := range cmds {
+		fmt.Fprintf(&b, ": %d:0;%s\n", base+int64(i*60), c)
+	}
+	return b.String()
+}
+
+// renderGPGSecKey — GPG secring.gpg is a binary OpenPGP packet
+// stream. We emit a deterministic but invalid-PGP-shaped blob:
+// the leading bytes look right (0x95 = secret-key packet tag with
+// length prefix) so a casual grep / file(1) call returns "PGP
+// secret key", but the bytes inside are HMAC-derived garbage that
+// won't actually decrypt or sign anything.
+func renderGPGSecKey(secret []byte) string {
+	// 0x95 = old-format public-key packet header; 0x00 0xE8 = 232
+	// byte length. Real keys are usually a few KB; 232 bytes is
+	// plausibly a stub.
+	prefix := []byte{0x95, 0x00, 0xe8}
+	body := hmacExpand(secret, []byte("gpg-secring"), 232)
+	return string(append(prefix, body...))
 }
 
 func renderDockerCfg(secret []byte) string {

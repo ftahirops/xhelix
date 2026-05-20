@@ -149,8 +149,8 @@ func TestInstall_WritesAllFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 9 {
-		t.Fatalf("expected 9 decoy files, got %d", len(files))
+	if len(files) != 14 {
+		t.Fatalf("expected 14 decoy files, got %d", len(files))
 	}
 	for _, f := range files {
 		if !strings.HasPrefix(f.Source, dir) {
@@ -323,8 +323,8 @@ func TestAttachToService_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 9 {
-		t.Fatalf("expected 9 decoys installed, got %d", len(files))
+	if len(files) != 14 {
+		t.Fatalf("expected 14 decoys installed, got %d", len(files))
 	}
 	mustContain(t, out.Body,
 		"BindReadOnlyPaths=", "/etc/shadow", "/etc/passwd",

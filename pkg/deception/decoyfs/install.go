@@ -77,6 +77,12 @@ func layout(s Set, dir string) []File {
 		{Source: filepath.Join(dir, "gcp-application_default_credentials.json"), Target: homeDir + "/.config/gcloud/application_default_credentials.json", Mode: 0o600},
 		{Source: filepath.Join(dir, "kube-config"), Target: homeDir + "/.kube/config", Mode: 0o600},
 		{Source: filepath.Join(dir, "docker-config.json"), Target: homeDir + "/.docker/config.json", Mode: 0o600},
+		// P-PS.19 borrows from IDE Shepherd's cred-path catalog:
+		{Source: filepath.Join(dir, "netrc"), Target: homeDir + "/.netrc", Mode: 0o600},
+		{Source: filepath.Join(dir, "git-credentials"), Target: homeDir + "/.git-credentials", Mode: 0o600},
+		{Source: filepath.Join(dir, "bash_history"), Target: homeDir + "/.bash_history", Mode: 0o600},
+		{Source: filepath.Join(dir, "zsh_history"), Target: homeDir + "/.zsh_history", Mode: 0o600},
+		{Source: filepath.Join(dir, "gnupg-secring.gpg"), Target: homeDir + "/.gnupg/secring.gpg", Mode: 0o600},
 	}
 }
 
@@ -100,6 +106,16 @@ func contentFor(target string, s Set) string {
 		return s.KubeConfig
 	case strings.HasSuffix(target, "/.docker/config.json"):
 		return s.DockerCfg
+	case strings.HasSuffix(target, "/.netrc"):
+		return s.Netrc
+	case strings.HasSuffix(target, "/.git-credentials"):
+		return s.GitCreds
+	case strings.HasSuffix(target, "/.bash_history"):
+		return s.BashHistory
+	case strings.HasSuffix(target, "/.zsh_history"):
+		return s.ZshHistory
+	case strings.HasSuffix(target, "/secring.gpg"):
+		return s.GPGSecKey
 	}
 	return ""
 }

@@ -60,13 +60,14 @@ type RefusalEvent struct {
 
 	// Kind-specific fields. Only the ones relevant to Kind are
 	// populated.
-	Path        string // RefuseExec / RefuseWrite / RefuseMemory
-	SyscallName string // RefuseSyscall
-	RemoteIP    string // RefuseConnect
-	RemotePort  uint16 // RefuseConnect
-	Source      string // free-form ("apparmor:audit", "ebpf:bprm")
-	Detail      string // human-readable extra (e.g. AppArmor reason)
-	Discrepancy string // RefuseIdentity reason ("exe_sha mismatch")
+	Path        string   // RefuseExec / RefuseWrite / RefuseMemory
+	Argv        []string // RefuseExec — enables P-PS.21 argv-shape classification
+	SyscallName string   // RefuseSyscall
+	RemoteIP    string   // RefuseConnect
+	RemotePort  uint16   // RefuseConnect
+	Source      string   // free-form ("apparmor:audit", "ebpf:bprm")
+	Detail      string   // human-readable extra (e.g. AppArmor reason)
+	Discrepancy string   // RefuseIdentity reason ("exe_sha mismatch")
 }
 
 // Evaluator classifies refusals into typed Signals. Stateless;
@@ -108,6 +109,18 @@ func (e *Evaluator) Evaluate(rf RefusalEvent, svc *protectedsvc.ProtectedService
 func classify(rf RefusalEvent, svc *protectedsvc.ProtectedService) takeover.SignalKind {
 	switch rf.Kind {
 	case RefuseExec:
+		// P-PS.21: argv-shape classifiers (base64-decode / rm -rf /
+		// chmod +x) take precedence on legitimate-binary paths
+		// (base64, openssl, rm, chmod) — these aren't never-
+		// learnable execs but the argv shape is the indicator.
+		switch contracts.ClassifyArgvShape(rf.Path, rf.Argv) {
+		case "base64_decode":
+			return takeover.SignalBase64Decode
+		case "recursive_delete":
+			return takeover.SignalRecursiveDelete
+		case "chmod_exec":
+			return takeover.SignalChmodExec
+		}
 		// Use the contracts classifier — it knows about
 		// shell/interp/downloader/recon/priv categories.
 		switch contracts.ClassifyExecAttempt(rf.Path) {
@@ -183,7 +196,10 @@ func confidenceFor(k takeover.SignalKind) string {
 		takeover.SignalC2Beacon:
 		return "high"
 	case takeover.SignalForbiddenConnect,
-		takeover.SignalForbiddenSyscall:
+		takeover.SignalForbiddenSyscall,
+		takeover.SignalBase64Decode,
+		takeover.SignalRecursiveDelete,
+		takeover.SignalChmodExec:
 		return "medium"
 	}
 	return ""

@@ -310,3 +310,50 @@ func TestSignalWeights_ProtectedServicesInTable(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluate_ArgvShape_Base64Decode(t *testing.T) {
+	e := NewEvaluator()
+	svc := mkSvc(t)
+	s := e.Evaluate(RefusalEvent{
+		Kind: RefuseExec, Path: "/usr/bin/base64",
+		Argv: []string{"-d", "payload.b64"},
+	}, svc)
+	if s.Kind != takeover.SignalBase64Decode {
+		t.Fatalf("base64 -d → %q, want base64_decode", s.Kind)
+	}
+}
+
+func TestEvaluate_ArgvShape_RecursiveDelete(t *testing.T) {
+	e := NewEvaluator()
+	s := e.Evaluate(RefusalEvent{
+		Kind: RefuseExec, Path: "/bin/rm",
+		Argv: []string{"-rf", "/tmp/.cache"},
+	}, mkSvc(t))
+	if s.Kind != takeover.SignalRecursiveDelete {
+		t.Fatalf("rm -rf → %q, want recursive_delete", s.Kind)
+	}
+}
+
+func TestEvaluate_ArgvShape_ChmodExec(t *testing.T) {
+	e := NewEvaluator()
+	s := e.Evaluate(RefusalEvent{
+		Kind: RefuseExec, Path: "/bin/chmod",
+		Argv: []string{"+x", "/dev/shm/dropper"},
+	}, mkSvc(t))
+	if s.Kind != takeover.SignalChmodExec {
+		t.Fatalf("chmod +x → %q, want chmod_exec", s.Kind)
+	}
+}
+
+func TestEvaluate_ArgvShape_TakesPrecedenceOverDownloader(t *testing.T) {
+	// /usr/bin/curl with no special argv is a downloader. But if
+	// the path is /usr/bin/base64 with -d, the argv classifier
+	// should fire first — that's the point of the P-PS.21 change.
+	e := NewEvaluator()
+	s := e.Evaluate(RefusalEvent{
+		Kind: RefuseExec, Path: "/usr/bin/curl",
+	}, mkSvc(t))
+	if s.Kind != takeover.SignalDownloader {
+		t.Fatalf("curl → %q, want downloader (no argv-shape match)", s.Kind)
+	}
+}
