@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	_ "modernc.org/sqlite"
 
@@ -78,6 +79,74 @@ func (h *HotStore) Prune(ctx context.Context, cutoffNs int64) (int64, error) {
 		return 0, fmt.Errorf("prune: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+// FileSize returns the on-disk size of the SQLite database file in
+// bytes. Returns 0 with no error for the :memory: backend.
+func (h *HotStore) FileSize() (int64, error) {
+	if h.path == "" || h.path == ":memory:" {
+		return 0, nil
+	}
+	st, err := os.Stat(h.path)
+	if err != nil {
+		return 0, err
+	}
+	return st.Size(), nil
+}
+
+// PruneBySize enforces a maximum on-disk byte cap. When the file is
+// over maxBytes, deletes the oldest 25% of events and runs VACUUM to
+// reclaim space (SQLite does not return pages to the filesystem
+// without VACUUM). Returns the number of rows deleted.
+//
+// The 25% chunk avoids running VACUUM on every tick under steady-state
+// pressure — once we're back under the cap, we stay under it for a
+// while before needing to prune again.
+//
+// Empty path / :memory: backend → no-op.
+func (h *HotStore) PruneBySize(ctx context.Context, maxBytes int64) (int64, error) {
+	if h.path == "" || h.path == ":memory:" || maxBytes <= 0 {
+		return 0, nil
+	}
+	size, err := h.FileSize()
+	if err != nil {
+		return 0, err
+	}
+	if size <= maxBytes {
+		return 0, nil
+	}
+	// Pick the 25th-percentile timestamp; delete everything below it.
+	var cutoff int64
+	row := h.db.QueryRowContext(ctx, `
+		SELECT ts FROM events ORDER BY ts ASC
+		LIMIT 1 OFFSET (SELECT COUNT(*) FROM events) / 4
+	`)
+	if err := row.Scan(&cutoff); err != nil {
+		// Probably an empty table; nothing to do.
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("size prune scan: %w", err)
+	}
+	res, err := h.db.ExecContext(ctx, `DELETE FROM events WHERE ts < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("size prune delete: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	// Reclaim pages. SQLite's VACUUM rewrites the file; can be slow
+	// at multi-GB sizes but we only reach here when the file is
+	// already over the cap, so the cost is justified.
+	if _, err := h.db.ExecContext(ctx, `VACUUM`); err != nil {
+		return n, fmt.Errorf("size prune vacuum: %w", err)
+	}
+	return n, nil
+}
+
+// PruneStats is the result of a combined Prune + PruneBySize cycle.
+type PruneStats struct {
+	ByTimeRows int64
+	BySizeRows int64
+	FileBytes  int64
 }
 
 func initSchema(db *sql.DB) error {

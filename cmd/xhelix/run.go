@@ -24,6 +24,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/catalog"
 	"github.com/xhelix/xhelix/pkg/chain"
 	"github.com/xhelix/xhelix/pkg/coldstore"
+	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/config"
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/correlator"
@@ -103,6 +104,29 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	}
 
 	log := newLogger(cfg.Logging)
+
+	// Config-audit witness — every consumer of a config field calls
+	// cfgAudit.Witness() so we can detect declared-but-not-consumed
+	// knobs at startup. Fixes the recurring class of bug logged in
+	// ERRORS.md (FileSink rotation, hot.db retention, etc.).
+	cfgAudit := configaudit.New()
+	// Pre-declare known keys so they only show up as "unwitnessed"
+	// when no consumer registers, not "unknown".
+	for _, k := range []string{
+		"agent.state_dir", "agent.heartbeat_url", "agent.heartbeat_interval",
+		"storage.hot.path", "storage.hot.retention_hours", "storage.hot.max_size_mb",
+		"storage.warm.enabled", "storage.cold.enabled",
+		"ruleset.bundled", "ruleset.custom_dir", "ruleset.reload_on_change",
+		"alerts.severity_threshold",
+		"response.enabled", "response.soak_days",
+		"netban.enabled", "netban.use_nftables",
+		"remediate.enabled", "remediate.backup_dir",
+		"intel.enabled",
+		"chain.enabled", "chain.dir", "chain.key_path",
+		"logging.level", "logging.format",
+	} {
+		cfgAudit.Declare(k)
+	}
 	log.Info("xhelix starting",
 		"preset", cfg.Preset,
 		"config", cfgPath,
@@ -139,6 +163,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 	}
 	defer hot.Close()
+	cfgAudit.Witness("storage.hot.path", "OpenHot")
 
 	// Alert sinks
 	sinks := buildSinks(cfg.Alerts.Sinks, log)
@@ -819,6 +844,20 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		go runHistoryPruner(ctx, log, histStore)
 	}
 
+	// Hot store pruner (fix for the 14GB hot.db bug — see ERRORS.md).
+	// retention_hours + max_size_mb in xhelix.yaml were declared but
+	// not enforced. This goroutine consumes them properly.
+	if hot != nil {
+		retention := time.Duration(cfg.Storage.Hot.RetentionHours) * time.Hour
+		if retention <= 0 {
+			retention = 24 * time.Hour
+		}
+		maxBytes := int64(cfg.Storage.Hot.MaxSizeMB) * 1024 * 1024
+		go runHotStorePruner(ctx, log, hot, retention, maxBytes)
+		cfgAudit.Witness("storage.hot.retention_hours", "runHotStorePruner")
+		cfgAudit.Witness("storage.hot.max_size_mb", "runHotStorePruner")
+	}
+
 	// Heartbeat writer — pairs with the Rust watchdog. Writes
 	// /run/xhelix.heartbeat every 15s.
 	go runHeartbeatWriter(ctx, log, "/run")
@@ -1204,6 +1243,22 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		emit,
 		foundation.ColdStore,
 		foundation.Catalog)
+
+	// Run the config audit at startup completion. Logs warnings for
+	// any non-default config knob that nothing has registered to
+	// consume. This is the architectural lock against the
+	// "FileSink rotation / hot.db retention" bug class — three
+	// instances logged in ERRORS.md before this lock landed.
+	if findings := cfgAudit.Audit(&cfg); len(findings) > 0 {
+		for _, f := range findings {
+			log.Warn("config knob declared but no consumer registered",
+				"key", f.Key, "value", f.Value, "issue", f.Issue,
+				"action", "either wire a Witness in code OR remove the field from xhelix.yaml")
+		}
+	} else {
+		log.Info("config audit clean — every non-default knob has a registered consumer",
+			"stats", cfgAudit.Stats())
+	}
 
 	notifyReady()
 
@@ -2204,6 +2259,44 @@ func runActivityPersister(ctx context.Context, log *slog.Logger,
 					log.Warn("history insert failed", "err", err)
 				}
 				cancel()
+			}
+		}
+	}
+}
+
+// runHotStorePruner enforces retention + size cap on the hot store.
+// Fixes the bug where retention_hours + max_size_mb were declared
+// in xhelix.yaml but never enforced (see ERRORS.md for the 14GB
+// hot.db incident).
+func runHotStorePruner(ctx context.Context, log *slog.Logger, h *store.HotStore, retention time.Duration, maxBytes int64) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			cutoff := time.Now().Add(-retention).UnixNano()
+			byTime, err := h.Prune(cctx, cutoff)
+			if err != nil {
+				log.Warn("hot prune (time) failed", "err", err)
+				cancel()
+				continue
+			}
+			bySize, err := h.PruneBySize(cctx, maxBytes)
+			if err != nil {
+				log.Warn("hot prune (size) failed", "err", err)
+				cancel()
+				continue
+			}
+			size, _ := h.FileSize()
+			cancel()
+			if byTime > 0 || bySize > 0 {
+				log.Info("hot store pruned",
+					"by_time_rows", byTime, "by_size_rows", bySize,
+					"file_bytes", size, "retention", retention,
+					"max_bytes", maxBytes)
 			}
 		}
 	}
