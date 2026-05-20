@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -21,16 +20,13 @@ import (
 	"github.com/xhelix/xhelix/pkg/baseline"
 	"github.com/xhelix/xhelix/pkg/beacon"
 	"github.com/xhelix/xhelix/pkg/brandcheck"
-	"github.com/xhelix/xhelix/pkg/capwatch"
 	"github.com/xhelix/xhelix/pkg/catalog"
 	"github.com/xhelix/xhelix/pkg/cgroupclass"
 	"github.com/xhelix/xhelix/pkg/chain"
-	"github.com/xhelix/xhelix/pkg/cloudmeta"
 	"github.com/xhelix/xhelix/pkg/coldstore"
 	"github.com/xhelix/xhelix/pkg/config"
 	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/connstate"
-	"github.com/xhelix/xhelix/pkg/contescape"
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
 	"github.com/xhelix/xhelix/pkg/enforce"
@@ -42,17 +38,15 @@ import (
 	"github.com/xhelix/xhelix/pkg/kintegrity"
 	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/lockout"
-	"github.com/xhelix/xhelix/pkg/lolbin"
 	"github.com/xhelix/xhelix/pkg/memscan"
 	"github.com/xhelix/xhelix/pkg/ml"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/netban"
+	"github.com/xhelix/xhelix/pkg/pipeline"
 	"github.com/xhelix/xhelix/pkg/posture"
 	"github.com/xhelix/xhelix/pkg/proctree"
-	"github.com/xhelix/xhelix/pkg/ptraceguard"
 	"github.com/xhelix/xhelix/pkg/remediate"
 	"github.com/xhelix/xhelix/pkg/response"
-	"github.com/xhelix/xhelix/pkg/revshell"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
@@ -64,7 +58,6 @@ import (
 	"github.com/xhelix/xhelix/pkg/tamperguard"
 	"github.com/xhelix/xhelix/pkg/threatintel"
 	"github.com/xhelix/xhelix/pkg/version"
-	"github.com/xhelix/xhelix/pkg/webshellguard"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/sensors"
 	"github.com/xhelix/xhelix/sensors/decoy"
@@ -76,7 +69,6 @@ import (
 	"github.com/xhelix/xhelix/sensors/identity"
 	"github.com/xhelix/xhelix/sensors/lsmaudit"
 	"github.com/xhelix/xhelix/sensors/memory"
-	"github.com/xhelix/xhelix/sensors/netids"
 	netidssensor "github.com/xhelix/xhelix/sensors/netids"
 	"github.com/xhelix/xhelix/ui/web"
 )
@@ -1325,6 +1317,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	return nil
 }
 
+
+// dispatch is the thin event-loop wrapper. The per-event handler
+// logic lives in pkg/pipeline.Pipeline.Handle — this function only
+// owns the select on ctx.Done() and the events channel. Extracted
+// in P-RF.7b; behaviour unchanged.
 func dispatch(
 	ctx context.Context,
 	log *slog.Logger,
@@ -1351,410 +1348,29 @@ func dispatch(
 	coldStore *coldstore.Store,
 	cat *catalog.Catalog,
 ) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev := <-events:
-			// Durable persistence first. Non-blocking; the cold
-			// store drops on overflow and counts it. Done up front
-			// so even events that the downstream enrichment fails
-			// to process are still recorded.
-			if coldStore != nil {
-				evCopy := ev
-				coldStore.Submit(&evCopy)
-			}
-			// Feed session tracker first — it consumes identity
-			// events to open/close sessions and tags subsequent
-			// process spawns with the active session.
-			if sessionTracker != nil {
-				sessionTracker.Ingest(ev)
-			}
-			// Per-binary baseline aggregator. Every event becomes a
-			// counter increment in the matching (binary, hour) window.
-			if baselineAgg != nil {
-				baselineAgg.Observe(ev)
-			}
-			// LOTL scoring (P-B.7): on exec events, look up the
-			// (binary, parent_comm) risk score from the catalog
-			// and stamp it on the event. CEL rules then fire on
-			// thresholds. Skips entirely if the binary isn't a
-			// tracked LOTL binary — fast path for the 95% case.
-			if cat != nil &&
-				(ev.Sensor == "ebpf.spawn" || ev.Sensor == "ebpf.proc") &&
-				cat.LOTLBinary(ev.Comm) {
-				parentComm := ev.Tags["parent_comm"]
-				// No sensor stamps parent_comm today — derive it from
-				// procTree if available.
-				if parentComm == "" && procTree != nil && ev.ParentPID != 0 {
-					if anc := procTree.Ancestors(ev.ParentPID, 1); len(anc) > 0 {
-						parentComm = anc[0].Comm
-					}
-				}
-				if score, ok := cat.LOTLScore(ev.Comm, parentComm); ok {
-					if ev.Tags == nil {
-						ev.Tags = map[string]string{}
-					}
-					ev.Tags["lotl_score"] = fmt.Sprintf("%d", score)
-					if parentComm != "" {
-						ev.Tags["parent_comm"] = parentComm
-					}
-				}
-			}
-
-			// Feed proc tree
-			if procTree != nil {
-				switch ev.Sensor {
-				case "ebpf.spawn", "ebpf.proc":
-					procTree.OnSpawn(proctree.Node{
-						PID:       ev.PID,
-						PPID:      ev.ParentPID,
-						Comm:      ev.Comm,
-						Image:     ev.Tags["image"],
-						UID:       ev.UID,
-						CGroupID:  ev.CGroupID,
-						Container: ev.Container,
-					})
-				case "ebpf.exit":
-					procTree.OnExit(ev.PID)
-					if cgroupClassifier != nil {
-						cgroupClassifier.Forget(ev.PID)
-					}
-				default:
-					procTree.Touch(ev.PID)
-				}
-			}
-
-			// Classify pid into cgroup class and stamp the event so
-			// downstream rules + UI can filter user/system/container.
-			// Cached after first call; no-op on subsequent events.
-			if cgroupClassifier != nil && ev.PID != 0 {
-				if info := cgroupClassifier.Classify(ev.PID); info.Class != cgroupclass.ClassUnknown {
-					ev.Tags["cgroup_class"] = info.Class.String()
-					if info.Unit != "" {
-						ev.Tags["cgroup_unit"] = info.Unit
-					}
-					if info.UserID != "" {
-						ev.Tags["cgroup_user_id"] = info.UserID
-					}
-					if info.ContainerID != "" && ev.Tags["container_id"] == "" {
-						ev.Tags["container_id"] = info.ContainerID
-					}
-				}
-			}
-
-			if connTable != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_connect" {
-				feedConnstate(connTable, cgroupClassifier, ev)
-			}
-			if connTable != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_bytes" {
-				feedConnstateBytes(connTable, ev)
-			}
-
-			// Enrich with image hash
-			if imgCache != nil && ev.Sensor == "ebpf.spawn" {
-				if path := ev.Tags["path"]; path != "" {
-					if img, err := imgCache.Compute(ctx, path); err == nil {
-						ev.Tags["image_sha256"] = img.SHA256
-					}
-				}
-			}
-
-			// Store
-			if err := hot.Insert(ctx, ev); err != nil {
-				log.Warn("hot store insert", "err", err)
-			}
-
-			// Chain
-			if forensicsChain != nil {
-				if err := forensicsChain.Add(ev); err != nil {
-					log.Warn("chain add failed", "err", err)
-				}
-			}
-
-			// Rules
-			if eng != nil {
-				eng.Eval(ctx, ev)
-			}
-
-			// Correlator
-			if corr != nil {
-				corr.Ingest(ctx, ev)
-			}
-
-			// YARA scan on execve events
-			if yaraScanner != nil && yaraScanner.Enabled() && ev.Sensor == "ebpf.spawn" {
-				if a := yaraScanner.ScanEvent(ctx, ev); a != nil {
-					emit(*a)
-				}
-			}
-
-			// ── Detector wire-ups (Integration #4) ──────────────
-			// On every spawn event, run argv-shape classifiers.
-			if ev.Sensor == "ebpf.spawn" || ev.Sensor == "ebpf.proc" {
-				exe := ev.Image
-				argv := splitArgv(ev.Tags["argv"])
-				parentExe := ev.Tags["parent_exe"]
-
-				// LOLBin context scoring
-				if v := lolbin.Classify(lolbin.Spawn{
-					Exe: exe, Argv: argv, ParentExe: parentExe,
-					CGroupClass: ev.Tags["cgroup_class"],
-				}); v.Severity >= lolbin.SeverityMedium {
-					emit(model.Alert{
-						Event: ev, RuleID: "lolbin.suspicious",
-						Reason: fmt.Sprintf("LOLBin %s in suspicious context: %s",
-							v.Tool, strings.Join(v.Reasons, "; ")),
-						Mode: model.ModeDetect,
-					})
-				}
-				// Reverse-shell argv shape
-				if rs := revshell.Best(argv); rs.Confidence >= 70 {
-					emit(model.Alert{
-						Event: ev, RuleID: "revshell.detected",
-						Reason: fmt.Sprintf("Reverse-shell pattern %s (conf %d): %s",
-							rs.Pattern, rs.Confidence, rs.Description),
-						Mode: model.ModeDetect,
-					})
-				}
-				// tmpfs exec
-				if shmDet != nil {
-					if v := shmDet.Evaluate(shmguard.Spawn{
-						Exe: exe, Argv: argv, UID: ev.UID,
-					}); v.Severity >= shmguard.SeverityHigh {
-						emit(model.Alert{
-							Event: ev, RuleID: "shm.exec",
-							Reason: "exec from " + v.Mount + ": " + strings.Join(v.Reasons, "; "),
-							Mode:   model.ModeDetect,
-						})
-					}
-				}
-				// Webshell heuristic (php/python/node/ruby/perl -e with exec patterns)
-				if wsh := webshellguard.Scan(webshellguard.Spec{
-					Exe: exe, Argv: argv, ParentExe: parentExe,
-				}); wsh.Family != webshellguard.FamilyNone && wsh.Confidence >= 70 {
-					emit(model.Alert{
-						Event: ev, RuleID: "webshell.argv",
-						Reason: fmt.Sprintf("webshell %s (conf %d): %s",
-							wsh.Family, wsh.Confidence, wsh.Reason),
-						Mode: model.ModeDetect,
-					})
-				}
-			}
-
-			// Capability escalation (capset tracepoint).
-			if ev.Sensor == "ebpf.cap" && ev.Tags["capset"] == "true" {
-				eff := parseHexUint64(ev.Tags["cap_effective"])
-				if f := capwatch.Classify(capwatch.Change{
-					EffectiveAfter: eff,
-					PID:            ev.PID, Comm: ev.Comm, Exe: ev.Image,
-				}); f.Severity >= capwatch.SeverityHigh && len(f.Gained) > 0 {
-					emit(model.Alert{
-						Event: ev, RuleID: "cap.gained",
-						Reason: "gained capabilities: " + strings.Join(f.Gained, ", "),
-						Mode:   model.ModeDetect,
-					})
-				}
-			}
-
-			// Container-escape (pivot_root + unshare).
-			if ev.Sensor == "ebpf.ns" {
-				var spec contescape.Spec
-				spec.PID = ev.PID
-				spec.Comm = ev.Comm
-				spec.Exe = ev.Image
-				spec.CGroupClass = ev.Tags["cgroup_class"]
-				if ev.Tags["kind"] == "pivot_root" {
-					spec.Syscall = contescape.SyscallPivotRoot
-				} else if ev.Tags["kind"] == "unshare" {
-					spec.Syscall = contescape.SyscallUnshare
-					spec.Flags = parseHexUint64(ev.Tags["unshare_flags"])
-				}
-				if spec.Syscall != 0 {
-					if f := contescape.Classify(spec); f.Severity >= contescape.SeverityHigh {
-						emit(model.Alert{
-							Event: ev, RuleID: "contescape.detected",
-							Reason: strings.Join(f.Reasons, "; "),
-							Mode:   model.ModeDetect,
-						})
-					}
-				}
-			}
-
-			// Ptrace classifier (existing ebpf ptrace events).
-			if ev.Tags["ptrace_attach"] == "true" {
-				if f := ptraceguard.Classify(ptraceguard.Spec{
-					Request:   parseUint32(ev.Tags["ptrace_request"]),
-					SourcePID: ev.PID, SourceComm: ev.Comm, SourceExe: ev.Image,
-					TargetPID:   parseUint32(ev.Tags["ptrace_target_pid"]),
-					TargetComm:  ev.Tags["ptrace_target"],
-					CGroupClass: ev.Tags["cgroup_class"],
-				}); f.Severity >= ptraceguard.SeverityHigh {
-					emit(model.Alert{
-						Event: ev, RuleID: "ptrace.suspicious",
-						Reason: f.RequestName + " — " + strings.Join(f.Reasons, "; "),
-						Mode:   model.ModeDetect,
-					})
-				}
-			}
-
-			// Cloud-metadata abuse on outbound connects.
-			if ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_connect" {
-				if hit, ok := cloudmeta.Classify(cloudmeta.Context{
-					IP: ev.Tags["dst_ip"], Comm: ev.Comm,
-					ParentExe: ev.Tags["parent_exe"],
-				}); ok && hit.Severity >= cloudmeta.SeverityHigh {
-					emit(model.Alert{
-						Event: ev, RuleID: "metadata.access_by_unexpected",
-						Reason: hit.Reason + " (" + string(hit.Provider) + ")",
-						Mode:   model.ModeDetect,
-					})
-				}
-			}
-
-			// Brand-local phishing on DNS queries.
-			if brandDet != nil && ev.Sensor == "netids" && ev.Tags["event_type"] == "dns" {
-				if qname := ev.Tags["dns_qname"]; qname != "" {
-					if m := brandDet.Classify(qname); m.Family != brandcheck.FamilyNone &&
-						m.Severity >= brandcheck.SeverityHigh {
-						emit(model.Alert{
-							Event: ev, RuleID: "phishing.brand_lookalike",
-							Reason: string(m.Family) + " of " + m.Brand + ": " + m.Reason,
-							Mode:   model.ModeDetect,
-						})
-					}
-				}
-			}
-
-			// ── End detector wire-ups ─────────────────────────
-
-			// Threat intel on network events
-			if intelMgr != nil && (ev.Sensor == "ebpf.net" || ev.Sensor == "netids") {
-				for _, tag := range []string{"dst_ip", "src_ip"} {
-					if ipStr := ev.Tags[tag]; ipStr != "" {
-						if ip := net.ParseIP(ipStr); ip != nil && intelMgr.IsBad(ip) {
-							emit(model.Alert{
-								Event:  ev,
-								RuleID: "intel.bad_ip",
-								Reason: fmt.Sprintf("Known malicious IP (%s): %s", tag, ipStr),
-								Mode:   model.ModeDetect,
-							})
-						}
-					}
-				}
-			}
-
-			// Beacon detection on outbound connect events
-			if beaconDet != nil && (ev.Sensor == "ebpf.net" || ev.Sensor == "ebpf.tcp_connect") {
-				if dst := ev.Tags["dst_ip"]; dst != "" {
-					port := uint16(0)
-					if p := ev.Tags["dst_port"]; p != "" {
-						var pp int
-						_, _ = fmt.Sscanf(p, "%d", &pp)
-						port = uint16(pp)
-					}
-					if v := beaconDet.Observe(beacon.Event{
-						PID:     ev.PID,
-						Comm:    ev.Comm,
-						DstIP:   dst,
-						DstPort: port,
-						At:      time.Now(),
-					}); v != nil {
-						ae := ev
-						ae.Tags["beacon_count"] = fmt.Sprintf("%d", v.Count)
-						ae.Tags["beacon_mean_gap_s"] = fmt.Sprintf("%.1f", v.MeanGap.Seconds())
-						ae.Tags["beacon_jitter_cv"] = fmt.Sprintf("%.3f", v.JitterCV)
-						emit(model.Alert{
-							Event:  ae,
-							RuleID: "beacon.periodic_callback",
-							Reason: fmt.Sprintf("Periodic callback to %s:%d every %s (CV %.2f, %d samples)",
-								v.Key.DstIP, v.Key.DstPort, v.MeanGap.Round(time.Second), v.JitterCV, v.Count),
-							Mode: model.ModeDetect,
-						})
-					}
-				}
-			}
-
-			// DNS observation collector — link qname → pid so the
-			// next outbound connect to a resolved IP gets the qname
-			// stamped on its connstate row.
-			if dnsCollector != nil && ev.Sensor == "netids" && ev.Tags["event_type"] == "dns" {
-				qname := ev.Tags["dns_qname"]
-				qtype := ev.Tags["dns_qtype"]
-				if qname != "" {
-					obs := dnsresolver.Observation{
-						Query: dnsresolver.Query{
-							At: ev.Time, QName: qname, QType: qtype,
-							Upstream: ev.Tags["dns_upstream"],
-						},
-						Answer: dnsresolver.Answer{
-							IPs: splitCSV(ev.Tags["dns_answers"]),
-						},
-						PID: ev.PID,
-						Exe: ev.Image,
-					}
-					dnsCollector.Observe(obs)
-				}
-			}
-
-			// DNS exfiltration / tunneling
-			if dnsexfilDet != nil && ev.Sensor == "netids" && ev.Tags["event_type"] == "dns" {
-				qname := ev.Tags["dns_qname"]
-				qtype := ev.Tags["dns_qtype"]
-				if qname != "" {
-					if v := dnsexfilDet.Observe(dnsexfil.Event{
-						Domain: qname, QType: qtype, At: time.Now(),
-					}); v != nil {
-						ae := ev
-						ae.Tags["dnsexfil_reasons"] = strings.Join(v.Reasons, ",")
-						ae.Tags["dnsexfil_avg_label_len"] = fmt.Sprintf("%.1f", v.AvgLabelLen)
-						ae.Tags["dnsexfil_avg_entropy"] = fmt.Sprintf("%.2f", v.AvgEntropy)
-						ae.Tags["dnsexfil_txt_frac"] = fmt.Sprintf("%.2f", v.TxtFraction)
-						emit(model.Alert{
-							Event:  ae,
-							RuleID: "dnsexfil.tunnel_pattern",
-							Reason: fmt.Sprintf("DNS tunnel-shaped traffic to %s (%d queries, signals: %s)",
-								v.RegDomain, v.Queries, strings.Join(v.Reasons, "+")),
-							Mode: model.ModeDetect,
-						})
-					}
-				}
-			}
-
-			// NetIDS detectors on DNS events
-			if ev.Sensor == "netids" && ev.Tags["event_type"] == "dns" {
-				qname := ev.Tags["dns_qname"]
-				if qname != "" {
-					score := netids.DGAScore(qname)
-					if score > 0.7 {
-						emit(model.Alert{
-							Event:  ev,
-							RuleID: "netids.dga",
-							Reason: fmt.Sprintf("DGA score %.2f for %s", score, qname),
-							Mode:   model.ModeDetect,
-						})
-					}
-				}
-			}
-
-			// ML anomaly detection
-			if mlDetector != nil && mlDetector.Observe(ev) {
-				emit(model.Alert{
-					Event:  ev,
-					RuleID: "ml.anomaly",
-					Reason: fmt.Sprintf("Anomalous behavior: %s uid=%d", ev.Comm, ev.UID),
-					Mode:   model.ModeDetect,
-				})
-			}
-
-			// Gated critical alert
-			if ev.Severity >= model.SeverityCritical {
-				emit(model.Alert{
-					Event:  ev,
-					RuleID: "ungated",
-					Reason: ev.Tags["msg"],
-					Mode:   model.ModeDetect,
-				})
-			}
-		}
+	p := &pipeline.Pipeline{
+		Log:              log,
+		HotStore:         hot,
+		Rules:            eng,
+		Correlator:       corr,
+		YaraScanner:      yaraScanner,
+		IntelMgr:         intelMgr,
+		MLDetector:       mlDetector,
+		ProcTree:         procTree,
+		ForensicsChain:   forensicsChain,
+		ImageCache:       imgCache,
+		SessionTracker:   sessionTracker,
+		BeaconDet:        beaconDet,
+		DNSExfilDet:      dnsexfilDet,
+		BaselineAgg:      baselineAgg,
+		CGroupClassifier: cgroupClassifier,
+		ConnTable:        connTable,
+		DNSCollector:     dnsCollector,
+		ShmDet:           shmDet,
+		BrandDet:         brandDet,
+		Catalog:          cat,
+		ColdStore:        coldStore,
+		Emit:             emit,
 	}
+	p.Run(ctx, events)
 }
