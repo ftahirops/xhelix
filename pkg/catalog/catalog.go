@@ -81,6 +81,12 @@ type Catalog struct {
 	canaryRouteExact  map[string]struct{}
 	canaryRoutePrefix []string
 
+	// LOTL ("living off the land") classification — see
+	// BEHAVIORAL_DEFENSE.md §3.8. Lookup is O(1) for the binary,
+	// O(N) over parent classes (typically 3-5).
+	lotlBinaries     map[string]lotlBinary
+	lotlParentClasses []lotlParentClass
+
 	// Source path, for reload + diagnostics.
 	source string
 }
@@ -93,6 +99,28 @@ type pathGlob struct {
 // uidRange is a closed inclusive range of canary user ids.
 type uidRange struct {
 	Low, High uint64
+}
+
+// LOTLScore is the risk score (0-100) for a (binary, parent context)
+// pair. Used by the dispatch loop's exec-event enrichment per
+// BEHAVIORAL_DEFENSE.md §3.8 (P-B.7).
+type LOTLScore uint8
+
+// lotlBinary holds the LOTL classification for one binary name.
+type lotlBinary struct {
+	BaseRisk LOTLScore
+	// parentRisk overrides BaseRisk * multiplier with an explicit
+	// score when a specific parent_comm matches.
+	parentRisk map[string]LOTLScore
+}
+
+// lotlParentClass classifies a set of parent comms as a risk category
+// (e.g. "web_tier" / "scheduler") with a multiplier applied to the
+// binary's BaseRisk.
+type lotlParentClass struct {
+	Name       string
+	comms      map[string]struct{}
+	Multiplier float32
 }
 
 type secretPattern struct {
@@ -135,6 +163,19 @@ type fileSchema struct {
 	} `yaml:"canary_uids"`
 
 	CanaryRoutes []string `yaml:"canary_routes"`
+
+	LOTL struct {
+		Binaries []struct {
+			Name       string             `yaml:"name"`
+			BaseRisk   uint8              `yaml:"base_risk"`
+			ParentRisk map[string]uint8   `yaml:"parent_risk"` // parent_comm → explicit score
+		} `yaml:"binaries"`
+		ParentClasses []struct {
+			Name       string   `yaml:"name"`
+			Comms      []string `yaml:"comms"`
+			Multiplier float32  `yaml:"multiplier"`
+		} `yaml:"parent_classes"`
+	} `yaml:"lotl"`
 }
 
 // Load reads and validates a catalog from path. Returns a *Catalog
@@ -175,6 +216,8 @@ func (c *Catalog) Reload() error {
 	c.canaryRanges = fresh.canaryRanges
 	c.canaryRouteExact = fresh.canaryRouteExact
 	c.canaryRoutePrefix = fresh.canaryRoutePrefix
+	c.lotlBinaries = fresh.lotlBinaries
+	c.lotlParentClasses = fresh.lotlParentClasses
 	return nil
 }
 
@@ -193,6 +236,7 @@ func parse(raw []byte) (*Catalog, error) {
 		routeAllowed:     make(map[string]map[DataClass]struct{}),
 		canaryUIDs:       make(map[uint64]struct{}),
 		canaryRouteExact: make(map[string]struct{}),
+		lotlBinaries:     make(map[string]lotlBinary),
 	}
 
 	for k, v := range f.Points {
@@ -253,6 +297,38 @@ func parse(raw []byte) (*Catalog, error) {
 			}
 			c.canaryRanges = append(c.canaryRanges, uidRange{Low: lo, High: hi})
 		}
+	}
+
+	for _, b := range f.LOTL.Binaries {
+		if b.Name == "" {
+			continue
+		}
+		entry := lotlBinary{
+			BaseRisk:   LOTLScore(b.BaseRisk),
+			parentRisk: make(map[string]LOTLScore, len(b.ParentRisk)),
+		}
+		for parent, score := range b.ParentRisk {
+			entry.parentRisk[parent] = LOTLScore(score)
+		}
+		c.lotlBinaries[b.Name] = entry
+	}
+	for _, pc := range f.LOTL.ParentClasses {
+		if pc.Name == "" || len(pc.Comms) == 0 {
+			continue
+		}
+		comms := make(map[string]struct{}, len(pc.Comms))
+		for _, comm := range pc.Comms {
+			comms[comm] = struct{}{}
+		}
+		mult := pc.Multiplier
+		if mult < 0 {
+			mult = 0
+		}
+		c.lotlParentClasses = append(c.lotlParentClasses, lotlParentClass{
+			Name:       pc.Name,
+			comms:      comms,
+			Multiplier: mult,
+		})
 	}
 
 	for _, route := range f.CanaryRoutes {
@@ -399,6 +475,64 @@ func (c *Catalog) IsCanaryRoute(route string) bool {
 		}
 	}
 	return false
+}
+
+// LOTLScore computes the living-off-the-land risk score for an exec
+// event with binary name `comm` spawned by `parentComm`. Returns
+// (score, true) if the binary is classified; (0, false) otherwise —
+// callers should treat unknown binaries as "not LOTL-scorable", not
+// "score 0".
+//
+// Scoring algorithm (per BEHAVIORAL_DEFENSE.md §3.8):
+//
+//  1. Look up the binary. If unknown, return (0, false).
+//  2. If the binary has an explicit parent_risk for parentComm, use
+//     that value directly. Operators can pin specific edge cases
+//     (e.g. "bash spawned by php-fpm is 100").
+//  3. Otherwise walk parent_classes in declaration order; the first
+//     class matching parentComm contributes its multiplier × BaseRisk.
+//     Clamped to 100.
+//  4. No class match → return BaseRisk alone.
+//
+// All operations under the read lock — sub-microsecond.
+func (c *Catalog) LOTLScore(comm, parentComm string) (LOTLScore, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	b, ok := c.lotlBinaries[comm]
+	if !ok {
+		return 0, false
+	}
+
+	// Explicit per-parent override wins.
+	if parentComm != "" {
+		if score, ok := b.parentRisk[parentComm]; ok {
+			return score, true
+		}
+	}
+
+	// Parent-class multiplier.
+	for _, pc := range c.lotlParentClasses {
+		if _, ok := pc.comms[parentComm]; ok {
+			scaled := float32(b.BaseRisk) * pc.Multiplier
+			if scaled > 100 {
+				scaled = 100
+			}
+			return LOTLScore(scaled), true
+		}
+	}
+
+	return b.BaseRisk, true
+}
+
+// LOTLBinary returns whether comm is a tracked LOTL binary at all,
+// without computing a score. Useful for the dispatch enricher's
+// fast-path skip.
+func (c *Catalog) LOTLBinary(comm string) bool {
+	c.mu.RLock()
+	_, ok := c.lotlBinaries[comm]
+	c.mu.RUnlock()
+	return ok
 }
 
 // Stats returns counters useful for the health.snapshot LocalAPI

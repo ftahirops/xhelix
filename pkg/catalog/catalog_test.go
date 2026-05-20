@@ -349,6 +349,117 @@ canary_uids:
 	}
 }
 
+const lotlYAML = `
+version: 1
+sensitivity_points: {canary: 10000}
+lotl:
+  binaries:
+    - name: curl
+      base_risk: 10
+      parent_risk:
+        php-fpm: 95         # explicit override — web exec'ing curl is critical
+    - name: bash
+      base_risk: 5
+      parent_risk:
+        nginx: 100
+    - name: nc
+      base_risk: 30
+    - name: python3
+      base_risk: 5
+  parent_classes:
+    - name: web_tier
+      comms: [nginx, apache2, httpd, php-fpm, gunicorn, node]
+      multiplier: 8.0
+    - name: ssh_interactive
+      comms: [sshd]
+      multiplier: 4.0
+    - name: scheduler
+      comms: [cron, systemd, atd]
+      multiplier: 0.0      # cron is the normal home of curl
+`
+
+func TestLOTLScore_UnknownBinary(t *testing.T) {
+	c, _ := Load(writeTmp(t, lotlYAML))
+	if _, ok := c.LOTLScore("ls", "bash"); ok {
+		t.Error("unknown binary should report ok=false")
+	}
+}
+
+func TestLOTLScore_ExplicitParentOverride(t *testing.T) {
+	c, _ := Load(writeTmp(t, lotlYAML))
+	// curl under php-fpm has explicit risk 95 — overrides multiplier.
+	got, ok := c.LOTLScore("curl", "php-fpm")
+	if !ok || got != 95 {
+		t.Errorf("curl/php-fpm explicit = (%d, %v), want (95, true)", got, ok)
+	}
+}
+
+func TestLOTLScore_ParentClassMultiplier(t *testing.T) {
+	c, _ := Load(writeTmp(t, lotlYAML))
+
+	// curl from nginx hits web_tier class (multiplier 8) but no
+	// explicit override — base 10 * 8 = 80.
+	got, ok := c.LOTLScore("curl", "nginx")
+	if !ok || got != 80 {
+		t.Errorf("curl/nginx = (%d, %v), want (80, true)", got, ok)
+	}
+
+	// curl from sshd hits ssh_interactive (multiplier 4) — 10 * 4 = 40.
+	got, ok = c.LOTLScore("curl", "sshd")
+	if !ok || got != 40 {
+		t.Errorf("curl/sshd = (%d, %v), want (40, true)", got, ok)
+	}
+
+	// nc from nginx — 30 * 8 = 240 → clamped to 100.
+	got, ok = c.LOTLScore("nc", "nginx")
+	if !ok || got != 100 {
+		t.Errorf("nc/nginx = (%d, %v), want (100, true) [clamped]", got, ok)
+	}
+}
+
+func TestLOTLScore_SchedulerMultiplierZero(t *testing.T) {
+	c, _ := Load(writeTmp(t, lotlYAML))
+	// curl from cron: multiplier 0 → score 0 (the "this is normal" path).
+	got, ok := c.LOTLScore("curl", "cron")
+	if !ok || got != 0 {
+		t.Errorf("curl/cron = (%d, %v), want (0, true)", got, ok)
+	}
+}
+
+func TestLOTLScore_NoMatchingParentClass_FallsBackToBaseRisk(t *testing.T) {
+	c, _ := Load(writeTmp(t, lotlYAML))
+	// curl from some random parent — no class matches, no override.
+	got, ok := c.LOTLScore("curl", "screen")
+	if !ok || got != 10 {
+		t.Errorf("curl/screen = (%d, %v), want (10, true) [base]", got, ok)
+	}
+}
+
+func TestLOTLScore_EmptyParentComm(t *testing.T) {
+	c, _ := Load(writeTmp(t, lotlYAML))
+	got, ok := c.LOTLScore("curl", "")
+	if !ok || got != 10 {
+		t.Errorf("curl/'' = (%d, %v), want (10, true) [base]", got, ok)
+	}
+}
+
+func TestLOTLBinary(t *testing.T) {
+	c, _ := Load(writeTmp(t, lotlYAML))
+	if !c.LOTLBinary("curl") {
+		t.Error("curl should be tracked")
+	}
+	if c.LOTLBinary("ls") {
+		t.Error("ls should not be tracked")
+	}
+}
+
+func BenchmarkLOTLScore(b *testing.B) {
+	c, _ := Load(writeTmp(&testing.T{}, lotlYAML))
+	for i := 0; i < b.N; i++ {
+		_, _ = c.LOTLScore("curl", "nginx")
+	}
+}
+
 func BenchmarkIsCanaryUID(b *testing.B) {
 	c, _ := Load(writeTmp(&testing.T{}, canaryYAML))
 	for i := 0; i < b.N; i++ {

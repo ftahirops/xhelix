@@ -142,3 +142,80 @@ canary_routes:
   - /wp-admin/setup-config.php  # WP install bait
   - /.git/                   # source-code recon
   - /debug/                  # generic dev-leftover bait
+
+# ── Living-off-the-land scoring (P-B.7) ──
+# Per BEHAVIORAL_DEFENSE.md §3.8. The same binary is normal under cron
+# and critical under nginx → php-fpm — what matters is the lineage.
+# Each exec event gets event.tags['lotl_score'] = N (0-100); CEL rules
+# in ruleset/dlcf/lotl/ fire on thresholds.
+lotl:
+  binaries:
+    # Network / data movement
+    - name: curl
+      base_risk: 10
+      parent_risk:
+        php-fpm: 95            # web exec'ing curl is almost always exfil
+        apache2: 90
+        nginx:   90
+    - name: wget
+      base_risk: 10
+      parent_risk:
+        php-fpm: 95
+    - name: nc
+      base_risk: 40            # already suspect anywhere
+    - name: ncat
+      base_risk: 40
+    - name: socat
+      base_risk: 50
+    - name: rsync
+      base_risk: 15
+
+    # Shell escalation
+    - name: bash
+      base_risk: 5
+      parent_risk:
+        php-fpm: 100           # web → shell is the canonical RCE indicator
+        nginx:   100
+        apache2: 100
+    - name: sh
+      base_risk: 5
+      parent_risk:
+        php-fpm: 100
+    - name: zsh
+      base_risk: 5
+    - name: dash
+      base_risk: 5
+
+    # Interpreters with -c / -e usually mean inline code execution
+    - name: python
+      base_risk: 5
+    - name: python3
+      base_risk: 5
+    - name: perl
+      base_risk: 5
+    - name: ruby
+      base_risk: 5
+    - name: php
+      base_risk: 5
+
+    # Archive / staging
+    - name: tar
+      base_risk: 5
+    - name: zip
+      base_risk: 5
+    - name: gzip
+      base_risk: 3
+
+  parent_classes:
+    - name: web_tier
+      multiplier: 8.0
+      comms: [nginx, apache2, httpd, php-fpm, gunicorn, uwsgi, node, caddy, haproxy, lighttpd]
+    - name: ssh_interactive
+      multiplier: 3.0
+      comms: [sshd]
+    - name: container_shim
+      multiplier: 4.0
+      comms: [containerd-shim, docker-shim, runc, dockerd]
+    - name: scheduler
+      multiplier: 0.0          # cron is the legitimate home of curl/wget/tar
+      comms: [cron, crond, systemd, atd, anacron, fcron]

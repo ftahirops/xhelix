@@ -21,6 +21,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/baseline"
 	"github.com/xhelix/xhelix/pkg/beacon"
 	"github.com/xhelix/xhelix/pkg/cgroupclass"
+	"github.com/xhelix/xhelix/pkg/catalog"
 	"github.com/xhelix/xhelix/pkg/chain"
 	"github.com/xhelix/xhelix/pkg/coldstore"
 	"github.com/xhelix/xhelix/pkg/config"
@@ -1201,7 +1202,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		cgroupClassifier, connTable, dnsCollector,
 		shmDet, brandDet,
 		emit,
-		foundation.ColdStore)
+		foundation.ColdStore,
+		foundation.Catalog)
 
 	notifyReady()
 
@@ -1291,6 +1293,7 @@ func dispatch(
 	brandDet *brandcheck.Detector,
 	emit func(model.Alert),
 	coldStore *coldstore.Store,
+	cat *catalog.Catalog,
 ) {
 	for {
 		select {
@@ -1316,6 +1319,33 @@ func dispatch(
 			if baselineAgg != nil {
 				baselineAgg.Observe(ev)
 			}
+			// LOTL scoring (P-B.7): on exec events, look up the
+			// (binary, parent_comm) risk score from the catalog
+			// and stamp it on the event. CEL rules then fire on
+			// thresholds. Skips entirely if the binary isn't a
+			// tracked LOTL binary — fast path for the 95% case.
+			if cat != nil &&
+				(ev.Sensor == "ebpf.spawn" || ev.Sensor == "ebpf.proc") &&
+				cat.LOTLBinary(ev.Comm) {
+				parentComm := ev.Tags["parent_comm"]
+				// No sensor stamps parent_comm today — derive it from
+				// procTree if available.
+				if parentComm == "" && procTree != nil && ev.ParentPID != 0 {
+					if anc := procTree.Ancestors(ev.ParentPID, 1); len(anc) > 0 {
+						parentComm = anc[0].Comm
+					}
+				}
+				if score, ok := cat.LOTLScore(ev.Comm, parentComm); ok {
+					if ev.Tags == nil {
+						ev.Tags = map[string]string{}
+					}
+					ev.Tags["lotl_score"] = fmt.Sprintf("%d", score)
+					if parentComm != "" {
+						ev.Tags["parent_comm"] = parentComm
+					}
+				}
+			}
+
 			// Feed proc tree
 			if procTree != nil {
 				switch ev.Sensor {
