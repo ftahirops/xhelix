@@ -20,6 +20,7 @@
 | P-RC  | Request Contract layer            |   13 | planned    |
 | P-BEHAVIOR | Behavioral Defense (valid-looking attacks) | 28 | planned |
 | P-CJ  | Crown-Jewel Profile (SMB post-compromise)| 50 | planned    |
+| P-FT  | Full Takeover Detection + containment cell | 62 | planned    |
 
 Total core ship: 17 days (P1–P4). Polished release: 23 days (P1–P6).
 DLCF subsystem (P7): adds ~11 weeks on top, split into v1/v2/v3 (see § Phase 7).
@@ -711,6 +712,63 @@ specific glue: catalog wizard, brokers, watchdog, audit mirror.
 - Multi-tenant secret broker — different product line
 - Cross-account fleet correlation at scale — xhub exists, mature
   the existing code rather than rebuild
+
+---
+
+## Phase P-FT — Full Takeover Detection + response
+
+**Goal**: aggregate the existing per-event signals into a unified
+per-lineage takeover-confidence score and execute the right
+containment actions on threshold crossings. Full design in
+[FULL_TAKEOVER_DETECTION.md](FULL_TAKEOVER_DETECTION.md).
+
+Today's coverage of the MITRE phases A-I is ~71%; the substrate
+(lineage, taint, hot graph, egress valve, budget, chain, 61 rules)
+is already shipped. P-FT is the unified consumer.
+
+| Task   | Description                                          | Days |
+| ------ | ---------------------------------------------------- | ---: |
+| P-FT.1 | `pkg/takeover` — per-lineage scorer; threshold-promotion alerts | 7 |
+| P-FT.2 | `ruleset/dlcf/takeover.yaml` — weight config + initial tuning   | 2 |
+| P-FT.3 | `pkg/invariants` — declarative impossible-action loader         | 3 |
+| P-FT.4 | `sensors/stateguard` — signed system-state hashes; drift events | 4 |
+| P-FT.5 | Containment in `pkg/enforce` — lineage SIGSTOP, passport blocklist, containment mode | 5 |
+| P-FT.6 | `pkg/forensic` — /proc snapshot for a lineage                   | 4 |
+| P-FT.7 | LocalAPI: takeover.* + containment.*                            | 2 |
+| P-FT.8 | Operator notification fan-out (Slack/email/SMS/PagerDuty)       | 3 |
+| P-FT.9 | Rule additions for the gap-analysis findings                    | 2 |
+| P-FT.10| End-to-end synthetic-takeover test                              | 3 |
+| P-FT.11| Deception cell — tarpit 8b/s + syscall latency + fake-success + DNS poison + decoy FS overlay | 20 |
+| P-FT.12| Break-glass bastion IP allow-list — mTLS+WebAuthn+24h expiry, full bypass | 4 |
+| P-FT.13| Root-session global lockdown with bastion bypass               | 3 |
+
+### Success criteria
+
+- Score thresholds map to FULL_TAKEOVER_DETECTION.md §5 hierarchy.
+- Containment is reversible via `containment.disengage` LocalAPI.
+- Off-host chain mirror flush is triggered automatically at the
+  90-confidence threshold (forensic guarantee even against attacker
+  disabling xhelix in the next 30s).
+- E2E test simulates a php-fpm→bash→/etc/shadow→outbound chain and
+  produces a takeover_confirmed event within 200 ms of the egress
+  attempt, with the full chain serialised.
+
+### Non-promises
+
+1. Does NOT make same-host root harmless. Restated.
+2. First-week false-positive rate is non-zero; run in report-only
+   mode for the initial soak period.
+3. Containment can affect legitimate users by design — operator
+   choice is "miss real compromise" vs "occasional FP freeze".
+4. Forensic snapshot is best-effort.
+
+### Out of scope (P-FT)
+
+- Auto-restore from backup (operator decision)
+- Auto-reboot (loses memory state)
+- SIGKILL (use SIGSTOP — preserves forensics)
+- User notifications (the "user" may be the attacker)
+- Nation-state-tier kernel zero-days
 
 ---
 
