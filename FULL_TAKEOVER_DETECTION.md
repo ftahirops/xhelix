@@ -623,6 +623,89 @@ What xhelix WILL promise:
 
 ---
 
+## 9. Mapping to the shared type vocabulary (see REFACTOR_ROADMAP.md)
+
+After the refactor described in `REFACTOR_ROADMAP.md`, `pkg/takeover`
+becomes `pkg/decision` and its output is `ActionPlan` instead of
+opaque "tier promotion events". The score thresholds map to
+`ContainmentState` transitions; capability checks gate which actions
+the plan can include.
+
+### 9.1 Scorer → planner
+
+`pkg/takeover.Scorer.Observe(alert)` becomes
+`pkg/decision.Plan(alert, signals, caps) → *ActionPlan`.
+
+Inputs:
+- the alert (with rule_id, lineage_id, severity, tags)
+- per-lineage signal history (accumulated phases + scores)
+- `CapabilitySet` from `pkg/runtime` (what actions can fully execute)
+
+Output: one `ActionPlan` per cross-threshold or one zero-action plan
+for sub-threshold accumulation. Plans flow to
+`pkg/response/executor`.
+
+### 9.2 Score thresholds → ActionPlan fields
+
+The §4.1 hierarchy maps directly:
+
+| Score crosses | Tier | ContainmentState | ActionPlan fields set |
+|---|---|---|---|
+| 50 | likely | `StateTriaged` | `Delay: 1-3s`, `RequireStepUp: true`, passport-blocklist append |
+| 75 | takeover likely | `StateSuspended` | + `SuspendProcess: true`, `IsolateCgroup: true`, `BanRemoteIP: true`, `Snapshot: true` |
+| 90 | takeover confirmed | `StateIsolated` | + `Memscan: true`, force chain off-host flush |
+| 100 | critical confirmed | `StateContained` | + `IsolateHost: true` (preconditions: bastion + off-host mirror) |
+| (Tier-6 opt-in + attribution ≥ 99%) | — | (no state change) | + `Tarpit: true`, `ExpiresAt: now+6h` (Layer 6 from CONTAINMENT_DESIGN.md) |
+
+### 9.3 Phase-by-phase coverage feeds the score, not actions
+
+The MITRE phase mapping in §3 stays as-is. Each phase contributes
+weight to the per-lineage score via `ruleset/dlcf/takeover.yaml`:
+
+```yaml
+phases:
+  A_initial_exec: 30
+  B_privesc:      35
+  C_credential:   40
+  D_defense:      50
+  E_persistence:  35
+  F_lateral:      25
+  G_collection:   30
+  H_exfil:        50
+  I_impact:       60
+```
+
+The PLANNER converts cumulative score to ActionPlan. The phases stay
+as taxonomy, not directly as action triggers.
+
+### 9.4 The "single most important thing" updated
+
+The original §8 said `pkg/takeover` is the highest-leverage build.
+After reconciliation: **`pkg/decision` containing the planner + the
+`ActionPlan` type IS that build.** Same code, cleaner vocabulary.
+
+### 9.5 What stays NEW (not in earlier docs)
+
+The three things from `REFACTOR_ROADMAP.md` that this doc didn't
+previously cover:
+
+1. **`CapabilitySet`** as a first-class input. Today's `pkg/takeover`
+   design implicitly assumed all containment actions are available;
+   the new design fails LOUDLY into `CapabilityWarnings` when they
+   aren't.
+
+2. **Containment as a state machine** (StateObserved → StateTriaged
+   → StateSuspended → ...). Today's design treats containment as
+   "set of currently-active flags"; the new design tracks every
+   transition through `pkg/actionlog`.
+
+3. **Reversibility as a first-class field.** ActionPlan.Reversible
+   defaults true; non-reversible actions (SIGKILL, RemediateFile)
+   require explicit operator policy. Today's design has reversibility
+   implicit in the auto-rollback timer.
+
+---
+
 ## 8. The single most important thing to build first
 
 Of the ~35 days, the highest-leverage single item is **`pkg/takeover`

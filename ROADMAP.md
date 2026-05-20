@@ -21,6 +21,7 @@
 | P-BEHAVIOR | Behavioral Defense (valid-looking attacks) | 28 | planned |
 | P-CJ  | Crown-Jewel Profile (SMB post-compromise)| 50 | planned    |
 | P-FT  | Full Takeover Detection + containment cell | 91 | planned    |
+| P-REFACTOR | Architecture reconciliation (ActionPlan/CapabilitySet/ContainmentState) | 31 | planned |
 
 Total core ship: 17 days (P1–P4). Polished release: 23 days (P1–P6).
 DLCF subsystem (P7): adds ~11 weeks on top, split into v1/v2/v3 (see § Phase 7).
@@ -779,6 +780,73 @@ is already shipped. P-FT is the unified consumer.
 - SIGKILL (use SIGSTOP — preserves forensics)
 - User notifications (the "user" may be the attacker)
 - Nation-state-tier kernel zero-days
+
+---
+
+## Phase P-REFACTOR — architecture reconciliation
+
+**Goal**: converge our five overlapping architecture docs into one
+coherent type system. `ActionPlan` / `CapabilitySet` /
+`ContainmentState` become the shared vocabulary. Full design in
+[REFACTOR_ROADMAP.md](REFACTOR_ROADMAP.md).
+
+This is the next big architectural move after the operational fixes
+shipped this session (db1b90c, f516c80, c926c24, 541224c).
+
+| Task   | Description                                                    | Days |
+| ------ | -------------------------------------------------------------- | ---: |
+| P-RF.0 | Update existing design docs with new type vocabulary (CONTAINMENT_DESIGN §13, FULL_TAKEOVER_DETECTION §9) | done in this session |
+| P-RF.1 | Write golden tests for current Alert→action behavior (corpus) | 2 |
+| P-RF.2 | `pkg/decision.ActionPlan` type + tests (no consumers yet)     | 1 |
+| P-RF.3 | `pkg/runtime.CapabilitySet` discovery + startup log           | 2 |
+| P-RF.4 | `pkg/actionlog.ContainmentState` machine + transitions store  | 3 |
+| P-RF.5 | `pkg/decision.Plan(alert, signals, caps) → ActionPlan`        | 5 |
+| P-RF.6 | First consumer: pkg/takeover (was P-FT.1) ships AS the planner | 7 |
+| P-RF.7 | Extract bootstrap/dispatch/alerts/shutdown out of run.go      | 5-7 |
+| P-RF.8 | `pkg/pipeline` extraction (normalize, enrich, persist fan-out) | 5 |
+| P-RF.9 | Refactor pkg/response into pkg/response/executor with action backends | 5 |
+
+### Success criteria
+
+- `grep -rn "kill\|nft -A\|quarantine\.Stop" -- pkg/* sensors/*`
+  outside pkg/response/executor returns ZERO matches.
+- Golden-test corpus passes before AND after each refactor commit.
+- Daemon startup log dumps the full CapabilitySet so operators see
+  what's actually live.
+- Every ActionPlan transition is recorded in pkg/actionlog with
+  reason + plan_id + operator_id.
+- pkg/configaudit Witness contract remains enforced.
+
+### Sequencing
+
+  P-RF.0 (done) → P-RF.1 → P-RF.2 → P-RF.3 → P-RF.4 → P-RF.5 → P-RF.6
+                                                                  ↓
+                                            P-RF.7 → P-RF.8 → P-RF.9
+
+P-RF.6 (pkg/takeover as the first planner consumer) MUST land before
+P-RF.7 (run.go extraction) so the file moves are guided by a real
+consumer, not theoretical structure.
+
+### Honest non-promises
+
+1. ~26-31 days end-to-end. Not a weekend cleanup.
+2. Behavior drift is a real risk during file moves; golden tests
+   mitigate but don't eliminate.
+3. New types DON'T fix existing detection gaps; vocabulary upgrade
+   only. Behavioral defenses (P-B.*) and DLCF (P7.*) still needed
+   underneath.
+4. CapabilitySet is best-effort — some capabilities can only be
+   verified by trying.
+5. ContainmentState is per-lineage; no per-tenant aggregation in v1.
+
+### Out of scope (P-REFACTOR)
+
+- Cross-host state machine (xhub territory)
+- UI redesign for the new ContainmentState (operator workflow is
+  P5 territory)
+- Per-tenant aggregation
+- Backwards-compatibility shims for old LocalAPI clients (LocalAPI
+  envelope stays stable; only internal types refactor)
 
 ---
 

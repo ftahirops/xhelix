@@ -876,6 +876,78 @@ that are xhelix's differentiation.
 
 ---
 
+## 13. Mapping to the shared type vocabulary (see REFACTOR_ROADMAP.md)
+
+After the refactor described in `REFACTOR_ROADMAP.md`, the 5-layer
+cell becomes the executor side of a single `ActionPlan`-driven flow.
+Cross-reference for implementers:
+
+### 13.1 5-layer cell → ActionPlan field semantics
+
+| Layer | ActionPlan fields that engage it |
+|---|---|
+| 1. Soft block (score ≥ 50) | `Delay > 0` AND/OR `RequireStepUp == true` AND/OR passport blocklist append |
+| 2. SIGSTOP cell (score ≥ 75) | `SuspendProcess == true` (+ `Snapshot == true` always required as precondition) |
+| 3. Network jail per-cgroup (score ≥ 75) | `IsolateCgroup == true` (nft side) AND/OR `BanRemoteIP == true` |
+| 4. FS jail + cap strip (score ≥ 90) | `IsolateCgroup == true` (LSM side — same field, different executor backend) |
+| 5. Host-wide lockdown (score = 100) | `IsolateHost == true` (+ `Snapshot`, `Memscan` always set) |
+| 6. Deception cell (opt-in, attribution ≥ 99%) | `Tarpit == true` + `CapabilitySet.SyscallLatency` / `FakeSuccess` / `DecoyFS` opted-in |
+
+### 13.2 Tier → ContainmentState
+
+The score-tier system maps to the state machine in
+`REFACTOR_ROADMAP.md §2.3`:
+
+| Score | Tier (old vocab) | ContainmentState (new vocab) |
+|---|---|---|
+| 0-24 | suspicious | `StateObserved` |
+| 25-49 | strong | `StateObserved` (informational only) |
+| 50-74 | likely | `StateTriaged` |
+| 75-89 | takeover likely | `StateSuspended` |
+| 90-99 | takeover confirmed | `StateIsolated` |
+| 100 | critical confirmed | `StateContained` |
+| (operator clear) | — | `StateRemediated` → `StateReleased` |
+| (SIGKILL post-snapshot) | — | `StateTerminated` |
+
+State transitions are recorded by `pkg/actionlog` (see
+`REFACTOR_ROADMAP.md §2.3`). Auto-rollback timers (§11.4 of this
+doc) walk states DOWN in the table above; operator clear takes
+straight to `StateReleased`.
+
+### 13.3 Layer 5 + bastion as Preconditions
+
+`IsolateHost` (Layer 5) carries strict ActionPlan.Preconditions:
+
+```
+Preconditions:
+  - "off_host_chain_mirror_active"      ← from CapabilitySet.OffHostMirror
+  - "bastion_count >= 2"                 ← from CapabilitySet.BastionCount
+  - "operator_alert_channel_reachable"   ← from CapabilitySet.OperatorChannel
+```
+
+The decider in `pkg/decision` REFUSES to emit an ActionPlan with
+`IsolateHost: true` unless all three preconditions are satisfied.
+The capability-aware refusal becomes a `CapabilityWarning` instead
+of a silent fallback — operator sees "wanted to engage Layer 5 but
+bastion isn't healthy; degraded to Layer 4 only".
+
+### 13.4 Where each existing primitive goes
+
+| Existing | Refactored location |
+|---|---|
+| `pkg/enforce.Quarantine.Stop()` | `pkg/response/executor.suspendProcess()` |
+| `pkg/netban.Banner.Ban()` | `pkg/response/executor.banRemoteIP()` |
+| `pkg/netban.Banner.EngageQuarantine()` | `pkg/response/executor.isolateHost()` |
+| Egress Valve `pkg/egress.Policy.Allow()` | input to `pkg/decision.Plan()` |
+| Data Passport `pkg/passport.Store.VerifyActive()` | input to `pkg/decision.Plan()` |
+| Tarpit (P-FT.11) | `pkg/response/executor.tarpit()` (new backend) |
+
+The 5-layer cell descriptions in §1 stay valid as the OPERATOR-FACING
+mental model. Internally, the implementation is one ActionPlan
+producer and one executor with N backends.
+
+---
+
 ## 10. The TL;DR
 
 xhelix should JAIL the attacker, not just detect them. The right
