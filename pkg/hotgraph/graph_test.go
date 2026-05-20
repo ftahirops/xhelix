@@ -207,6 +207,213 @@ func TestGraph_ConcurrentInsertSafe(t *testing.T) {
 	}
 }
 
+func TestGraph_SweepEvictsExitedPastTTL(t *testing.T) {
+	g := New(Options{ExitedRetention: 5 * time.Minute})
+
+	// Three exited nodes with different exit times.
+	now := time.Now()
+	g.Insert(ProcessNode{Key: key(1, 1)})
+	g.MarkExit(key(1, 1), now.Add(-10*time.Minute)) // past TTL
+	g.Insert(ProcessNode{Key: key(2, 1)})
+	g.MarkExit(key(2, 1), now.Add(-1*time.Minute)) // within TTL
+	g.Insert(ProcessNode{Key: key(3, 1)})          // still live
+
+	swept := g.Sweep(now)
+	if swept != 1 {
+		t.Errorf("swept = %d, want 1 (only key 1 past TTL)", swept)
+	}
+	if _, ok := g.Get(key(1, 1)); ok {
+		t.Error("key 1 should have been swept (exited 10min ago, TTL 5min)")
+	}
+	if _, ok := g.Get(key(2, 1)); !ok {
+		t.Error("key 2 should still be present (exited 1min ago, within TTL)")
+	}
+	if _, ok := g.Get(key(3, 1)); !ok {
+		t.Error("key 3 should still be present (live node, sweep ignores)")
+	}
+	st := g.Stats()
+	if st.EvictsExitTTL != 1 {
+		t.Errorf("EvictsExitTTL = %d, want 1", st.EvictsExitTTL)
+	}
+	if st.SweepRuns != 1 {
+		t.Errorf("SweepRuns = %d, want 1", st.SweepRuns)
+	}
+}
+
+func TestGraph_PinProtectsFromSweep(t *testing.T) {
+	g := New(Options{ExitedRetention: 5 * time.Minute})
+	now := time.Now()
+	g.Insert(ProcessNode{Key: key(1, 1)})
+	g.MarkExit(key(1, 1), now.Add(-10*time.Minute)) // past TTL
+	g.Pin(key(1, 1), now.Add(24*time.Hour))         // protect for 24h
+
+	swept := g.Sweep(now)
+	if swept != 0 {
+		t.Errorf("pinned node should not be swept, swept=%d", swept)
+	}
+	if _, ok := g.Get(key(1, 1)); !ok {
+		t.Error("pinned node disappeared")
+	}
+	if !g.IsPinned(key(1, 1)) {
+		t.Error("IsPinned should report true")
+	}
+}
+
+func TestGraph_PinExpiresAndAllowsSweep(t *testing.T) {
+	g := New(Options{ExitedRetention: 5 * time.Minute})
+	now := time.Now()
+	g.Insert(ProcessNode{Key: key(1, 1)})
+	g.MarkExit(key(1, 1), now.Add(-10*time.Minute))
+	g.Pin(key(1, 1), now.Add(-1*time.Minute)) // pin already expired
+
+	swept := g.Sweep(now)
+	if swept != 1 {
+		t.Errorf("expired pin should not protect; swept=%d, want 1", swept)
+	}
+	if g.IsPinned(key(1, 1)) {
+		t.Error("expired pin still reporting as pinned")
+	}
+}
+
+func TestGraph_PinOnlyRatchetsForward(t *testing.T) {
+	g := New(Options{})
+	now := time.Now()
+	later := now.Add(1 * time.Hour)
+	earlier := now.Add(10 * time.Minute)
+
+	g.Insert(ProcessNode{Key: key(1, 1)})
+	g.Pin(key(1, 1), later)
+	g.Pin(key(1, 1), earlier) // shouldn't reduce the pin
+
+	// Internal state: pin should still be `later`.
+	g.mu.RLock()
+	got := g.pins[key(1, 1)]
+	g.mu.RUnlock()
+	if !got.Equal(later) {
+		t.Errorf("pin reduced from %v to %v", later, got)
+	}
+}
+
+func TestGraph_LRUEvictsOldestNonLive(t *testing.T) {
+	// MaxNodes=10, LRUHighWater=0.80 → trigger at >=8, drain to 7.
+	hookFired := []EvictReason{}
+	g := New(Options{
+		MaxNodes: 10,
+		EvictionHook: func(_ canonical.ProcKey, r EvictReason) {
+			hookFired = append(hookFired, r)
+		},
+	})
+
+	// Insert 7 exited nodes with ascending LastSeen.
+	now := time.Now()
+	for i := uint32(1); i <= 7; i++ {
+		g.Insert(ProcessNode{Key: key(i, 1)})
+		g.MarkExit(key(i, 1), now.Add(time.Duration(i)*time.Second))
+	}
+	// One live node (won't be considered by LRU).
+	g.Insert(ProcessNode{Key: key(100, 1)})
+
+	// Now at 8 nodes. Next insert hits lruHigh and triggers eviction.
+	g.Insert(ProcessNode{Key: key(200, 1)})
+
+	st := g.Stats()
+	if st.EvictsLRU == 0 {
+		t.Error("expected at least one LRU eviction")
+	}
+	// Live node and the just-inserted ones must survive.
+	if _, ok := g.Get(key(100, 1)); !ok {
+		t.Error("LRU should never evict live nodes")
+	}
+	if _, ok := g.Get(key(200, 1)); !ok {
+		t.Error("freshly-inserted key should survive LRU")
+	}
+	// Oldest exited (key 1 with smallest LastSeen) should be gone.
+	if _, ok := g.Get(key(1, 1)); ok {
+		t.Error("oldest exited node should have been evicted by LRU")
+	}
+	// Hook fired with LRU reason.
+	gotLRU := false
+	for _, r := range hookFired {
+		if r == EvictLRU {
+			gotLRU = true
+		}
+	}
+	if !gotLRU {
+		t.Error("eviction hook never called with EvictLRU")
+	}
+}
+
+func TestGraph_LRUSkipsPinned(t *testing.T) {
+	g := New(Options{MaxNodes: 4}) // high=3, low=2
+
+	now := time.Now()
+	for i := uint32(1); i <= 3; i++ {
+		g.Insert(ProcessNode{Key: key(i, 1)})
+		g.MarkExit(key(i, 1), now.Add(time.Duration(i)*time.Second))
+	}
+	// Pin the oldest (key 1) — LRU must skip it.
+	g.Pin(key(1, 1), now.Add(1*time.Hour))
+
+	// This insert triggers LRU. With key 1 pinned, LRU should pick key 2.
+	g.Insert(ProcessNode{Key: key(99, 1)})
+
+	if _, ok := g.Get(key(1, 1)); !ok {
+		t.Error("pinned oldest must survive LRU")
+	}
+	if _, ok := g.Get(key(2, 1)); ok {
+		t.Error("second-oldest should have been LRU-evicted (key 1 was pinned)")
+	}
+}
+
+func TestGraph_CapacityEvictionWhenAllPinnedOrLive(t *testing.T) {
+	hookFired := []EvictReason{}
+	g := New(Options{
+		MaxNodes: 2,
+		EvictionHook: func(_ canonical.ProcKey, r EvictReason) {
+			hookFired = append(hookFired, r)
+		},
+	})
+
+	// Fill with two live nodes (LRU can't touch them).
+	g.Insert(ProcessNode{Key: key(1, 1)})
+	g.Insert(ProcessNode{Key: key(2, 1)})
+
+	// Third insert: LRU has nothing to evict (both live), hard cap kicks in.
+	if g.Insert(ProcessNode{Key: key(3, 1)}) {
+		t.Error("3rd insert should be refused at hard cap")
+	}
+	if g.Stats().EvictsCapacity == 0 {
+		t.Error("EvictsCapacity counter should have bumped")
+	}
+	// Hook NOT fired for capacity-refusal (node was never added, so
+	// removeLocked never ran — by design).
+	if len(hookFired) != 0 {
+		t.Errorf("hook should not fire on capacity-refusal, got %v", hookFired)
+	}
+}
+
+func TestGraph_StatsCountersByReason(t *testing.T) {
+	g := New(Options{MaxNodes: 100, ExitedRetention: time.Minute})
+	now := time.Now()
+
+	// Make one node, explicit Remove.
+	g.Insert(ProcessNode{Key: key(1, 1)})
+	g.Remove(key(1, 1))
+
+	// One sweep eviction.
+	g.Insert(ProcessNode{Key: key(2, 1)})
+	g.MarkExit(key(2, 1), now.Add(-5*time.Minute))
+	g.Sweep(now)
+
+	st := g.Stats()
+	if st.Evicts != 2 {
+		t.Errorf("total Evicts = %d, want 2", st.Evicts)
+	}
+	if st.EvictsExitTTL != 1 {
+		t.Errorf("EvictsExitTTL = %d, want 1", st.EvictsExitTTL)
+	}
+}
+
 func BenchmarkGraph_Insert(b *testing.B) {
 	g := New(Options{MaxNodes: b.N + 100})
 	b.ResetTimer()

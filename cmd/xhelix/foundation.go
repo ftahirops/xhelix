@@ -16,6 +16,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/catalog"
 	"github.com/xhelix/xhelix/pkg/eac"
 	"github.com/xhelix/xhelix/pkg/egress"
+	"github.com/xhelix/xhelix/pkg/hotgraph"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/passport"
@@ -65,6 +66,7 @@ type foundationContext struct {
 	Egress     *egress.Policy
 	Passports  *passport.Store
 	AdminGuard *adminguard.Guard
+	HotGraph   *hotgraph.Graph
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -159,6 +161,15 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Passport sweeper — drop expired/old-revoked records every minute.
 	go fc.sweepPassports(parent)
 
+	// Hot causal graph (P2.1/P2.2). Bounded LRU + retention sweep
+	// driven by a goroutine below. Not yet wired into the dispatch
+	// loop — sensors will populate it during P-RC.
+	fc.HotGraph = hotgraph.New(hotgraph.Options{
+		MaxNodes:        65536,
+		ExitedRetention: 30 * time.Minute,
+	})
+	go fc.sweepHotGraph(parent)
+
 	// Admin route IP/ASN allow-list (P-B.0b). Tier-1 deterministic
 	// guard. No geoip provider passed for v1 — daemon main wires
 	// one in via SetGeoIP() if available.
@@ -187,6 +198,23 @@ func (fc *foundationContext) Stop() {
 		return
 	}
 	fc.EAC.Stop()
+}
+
+func (fc *foundationContext) sweepHotGraph(ctx context.Context) {
+	// Run every minute — retention windows are O(min), nodes
+	// shouldn't sit around past the next tick after expiry.
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if fc.HotGraph != nil {
+				fc.HotGraph.Sweep(time.Now())
+			}
+		}
+	}
 }
 
 func (fc *foundationContext) sweepPassports(ctx context.Context) {
@@ -226,6 +254,7 @@ type healthSnapshot struct {
 	Self       healthSelfBlock     `json:"self"`
 	EAC        healthEACBlock      `json:"eac"`
 	ProcCache  healthProcCacheBlock `json:"proc_cache"`
+	HotGraph   healthHotGraphBlock  `json:"hot_graph"`
 	Lineage    healthLineageBlock  `json:"lineage"`
 	DLCF       healthDLCFBlock     `json:"dlcf"`
 	Runtime    healthRuntimeBlock  `json:"runtime"`
@@ -263,6 +292,17 @@ type healthEACBlock struct {
 	LossEvents    uint64 `json:"loss_events"`
 	BufferSize    int    `json:"buffer_size"`
 	ReorderWindow string `json:"reorder_window"`
+}
+
+type healthHotGraphBlock struct {
+	Nodes          int    `json:"nodes"`
+	MaxNodes       int    `json:"max_nodes"`
+	Pins           int    `json:"pins"`
+	Inserts        uint64 `json:"inserts"`
+	Evicts         uint64 `json:"evicts"`
+	EvictsLRU      uint64 `json:"evicts_lru"`
+	EvictsExitTTL  uint64 `json:"evicts_exit_ttl"`
+	EvictsCapacity uint64 `json:"evicts_capacity"`
 }
 
 type healthProcCacheBlock struct {
@@ -303,6 +343,12 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	}
 	srv.RegisterHandler("health.snapshot", func(_ context.Context, _ json.RawMessage) (any, error) {
 		return fc.snapshot(), nil
+	})
+	srv.RegisterHandler("hotgraph.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.HotGraph == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		return fc.HotGraph.Stats(), nil
 	})
 	srv.RegisterHandler("proccache.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
 		if fc.ProcCache == nil {
@@ -529,6 +575,24 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	})
 }
 
+// hotGraphBlock returns the hot graph summary for health.snapshot.
+func (fc *foundationContext) hotGraphBlock() healthHotGraphBlock {
+	if fc.HotGraph == nil {
+		return healthHotGraphBlock{}
+	}
+	s := fc.HotGraph.Stats()
+	return healthHotGraphBlock{
+		Nodes:          s.Nodes,
+		MaxNodes:       s.MaxNodes,
+		Pins:           s.Pins,
+		Inserts:        s.Inserts,
+		Evicts:         s.Evicts,
+		EvictsLRU:      s.EvictsLRU,
+		EvictsExitTTL:  s.EvictsExitTTL,
+		EvictsCapacity: s.EvictsCapacity,
+	}
+}
+
 // procCacheBlock returns the ProcKey cache summary for health.snapshot.
 func (fc *foundationContext) procCacheBlock() healthProcCacheBlock {
 	if fc.ProcCache == nil {
@@ -617,6 +681,7 @@ func (fc *foundationContext) snapshot() healthSnapshot {
 			ReorderWindow: "100ms",
 		},
 		ProcCache: fc.procCacheBlock(),
+		HotGraph:  fc.hotGraphBlock(),
 		Lineage: healthLineageBlock{
 			StoredOrigins:     fc.Origins.Size(),
 			TaintedLineages:   fc.Origins.TaintedCount(),

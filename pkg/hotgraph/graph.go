@@ -86,21 +86,80 @@ type Graph struct {
 	byOriginIP map[string][]canonical.ProcKey
 	byTTY      map[string][]canonical.ProcKey
 
-	maxNodes int
+	maxNodes        int
+	lruHigh         int
+	lruLow          int
+	exitedRetention time.Duration
+	hook            func(key canonical.ProcKey, reason EvictReason)
+
+	// Pins: keys with a pin until-time may not be evicted (by LRU
+	// or sweep) before that time. Use for verified-alert chains.
+	pins map[canonical.ProcKey]time.Time
+
+	// nonLiveCount tracks how many nodes are in any non-Live state
+	// (currently just StateExited). Lets evictLRULocked skip the
+	// O(N) walk when there are no candidates — important for
+	// workloads where all processes are still alive.
+	nonLiveCount int
 
 	// Counters.
-	inserts atomic.Uint64
-	updates atomic.Uint64
-	exits   atomic.Uint64
-	evicts  atomic.Uint64
+	inserts        atomic.Uint64
+	updates        atomic.Uint64
+	exits          atomic.Uint64
+	evicts         atomic.Uint64
+	evictsLRU      atomic.Uint64
+	evictsExitTTL  atomic.Uint64
+	evictsCapacity atomic.Uint64
+	sweepRuns      atomic.Uint64
 }
 
 // Options controls Graph construction.
 type Options struct {
-	// MaxNodes caps the number of process nodes retained. The hard
-	// LRU eviction logic lands in P2.2; for now Insert returns
-	// without storing if at cap and the key is new.
+	// MaxNodes caps the number of process nodes retained.
 	MaxNodes int
+
+	// LRUHighWater is the fraction of MaxNodes at which Insert
+	// triggers LRU eviction of non-pinned, non-live nodes.
+	// Default: 0.80. Eviction drains down to LRULowWater.
+	LRUHighWater float64
+
+	// LRULowWater is the fraction of MaxNodes that LRU eviction
+	// targets. Default: 0.70.
+	LRULowWater float64
+
+	// ExitedRetention is how long a node stays in the graph after
+	// being marked StateExited before it becomes eligible for
+	// sweep-driven removal. Default: 30 min.
+	ExitedRetention time.Duration
+
+	// EvictionHook is called with (key, reason) for every removal.
+	// Can be nil. Called UNDER the graph's write lock — keep it cheap.
+	EvictionHook func(key canonical.ProcKey, reason EvictReason)
+}
+
+// EvictReason describes why a node was removed. Surfaced via Stats
+// counters and the optional EvictionHook callback.
+type EvictReason uint8
+
+const (
+	EvictExplicit  EvictReason = iota // Remove() was called directly
+	EvictLRU                          // LRU pressure at LRUHighWater
+	EvictExitedTTL                    // StateExited longer than ExitedRetention
+	EvictCapacity                     // Refused at hard cap before LRU could free space
+)
+
+func (r EvictReason) String() string {
+	switch r {
+	case EvictExplicit:
+		return "explicit"
+	case EvictLRU:
+		return "lru"
+	case EvictExitedTTL:
+		return "exited_ttl"
+	case EvictCapacity:
+		return "capacity"
+	}
+	return "unknown"
 }
 
 // New constructs an empty Graph.
@@ -108,15 +167,36 @@ func New(opts Options) *Graph {
 	if opts.MaxNodes <= 0 {
 		opts.MaxNodes = 65536
 	}
-	return &Graph{
-		nodes:      make(map[canonical.ProcKey]*ProcessNode, opts.MaxNodes/4),
-		children:   make(map[canonical.ProcKey][]canonical.ProcKey),
-		byCgroup:   make(map[uint64][]canonical.ProcKey),
-		byLineage:  make(map[lineage.LineageID][]canonical.ProcKey),
-		byOriginIP: make(map[string][]canonical.ProcKey),
-		byTTY:      make(map[string][]canonical.ProcKey),
-		maxNodes:   opts.MaxNodes,
+	if opts.LRUHighWater <= 0 || opts.LRUHighWater > 1 {
+		opts.LRUHighWater = 0.80
 	}
+	if opts.LRULowWater <= 0 || opts.LRULowWater >= opts.LRUHighWater {
+		opts.LRULowWater = 0.70
+	}
+	if opts.ExitedRetention <= 0 {
+		opts.ExitedRetention = 30 * time.Minute
+	}
+	g := &Graph{
+		nodes:           make(map[canonical.ProcKey]*ProcessNode, opts.MaxNodes/4),
+		children:        make(map[canonical.ProcKey][]canonical.ProcKey),
+		byCgroup:        make(map[uint64][]canonical.ProcKey),
+		byLineage:       make(map[lineage.LineageID][]canonical.ProcKey),
+		byOriginIP:      make(map[string][]canonical.ProcKey),
+		byTTY:           make(map[string][]canonical.ProcKey),
+		pins:            make(map[canonical.ProcKey]time.Time),
+		maxNodes:        opts.MaxNodes,
+		lruHigh:         int(float64(opts.MaxNodes) * opts.LRUHighWater),
+		lruLow:          int(float64(opts.MaxNodes) * opts.LRULowWater),
+		exitedRetention: opts.ExitedRetention,
+		hook:            opts.EvictionHook,
+	}
+	if g.lruHigh < 1 {
+		g.lruHigh = 1
+	}
+	if g.lruLow < 1 {
+		g.lruLow = 1
+	}
+	return g
 }
 
 // Insert adds a new node or merges fresh fields into an existing one.
@@ -178,22 +258,39 @@ func (g *Graph) Insert(n ProcessNode) bool {
 		if n.State != StateLive {
 			merged.State = n.State
 		}
+		// Track live → non-live transitions in the counter.
+		if existing.State == StateLive && merged.State != StateLive {
+			g.nonLiveCount++
+		} else if existing.State != StateLive && merged.State == StateLive {
+			g.nonLiveCount--
+		}
 		g.nodes[n.Key] = &merged
 		g.reindexLocked(existing, &merged)
 		g.updates.Add(1)
 		return false
 	}
 
+	// LRU pressure: when the population reaches the high-water
+	// mark, evict the oldest non-pinned non-live nodes down to the
+	// low-water mark, freeing space for the new insert.
+	if len(g.nodes) >= g.lruHigh {
+		g.evictLRULocked(now)
+	}
+
+	// Even after LRU, if we're at the hard cap (everything is
+	// pinned or live) we have to refuse the insert. This is a
+	// real eviction-counter event, not a silent loss.
 	if len(g.nodes) >= g.maxNodes {
-		// P2.2 will replace this with LRU eviction; for now we
-		// refuse new inserts when full and bump a counter.
-		g.evicts.Add(1)
+		g.evictsCapacity.Add(1)
 		return false
 	}
 
 	node := n // copy
 	g.nodes[node.Key] = &node
 	g.indexLocked(&node)
+	if node.State != StateLive {
+		g.nonLiveCount++
+	}
 
 	if node.Parent.PID != 0 {
 		g.children[node.Parent] = append(g.children[node.Parent], node.Key)
@@ -219,6 +316,7 @@ func (g *Graph) MarkExit(key canonical.ProcKey, at time.Time) bool {
 	}
 	n.ExitedAt = at
 	n.LastSeen = at
+	g.nonLiveCount++
 	g.exits.Add(1)
 	return true
 }
@@ -441,24 +539,161 @@ func (g *Graph) removeFromStringIndex(idx map[string][]canonical.ProcKey, k stri
 	}
 }
 
-// Remove drops a node and every reference to it from the graph.
-// Returns true if the node was present. This is the foundation for
-// the LRU eviction logic that lands in P2.2.
-func (g *Graph) Remove(key canonical.ProcKey) bool {
+// Pin marks a key as undeletable until `until`. Pinned nodes are
+// skipped by both LRU eviction and the retention sweep. Used for
+// verified-alert chains (24 h pin) or any other "must not lose
+// the forensic trail" need.
+//
+// Multiple Pin calls on the same key with later `until` extend the
+// pin; an earlier `until` is ignored (pins only ratchet forward).
+func (g *Graph) Pin(key canonical.ProcKey, until time.Time) {
+	if key.PID == 0 || until.IsZero() {
+		return
+	}
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	n, ok := g.nodes[key]
+	if existing, ok := g.pins[key]; ok && existing.After(until) {
+		// Existing pin is later than the requested one. Keep it.
+		g.mu.Unlock()
+		return
+	}
+	g.pins[key] = until
+	g.mu.Unlock()
+}
+
+// Unpin clears any pin on key. Idempotent. Generally not needed —
+// Sweep clears expired pins automatically.
+func (g *Graph) Unpin(key canonical.ProcKey) {
+	g.mu.Lock()
+	delete(g.pins, key)
+	g.mu.Unlock()
+}
+
+// IsPinned reports whether key currently has a live pin.
+func (g *Graph) IsPinned(key canonical.ProcKey) bool {
+	g.mu.RLock()
+	until, ok := g.pins[key]
+	g.mu.RUnlock()
 	if !ok {
 		return false
 	}
+	return time.Now().Before(until)
+}
+
+// Sweep applies the retention policy:
+//
+//   - Nodes in StateExited whose ExitedAt is older than the
+//     ExitedRetention window are removed (unless pinned).
+//   - Expired pins (`until` in the past) are cleared.
+//
+// Live nodes are never swept here — they're removed only by
+// MarkExit + later sweep, or by Remove(), or by LRU pressure.
+// Returns the number of nodes evicted by this sweep.
+func (g *Graph) Sweep(now time.Time) int {
+	g.sweepRuns.Add(1)
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Clear expired pins first; an expired pin no longer protects
+	// against eviction this round.
+	for k, until := range g.pins {
+		if !now.Before(until) {
+			delete(g.pins, k)
+		}
+	}
+
+	// Now evict StateExited nodes past retention. Collect first,
+	// then remove (mutating during range is safe for maps but
+	// makes the count easier to track).
+	var toEvict []canonical.ProcKey
+	for k, n := range g.nodes {
+		if _, pinned := g.pins[k]; pinned {
+			continue
+		}
+		if n.State != StateExited {
+			continue
+		}
+		if n.ExitedAt.IsZero() {
+			continue // shouldn't happen, but be defensive
+		}
+		if now.Sub(n.ExitedAt) > g.exitedRetention {
+			toEvict = append(toEvict, k)
+		}
+	}
+	for _, k := range toEvict {
+		g.removeLocked(k, EvictExitedTTL)
+	}
+	return len(toEvict)
+}
+
+// evictLRULocked drops the oldest non-pinned non-live nodes by
+// LastSeen until the population is at or below lruLow. Caller
+// holds the write lock.
+func (g *Graph) evictLRULocked(now time.Time) {
+	if len(g.nodes) <= g.lruLow {
+		return
+	}
+	// Fast path: if nothing is non-Live, LRU has no candidates and
+	// the O(N) walk below would be pointless. Skip it; the hard-cap
+	// path below will refuse the insert with EvictCapacity.
+	if g.nonLiveCount == 0 {
+		return
+	}
+
+	// Build a candidate list: every non-live, non-pinned node.
+	// Live processes never go via LRU (only via MarkExit then sweep).
+	type cand struct {
+		k    canonical.ProcKey
+		last time.Time
+	}
+	cands := make([]cand, 0, len(g.nodes)/4)
+	for k, n := range g.nodes {
+		if n.State == StateLive {
+			continue
+		}
+		if until, ok := g.pins[k]; ok && now.Before(until) {
+			continue
+		}
+		cands = append(cands, cand{k: k, last: n.LastSeen})
+	}
+
+	// Sort ascending by LastSeen so oldest are evicted first.
+	sort.Slice(cands, func(i, j int) bool {
+		return cands[i].last.Before(cands[j].last)
+	})
+
+	// Drop from oldest until we hit lruLow or run out of candidates.
+	target := g.lruLow
+	for _, c := range cands {
+		if len(g.nodes) <= target {
+			break
+		}
+		g.removeLocked(c.k, EvictLRU)
+	}
+}
+
+// removeLocked drops the node and every reference to it, fires the
+// eviction hook with the given reason, and bumps the matching counter.
+// Caller holds the write lock.
+func (g *Graph) removeLocked(key canonical.ProcKey, reason EvictReason) {
+	n, ok := g.nodes[key]
+	if !ok {
+		return
+	}
+	if n.State != StateLive {
+		g.nonLiveCount--
+	}
 	delete(g.nodes, key)
+	delete(g.pins, key)
 	g.removeFromIndex(g.byCgroup, n.CgroupID, key)
 	g.removeFromLineageIndex(n.LineageID, key)
 	g.removeFromStringIndex(g.byOriginIP, n.OriginIP, key)
 	g.removeFromStringIndex(g.byTTY, n.TTY, key)
 	delete(g.children, key)
 	if n.Parent.PID != 0 {
-		// Drop self from parent's child list.
 		kids := g.children[n.Parent]
 		for i, kk := range kids {
 			if kk == key {
@@ -468,21 +703,50 @@ func (g *Graph) Remove(key canonical.ProcKey) bool {
 		}
 	}
 	g.evicts.Add(1)
+	switch reason {
+	case EvictLRU:
+		g.evictsLRU.Add(1)
+	case EvictExitedTTL:
+		g.evictsExitTTL.Add(1)
+	case EvictCapacity:
+		g.evictsCapacity.Add(1)
+	}
+	if g.hook != nil {
+		g.hook(key, reason)
+	}
+}
+
+// Remove drops a node and every reference to it from the graph.
+// Returns true if the node was present.
+func (g *Graph) Remove(key canonical.ProcKey) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, ok := g.nodes[key]; !ok {
+		return false
+	}
+	g.removeLocked(key, EvictExplicit)
 	return true
 }
 
 // Stats is the snapshot used by the LocalAPI surface.
 type Stats struct {
-	Nodes          int    `json:"nodes"`
-	MaxNodes       int    `json:"max_nodes"`
-	IndexedCgroups int    `json:"indexed_cgroups"`
-	IndexedLineages int   `json:"indexed_lineages"`
-	IndexedOrigins int    `json:"indexed_origins"`
-	IndexedTTYs    int    `json:"indexed_ttys"`
-	Inserts        uint64 `json:"inserts"`
-	Updates        uint64 `json:"updates"`
-	Exits          uint64 `json:"exits"`
-	Evicts         uint64 `json:"evicts"`
+	Nodes           int    `json:"nodes"`
+	MaxNodes        int    `json:"max_nodes"`
+	LRUHighWater    int    `json:"lru_high_water"`
+	LRULowWater     int    `json:"lru_low_water"`
+	Pins            int    `json:"pins"`
+	IndexedCgroups  int    `json:"indexed_cgroups"`
+	IndexedLineages int    `json:"indexed_lineages"`
+	IndexedOrigins  int    `json:"indexed_origins"`
+	IndexedTTYs     int    `json:"indexed_ttys"`
+	Inserts         uint64 `json:"inserts"`
+	Updates         uint64 `json:"updates"`
+	Exits           uint64 `json:"exits"`
+	Evicts          uint64 `json:"evicts"`
+	EvictsLRU       uint64 `json:"evicts_lru"`
+	EvictsExitTTL   uint64 `json:"evicts_exit_ttl"`
+	EvictsCapacity  uint64 `json:"evicts_capacity"`
+	SweepRuns       uint64 `json:"sweep_runs"`
 }
 
 // Stats returns a snapshot.
@@ -492,6 +756,9 @@ func (g *Graph) Stats() Stats {
 	return Stats{
 		Nodes:           len(g.nodes),
 		MaxNodes:        g.maxNodes,
+		LRUHighWater:    g.lruHigh,
+		LRULowWater:     g.lruLow,
+		Pins:            len(g.pins),
 		IndexedCgroups:  len(g.byCgroup),
 		IndexedLineages: len(g.byLineage),
 		IndexedOrigins:  len(g.byOriginIP),
@@ -500,5 +767,9 @@ func (g *Graph) Stats() Stats {
 		Updates:         g.updates.Load(),
 		Exits:           g.exits.Load(),
 		Evicts:          g.evicts.Load(),
+		EvictsLRU:       g.evictsLRU.Load(),
+		EvictsExitTTL:   g.evictsExitTTL.Load(),
+		EvictsCapacity:  g.evictsCapacity.Load(),
+		SweepRuns:       g.sweepRuns.Load(),
 	}
 }
