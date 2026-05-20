@@ -29,6 +29,9 @@ import (
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/daemon/wire"
+	"github.com/xhelix/xhelix/pkg/forensicapi"
+	"github.com/xhelix/xhelix/pkg/protectedsvc"
+	"github.com/xhelix/xhelix/pkg/protectsvcapi"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/execguard"
@@ -115,6 +118,9 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		"intel.enabled",
 		"chain.enabled", "chain.dir", "chain.key_path",
 		"logging.level", "logging.format",
+		// P-RF.9b takeover knobs
+		"takeover.active", "takeover.tick_interval", "takeover.min_score",
+		"takeover.bastion_available", "takeover.off_host_mirror",
 	} {
 		cfgAudit.Declare(k)
 	}
@@ -327,6 +333,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			OffHostMirrorAvailable: cfg.Takeover.OffHostMirror,
 		}, respEngine)
 		go plannerWiring.Tick(ctx)
+		cfgAudit.Witness("takeover.active", "PlannerWiring")
+		cfgAudit.Witness("takeover.tick_interval", "PlannerWiring")
+		cfgAudit.Witness("takeover.min_score", "PlannerWiring")
+		cfgAudit.Witness("takeover.bastion_available", "PlannerWiring")
+		cfgAudit.Witness("takeover.off_host_mirror", "PlannerWiring")
 		log.Info("planner wiring enabled",
 			"active", cfg.Takeover.Active,
 			"tick", cfg.Takeover.TickInterval)
@@ -957,6 +968,18 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		localapi.OptionAllowUIDs(0), // root only by default
 	)
 	registerLocalAPIHandlers(apiSrv, histStore, suppressor, dedupe, connTable, liveHub, vctx, procHist, log)
+
+	// P-RF.9c: register P-PS.13 operator-UX handlers.
+	// Registry + IOC store start empty — populated by future config
+	// loading + forensic ingest paths. Empty results from xhelixctl
+	// are the correct "no protected services configured" answer.
+	protectedRegistry := protectedsvc.NewRegistry()
+	(&protectsvcapi.API{Reg: protectedRegistry}).Register(apiSrv)
+	forensicStore := forensic.NewStore()
+	(&forensicapi.API{Store: forensicStore}).Register(apiSrv)
+	log.Info("operator-UX APIs registered",
+		"protected_services", protectedRegistry.Count(),
+		"iocs", forensicStore.Len())
 	// Enforcement handlers (F6 v2) — wired after the main registration
 	// since they need their own context closure for Arm.
 	apiSrv.RegisterHandler("enforce.status", func(_ context.Context, _ json.RawMessage) (any, error) {
