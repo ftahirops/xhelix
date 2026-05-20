@@ -20,7 +20,7 @@
 | P-RC  | Request Contract layer            |   13 | planned    |
 | P-BEHAVIOR | Behavioral Defense (valid-looking attacks) | 28 | planned |
 | P-CJ  | Crown-Jewel Profile (SMB post-compromise)| 50 | planned    |
-| P-FT  | Full Takeover Detection + containment cell | 62 | planned    |
+| P-FT  | Full Takeover Detection + containment cell | 91 | planned    |
 
 Total core ship: 17 days (P1–P4). Polished release: 23 days (P1–P6).
 DLCF subsystem (P7): adds ~11 weeks on top, split into v1/v2/v3 (see § Phase 7).
@@ -741,6 +741,16 @@ is already shipped. P-FT is the unified consumer.
 | P-FT.11| Deception cell — tarpit 8b/s + syscall latency + fake-success + DNS poison + decoy FS overlay | 20 |
 | P-FT.12| Break-glass bastion IP allow-list — mTLS+WebAuthn+24h expiry, full bypass | 4 |
 | P-FT.13| Root-session global lockdown with bastion bypass               | 3 |
+| P-FT.14| Reputation/threat-intel weighting on containment thresholds    | 2 |
+| P-FT.15| Per-cgroup tarpit (preferred over per-IP; avoids NAT collateral) | 2 |
+| P-FT.16| Graceful tarpit degradation (1MB/s→8B/s over 15min)            | 1 |
+| P-FT.17| Auto-rollback on signal-resolution silence timer                | 2 |
+| P-FT.18| Bastion health check (xhelixctl bastion test)                  | 2 |
+| P-FT.19| Dual-bastion-minimum enforcement                                | 1 |
+| P-FT.20| Tarpit capture buffer as forensic event source                  | 3 |
+| P-FT.21| Borrow bpf_send_signal: in-kernel SIGSTOP for jailed lineage   | 4 |
+| P-FT.22| Borrow bpf_override_return: kernel-side fake-success outbound  | 5 |
+| P-FT.23| Borrow declarative-eBPF-gen for pkg/invariants                  | 7 |
 
 ### Success criteria
 
