@@ -28,6 +28,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/correlator"
+	"github.com/xhelix/xhelix/pkg/daemon/forensicingest"
 	"github.com/xhelix/xhelix/pkg/daemon/wire"
 	"github.com/xhelix/xhelix/pkg/forensicapi"
 	"github.com/xhelix/xhelix/pkg/protectedsvc"
@@ -123,6 +124,9 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		"takeover.bastion_available", "takeover.off_host_mirror",
 		// P-RF.9d protected-services loader
 		"protected_services.enabled", "protected_services.services",
+		// P-RF.9e forensic ingest
+		"forensic_ingest.enabled", "forensic_ingest.dir",
+		"forensic_ingest.scan_interval", "forensic_ingest.poll_interval",
 	} {
 		cfgAudit.Declare(k)
 	}
@@ -256,7 +260,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Forensic snapshotter — captures /proc/<pid>/* before kill so the
 	// IR team has evidence after the offending process is gone.
 	var snapshotter *forensic.Snapshotter
-	if cfg.Forensic.Enabled {
+	if cfg.ForensicIngest.Enabled {
 		dir := cfg.Forensic.EvidenceDir
 		if dir == "" {
 			dir = filepath.Join(cfg.Agent.StateDir, "evidence")
@@ -992,6 +996,31 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	log.Info("operator-UX APIs registered",
 		"protected_services", protectedRegistry.Count(),
 		"iocs", forensicStore.Len())
+
+	// P-RF.9e: spawn the forensic JSON-lines ingestor when the
+	// operator opts in. The deception binaries (honey-sh /
+	// sinkhole / dnspoison) write *.jsonl files into the
+	// configured dir; this goroutine tails them and populates
+	// forensicStore + fires co-occurrence rules.
+	if cfg.ForensicIngest.Enabled && cfg.ForensicIngest.Dir != "" {
+		co := forensic.NewCoEngine(forensic.DefaultCoRules())
+		ingestor := forensicingest.New(forensicingest.Config{
+			Dir:          cfg.ForensicIngest.Dir,
+			ScanInterval: cfg.ForensicIngest.ScanInterval,
+			PollInterval: cfg.ForensicIngest.PollInterval,
+			Log:          log,
+		}, forensicStore, co, func(h forensic.Hit) {
+			log.Warn("forensic co-occurrence fired",
+				"rule", h.RuleID, "source", h.Source,
+				"severity", h.Severity, "contributors", h.Contributors)
+		})
+		go ingestor.Run(ctx)
+		cfgAudit.Witness("forensic_ingest.enabled", "forensicIngestor")
+		cfgAudit.Witness("forensic_ingest.dir", "forensicIngestor")
+		cfgAudit.Witness("forensic_ingest.scan_interval", "forensicIngestor")
+		cfgAudit.Witness("forensic_ingest.poll_interval", "forensicIngestor")
+		log.Info("forensic ingestor enabled", "dir", cfg.ForensicIngest.Dir)
+	}
 	// Enforcement handlers (F6 v2) — wired after the main registration
 	// since they need their own context closure for Arm.
 	apiSrv.RegisterHandler("enforce.status", func(_ context.Context, _ json.RawMessage) (any, error) {

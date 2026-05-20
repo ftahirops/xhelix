@@ -177,7 +177,24 @@ func (s *Store) Add(o Observation) *IOC {
 	if o.Source != "" {
 		addUniqueCap(&ioc.Sources, o.Source, MaxSourcesPerIOC)
 	}
-	return ioc
+	// Return a SNAPSHOT (copy) — not the live pointer — so callers
+	// can safely read the IOC's fields after Add() releases the
+	// lock. Returning the live pointer raced (P-RF.9e found it):
+	// ProcessLine reads `ioc.Count == 1` after Add(), and a
+	// concurrent Add() would mutate that field. Snapshot semantics
+	// keep the API caller-safe without forcing every caller to
+	// hold s.mu themselves.
+	cp := *ioc
+	if ioc.Origins != nil {
+		cp.Origins = append([]string(nil), ioc.Origins...)
+	}
+	if ioc.Sources != nil {
+		cp.Sources = append([]string(nil), ioc.Sources...)
+	}
+	if ioc.Tags != nil {
+		cp.Tags = append([]string(nil), ioc.Tags...)
+	}
+	return &cp
 }
 
 // AddBatch is a convenience for many observations.

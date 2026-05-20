@@ -14,9 +14,10 @@ func TestStore_AddDedupesAndUpdatesLastSeen(t *testing.T) {
 	t0 := time.Unix(1700000000, 0).UTC()
 	a := s.Add(Observation{Kind: KindDomain, Value: "c2.evil.com", At: t0, Origin: "sinkhole"})
 	b := s.Add(Observation{Kind: KindDomain, Value: "c2.evil.com", At: t0.Add(time.Hour), Origin: "dnspoison"})
-	if a.Value != b.Value || a != b {
-		// b should be the same *IOC instance as a.
-		t.Fatalf("dedup broken: a=%+v b=%+v", a, b)
+	// Add returns snapshots, not the live pointer (P-RF.9e race fix).
+	// Verify dedup via the Store's Get() which sees the merged state.
+	if a.Value != b.Value {
+		t.Fatalf("Values diverged: a=%+v b=%+v", a, b)
 	}
 	if b.Count != 2 {
 		t.Fatalf("Count=%d want 2", b.Count)

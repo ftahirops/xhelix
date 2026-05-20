@@ -63,6 +63,23 @@ type Config struct {
 	// that should be locked down with Ring 1 + Ring 2.
 	// See PROTECTED_SERVICES_TRAP.md.
 	ProtectedServices ProtectedServicesConfig `yaml:"protected_services"`
+
+	// ForensicIngest — JSON-lines ingest path config (P-RF.9e).
+	// (Named ForensicIngest, not Forensic, because the existing
+	// Forensic field above is the /proc snapshot subsystem.)
+	ForensicIngest ForensicIngestConfig `yaml:"forensic_ingest"`
+}
+
+// ForensicIngestConfig controls the directory tailer that consumes
+// JSON-lines streams from the Ring 2 deception binaries.
+// Disabled by default — operators opt in by setting enabled: true
+// and pointing dir at a writable directory the deception binaries
+// also write to.
+type ForensicIngestConfig struct {
+	Enabled      bool          `yaml:"enabled"`
+	Dir          string        `yaml:"dir"`
+	ScanInterval time.Duration `yaml:"scan_interval"`
+	PollInterval time.Duration `yaml:"poll_interval"`
 }
 
 // ProtectedServicesConfig wraps the operator's list of declared
