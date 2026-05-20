@@ -552,6 +552,14 @@ func runDaemon(parent context.Context, cfgPath string) error {
 
 	// Hook the response engine + session tracker into the alert path.
 	emit = func(a model.Alert) {
+		// Evidence bucket aggregation — rolls up repeated alerts
+		// per (rule_id, kind, exe_sha, target_class, cgroup,
+		// origin_type, 1-min window). Done first so even alerts
+		// dropped downstream contribute to the operator's rollup.
+		if foundation != nil && foundation.Evidence != nil {
+			foundation.Evidence.Observe(&a)
+		}
+
 		// Threat-intel enrichment — tag alerts whose src/dst IP is on
 		// a public bad-list so the operator immediately sees "this
 		// connection went to a known C2 source/destination".

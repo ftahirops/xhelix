@@ -17,6 +17,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/coldstore"
 	"github.com/xhelix/xhelix/pkg/eac"
 	"github.com/xhelix/xhelix/pkg/egress"
+	"github.com/xhelix/xhelix/pkg/evidence"
 	"github.com/xhelix/xhelix/pkg/hotgraph"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/localapi"
@@ -69,6 +70,7 @@ type foundationContext struct {
 	AdminGuard *adminguard.Guard
 	HotGraph   *hotgraph.Graph
 	ColdStore  *coldstore.Store
+	Evidence   *evidence.Aggregator
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -172,6 +174,12 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	})
 	go fc.sweepHotGraph(parent)
 
+	// Evidence aggregator (P2.4). Buckets repeated alerts by
+	// (rule_id, kind, exe_sha, target_class, cgroup, origin_type,
+	// 1-min window) — turning noisy rules into one rolled-up row.
+	fc.Evidence = evidence.New(evidence.Options{})
+	go fc.sweepEvidence(parent)
+
 	// Cold store (P2.3). Durable per-day-partitioned event store.
 	// Best-effort: failure to open isn't fatal — the daemon still
 	// runs without cold persistence. Path lives under StateDir.
@@ -213,6 +221,23 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.ColdStore != nil {
 		_ = fc.ColdStore.Close()
+	}
+}
+
+func (fc *foundationContext) sweepEvidence(ctx context.Context) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if fc.Evidence != nil {
+				// Drop buckets that haven't been touched in 1 h
+				// AND aren't promoted.
+				fc.Evidence.Sweep(time.Now().Add(-time.Hour))
+			}
+		}
 	}
 }
 
@@ -272,6 +297,7 @@ type healthSnapshot struct {
 	ProcCache  healthProcCacheBlock `json:"proc_cache"`
 	HotGraph   healthHotGraphBlock  `json:"hot_graph"`
 	ColdStore  healthColdStoreBlock `json:"cold_store"`
+	Evidence   healthEvidenceBlock  `json:"evidence"`
 	Lineage    healthLineageBlock  `json:"lineage"`
 	DLCF       healthDLCFBlock     `json:"dlcf"`
 	Runtime    healthRuntimeBlock  `json:"runtime"`
@@ -309,6 +335,15 @@ type healthEACBlock struct {
 	LossEvents    uint64 `json:"loss_events"`
 	BufferSize    int    `json:"buffer_size"`
 	ReorderWindow string `json:"reorder_window"`
+}
+
+type healthEvidenceBlock struct {
+	Buckets    int    `json:"buckets"`
+	MaxBuckets int    `json:"max_buckets"`
+	Promoted   int    `json:"promoted"`
+	Observed   uint64 `json:"observed"`
+	Dropped    uint64 `json:"dropped"`
+	Swept      uint64 `json:"swept"`
 }
 
 type healthColdStoreBlock struct {
@@ -378,6 +413,47 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 			return map[string]any{"enabled": false}, nil
 		}
 		return fc.HotGraph.Stats(), nil
+	})
+	srv.RegisterHandler("evidence.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.Evidence == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		return fc.Evidence.Stats(), nil
+	})
+	srv.RegisterHandler("evidence.list", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Evidence == nil {
+			return map[string]any{"buckets": []any{}}, nil
+		}
+		var req struct {
+			Limit int `json:"limit"`
+		}
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &req)
+		}
+		if req.Limit <= 0 {
+			req.Limit = 50
+		}
+		all := fc.Evidence.Snapshot()
+		if len(all) > req.Limit {
+			all = all[:req.Limit]
+		}
+		return map[string]any{"count": len(all), "buckets": all}, nil
+	})
+	srv.RegisterHandler("evidence.promote", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.Evidence == nil {
+			return nil, errors.New("evidence aggregator not initialised")
+		}
+		var req struct {
+			Key string `json:"key"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.Key == "" {
+			return nil, errors.New("key required")
+		}
+		ok := fc.Evidence.Promote(req.Key)
+		return map[string]any{"promoted": ok}, nil
 	})
 	srv.RegisterHandler("coldstore.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
 		if fc.ColdStore == nil {
@@ -636,6 +712,22 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	})
 }
 
+// evidenceBlock returns the evidence-aggregator summary for health.snapshot.
+func (fc *foundationContext) evidenceBlock() healthEvidenceBlock {
+	if fc.Evidence == nil {
+		return healthEvidenceBlock{}
+	}
+	s := fc.Evidence.Stats()
+	return healthEvidenceBlock{
+		Buckets:    s.Buckets,
+		MaxBuckets: s.MaxBuckets,
+		Promoted:   s.Promoted,
+		Observed:   s.Observed,
+		Dropped:    s.Dropped,
+		Swept:      s.Swept,
+	}
+}
+
 // coldStoreBlock returns the cold-store summary for health.snapshot.
 func (fc *foundationContext) coldStoreBlock() healthColdStoreBlock {
 	if fc.ColdStore == nil {
@@ -763,6 +855,7 @@ func (fc *foundationContext) snapshot() healthSnapshot {
 		ProcCache: fc.procCacheBlock(),
 		HotGraph:  fc.hotGraphBlock(),
 		ColdStore: fc.coldStoreBlock(),
+		Evidence:  fc.evidenceBlock(),
 		Lineage: healthLineageBlock{
 			StoredOrigins:     fc.Origins.Size(),
 			TaintedLineages:   fc.Origins.TaintedCount(),
