@@ -8,6 +8,7 @@ BIN := xhelix
 CTL := xhelixctl
 VFY := xhelix-verify
 HSH := xhelix-honeysh
+SNK := xhelix-sinkhole
 DIST := dist
 
 .PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux
@@ -35,6 +36,7 @@ build:
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(CTL) ./cmd/xhelixctl
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(VFY) ./cmd/xhelix-verify
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(HSH) ./cmd/xhelix-honeysh
+	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(SNK) ./cmd/xhelix-sinkhole
 
 race:
 	go test -race -count=1 ./...
@@ -49,6 +51,9 @@ static-check: build
 	@file ./$(HSH) | grep -q "statically linked" \
 	  && echo "static honeysh binary OK" \
 	  || (echo "FAIL: $(HSH) is not statically linked"; exit 1)
+	@file ./$(SNK) | grep -q "statically linked" \
+	  && echo "static sinkhole binary OK" \
+	  || (echo "FAIL: $(SNK) is not statically linked"; exit 1)
 
 test:
 	go test -race -count=1 ./...
@@ -60,7 +65,7 @@ tidy:
 	go mod tidy
 
 clean:
-	rm -f $(BIN) $(CTL) $(VFY) $(HSH)
+	rm -f $(BIN) $(CTL) $(VFY) $(HSH) $(SNK)
 	rm -rf $(DIST)
 
 deb: build
