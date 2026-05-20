@@ -8,6 +8,8 @@
 package policy
 
 import (
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -39,10 +41,10 @@ type AppRules struct {
 
 	// Deny* override the allow lists. Highest precedence within a
 	// per-app rule.
-	DenyDomains  []string
+	DenyDomains   []string
 	DenyCountries []string
-	DenyASNs     []uint32
-	DenyPorts    []uint16
+	DenyASNs      []uint32
+	DenyPorts     []uint16
 }
 
 // Global holds rules that apply to every flow regardless of app.
@@ -51,6 +53,8 @@ type Global struct {
 	DenyCountries []string
 	DenyASNs      []uint32
 	DenyIPCIDRs   []string // textual CIDR; matched by ParseCIDR at load time
+
+	denyIPNets []*net.IPNet
 }
 
 // Document is the marshalled shape — a single file's contents.
@@ -80,6 +84,7 @@ func (p *Policy) Load(d *Document) {
 	if d == nil {
 		d = &Document{}
 	}
+	d.Global.denyIPNets = compileCIDRs(d.Global.DenyIPCIDRs)
 	p.doc.Store(d)
 }
 
@@ -200,11 +205,44 @@ func matchGlobal(g Global, host string, c verdict.Conn) string {
 			return "global deny: ASN"
 		}
 	}
-	// CIDR list: parsed once at load time and cached in Global, but
-	// for the MVP we just string-prefix-match the textual IP. A real
-	// implementation would prefix-trie this; the operator's CIDR list
-	// will be short.
+	if ip := net.ParseIP(c.DstIP); ip != nil {
+		for _, n := range g.denyIPNets {
+			if n.Contains(ip) {
+				return "global deny: dst_ip " + c.DstIP
+			}
+		}
+	}
 	return ""
+}
+
+func compileCIDRs(raws []string) []*net.IPNet {
+	out := make([]*net.IPNet, 0, len(raws))
+	for _, raw := range raws {
+		raw = normalizeCIDR(raw)
+		if raw == "" {
+			continue
+		}
+		_, n, err := net.ParseCIDR(raw)
+		if err != nil {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func normalizeCIDR(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.Contains(raw, "/") {
+		return raw
+	}
+	if strings.Contains(raw, ":") {
+		return raw + "/128"
+	}
+	return raw + "/32"
 }
 
 func matchApp(rules []AppRules, c verdict.Conn) *AppRules {

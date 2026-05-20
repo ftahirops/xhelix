@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -96,14 +97,21 @@ func startWebServer(
 	if auditLog == "" {
 		auditLog = filepath.Join(cfg.Agent.LogDir, "ui-audit.log")
 	}
+	trustedProxies, err := parseProxyCIDRs(cfg.UI.TrustedProxies)
+	if err != nil {
+		log.Error("ui trusted_proxies invalid; falling back to loopback", "err", err)
+		go func() { _ = webSrv.Start() }()
+		return nil
+	}
 	guard, err := web.NewAuthGuard(web.AuthConfig{
-		AllowIPs:          cfg.UI.AllowIPs,
-		AutoDetectSSH:     cfg.UI.AutoDetectSSH,
-		TokenFile:         tokenFile,
-		AuditLogPath:      auditLog,
+		AllowIPs:           cfg.UI.AllowIPs,
+		AutoDetectSSH:      cfg.UI.AutoDetectSSH,
+		TokenFile:          tokenFile,
+		AuditLogPath:       auditLog,
 		RateLimitPerSecond: cfg.UI.RateLimit,
-		TrustForwardedFor: cfg.UI.TrustForwarded,
-		Logger:            log,
+		TrustForwardedFor:  cfg.UI.TrustForwarded,
+		TrustedProxies:     trustedProxies,
+		Logger:             log,
 	})
 	if err != nil {
 		log.Error("auth guard init failed; falling back to loopback", "err", err)
@@ -200,6 +208,29 @@ func splitHostPort(s string) (host, port string, ok bool) {
 		}
 	}
 	return s, "", false
+}
+
+func parseProxyCIDRs(raws []string) ([]*net.IPNet, error) {
+	out := make([]*net.IPNet, 0, len(raws))
+	for _, raw := range raws {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if !strings.Contains(raw, "/") {
+			if strings.Contains(raw, ":") {
+				raw += "/128"
+			} else {
+				raw += "/32"
+			}
+		}
+		_, n, err := net.ParseCIDR(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", raw, err)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // =====================================================================

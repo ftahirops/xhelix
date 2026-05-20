@@ -46,12 +46,12 @@ type Config struct {
 
 	// v0.0.9: elite-tier detection — beaconing, tamper, kernel
 	// integrity, threat intel, DNS exfil.
-	Beacon       BeaconConfig       `yaml:"beacon"`
-	TamperGuard  TamperGuardConfig  `yaml:"tamperguard"`
-	KIntegrity   KIntegrityConfig   `yaml:"kintegrity"`
-	ThreatFeed   ThreatFeedConfig   `yaml:"threatfeed"`
-	DNSExfil     DNSExfilConfig     `yaml:"dnsexfil"`
-	Baseline     BaselineConfig     `yaml:"baseline"`
+	Beacon      BeaconConfig      `yaml:"beacon"`
+	TamperGuard TamperGuardConfig `yaml:"tamperguard"`
+	KIntegrity  KIntegrityConfig  `yaml:"kintegrity"`
+	ThreatFeed  ThreatFeedConfig  `yaml:"threatfeed"`
+	DNSExfil    DNSExfilConfig    `yaml:"dnsexfil"`
+	Baseline    BaselineConfig    `yaml:"baseline"`
 }
 
 // LoggingConfig configures the agent's own log output.
@@ -275,25 +275,26 @@ type RemediateConfig struct {
 
 // SessionConfig toggles the SSH session tracker.
 type SessionConfig struct {
-	Enabled         bool `yaml:"enabled"`
-	MaxEventsPerSession int `yaml:"max_events_per_session"`
+	Enabled             bool `yaml:"enabled"`
+	MaxEventsPerSession int  `yaml:"max_events_per_session"`
 }
 
 // UIConfig is the web dashboard's protection layer.
 type UIConfig struct {
-	Enabled       bool     `yaml:"enabled"`
-	Bind          string   `yaml:"bind"`           // 0.0.0.0:18443
-	TLSEnabled    bool     `yaml:"tls_enabled"`
-	TLSCert       string   `yaml:"tls_cert"`
-	TLSKey        string   `yaml:"tls_key"`
-	HTTPRedirect  bool     `yaml:"http_redirect"`  // listen on :18080 too
-	HTTPRedirectAddr string `yaml:"http_redirect_addr"`
-	AllowIPs      []string `yaml:"allow_ips"`
-	AutoDetectSSH bool     `yaml:"auto_detect_ssh"`
-	TokenFile     string   `yaml:"token_file"`
-	AuditLog      string   `yaml:"audit_log"`
-	RateLimit     int      `yaml:"rate_limit_per_second"`
-	TrustForwarded bool    `yaml:"trust_forwarded_for"`
+	Enabled          bool     `yaml:"enabled"`
+	Bind             string   `yaml:"bind"` // 0.0.0.0:18443
+	TLSEnabled       bool     `yaml:"tls_enabled"`
+	TLSCert          string   `yaml:"tls_cert"`
+	TLSKey           string   `yaml:"tls_key"`
+	HTTPRedirect     bool     `yaml:"http_redirect"` // listen on :18080 too
+	HTTPRedirectAddr string   `yaml:"http_redirect_addr"`
+	AllowIPs         []string `yaml:"allow_ips"`
+	TrustedProxies   []string `yaml:"trusted_proxies"`
+	AutoDetectSSH    bool     `yaml:"auto_detect_ssh"`
+	TokenFile        string   `yaml:"token_file"`
+	AuditLog         string   `yaml:"audit_log"`
+	RateLimit        int      `yaml:"rate_limit_per_second"`
+	TrustForwarded   bool     `yaml:"trust_forwarded_for"`
 }
 
 // WebhookConfig is a single webhook endpoint for response.
@@ -341,11 +342,11 @@ type HostQuarantineConfig struct {
 
 // BeaconConfig tunes the C2 beaconing detector.
 type BeaconConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	MinSamples      int      `yaml:"min_samples"`
-	MaxJitterCV     float64  `yaml:"max_jitter_cv"`
-	MinSpanSeconds  int      `yaml:"min_span_seconds"`
-	AllowList       []string `yaml:"allow_list"`
+	Enabled        bool     `yaml:"enabled"`
+	MinSamples     int      `yaml:"min_samples"`
+	MaxJitterCV    float64  `yaml:"max_jitter_cv"`
+	MinSpanSeconds int      `yaml:"min_span_seconds"`
+	AllowList      []string `yaml:"allow_list"`
 }
 
 // TamperGuardConfig tunes the sensor self-protection watchdog.
@@ -365,10 +366,10 @@ type KIntegrityConfig struct {
 // — distinct from the existing ThreatIntelConfig which configures the
 // internal NetIDS intel manager.
 type ThreatFeedConfig struct {
-	Enabled       bool     `yaml:"enabled"`
-	RefreshHours  int      `yaml:"refresh_hours"`
-	AllowOffline  bool     `yaml:"allow_offline"`
-	ExtraSources  []ThreatFeedSource `yaml:"extra_sources"`
+	Enabled      bool               `yaml:"enabled"`
+	RefreshHours int                `yaml:"refresh_hours"`
+	AllowOffline bool               `yaml:"allow_offline"`
+	ExtraSources []ThreatFeedSource `yaml:"extra_sources"`
 }
 
 type ThreatFeedSource struct {
@@ -383,17 +384,17 @@ type ThreatFeedSource struct {
 // the foundation for any future ML/baseline scoring.
 type BaselineConfig struct {
 	Enabled          bool     `yaml:"enabled"`
-	StoreDir         string   `yaml:"store_dir"`         // default <state_dir>/baseline
-	KeepHours        int      `yaml:"keep_hours"`        // 0 = 2
+	StoreDir         string   `yaml:"store_dir"`           // default <state_dir>/baseline
+	KeepHours        int      `yaml:"keep_hours"`          // 0 = 2
 	MaxKeysPerWindow int      `yaml:"max_keys_per_window"` // 0 = 64
-	IgnoreBinaries   []string `yaml:"ignore_binaries"`   // skip these comms/images
-	RetentionDays    int      `yaml:"retention_days"`    // 0 = 30; 0 disables prune
+	IgnoreBinaries   []string `yaml:"ignore_binaries"`     // skip these comms/images
+	RetentionDays    int      `yaml:"retention_days"`      // 0 = 30; 0 disables prune
 
 	// Phase 2: scoring on top of the baseline.
-	Scoring          BaselineScoringConfig `yaml:"scoring"`
+	Scoring BaselineScoringConfig `yaml:"scoring"`
 
 	// Phase 3: optional fleet hub upload.
-	Hub              BaselineHubConfig `yaml:"hub"`
+	Hub BaselineHubConfig `yaml:"hub"`
 }
 
 // BaselineScoringConfig tunes the set-diff scorer + rate detector.
@@ -413,23 +414,23 @@ type BaselineScoringConfig struct {
 // BaselineHubConfig configures the agent's upload to a fleet hub.
 // Empty URL = no upload, agent runs standalone.
 type BaselineHubConfig struct {
-	URL              string `yaml:"url"`               // e.g. https://xhub.example.com:18444
-	UploadIntervalMin int   `yaml:"upload_interval_min"` // 0 = 5
-	HostTag          string `yaml:"host_tag"`          // e.g. "web-prod-01"
-	RoleTag          string `yaml:"role_tag"`          // e.g. "web", "db"
-	AuthToken        string `yaml:"auth_token"`        // bearer
-	TLSInsecureSkipVerify bool `yaml:"tls_insecure_skip_verify"` // dev only
-	QueueDir         string `yaml:"queue_dir"`         // default <state_dir>/hubqueue
+	URL                   string `yaml:"url"`                      // e.g. https://xhub.example.com:18444
+	UploadIntervalMin     int    `yaml:"upload_interval_min"`      // 0 = 5
+	HostTag               string `yaml:"host_tag"`                 // e.g. "web-prod-01"
+	RoleTag               string `yaml:"role_tag"`                 // e.g. "web", "db"
+	AuthToken             string `yaml:"auth_token"`               // bearer
+	TLSInsecureSkipVerify bool   `yaml:"tls_insecure_skip_verify"` // dev only
+	QueueDir              string `yaml:"queue_dir"`                // default <state_dir>/hubqueue
 }
 
 // DNSExfilConfig tunes the DNS-tunnel detector.
 type DNSExfilConfig struct {
-	Enabled              bool    `yaml:"enabled"`
-	WindowSeconds        int     `yaml:"window_seconds"`
-	MinQueriesPerWindow  int     `yaml:"min_queries_per_window"`
-	MaxLabelLen          float64 `yaml:"max_label_len"`
-	MaxEntropy           float64 `yaml:"max_entropy"`
-	MaxTxtFraction       float64 `yaml:"max_txt_fraction"`
+	Enabled             bool    `yaml:"enabled"`
+	WindowSeconds       int     `yaml:"window_seconds"`
+	MinQueriesPerWindow int     `yaml:"min_queries_per_window"`
+	MaxLabelLen         float64 `yaml:"max_label_len"`
+	MaxEntropy          float64 `yaml:"max_entropy"`
+	MaxTxtFraction      float64 `yaml:"max_txt_fraction"`
 }
 
 // Default returns a Config with safe out-of-the-box values.

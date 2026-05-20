@@ -17,63 +17,63 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/xhelix/xhelix/pkg/activity"
 	"github.com/xhelix/xhelix/pkg/alert"
+	"github.com/xhelix/xhelix/pkg/alertdedupe"
 	"github.com/xhelix/xhelix/pkg/baseline"
 	"github.com/xhelix/xhelix/pkg/beacon"
-	"github.com/xhelix/xhelix/pkg/cgroupclass"
+	"github.com/xhelix/xhelix/pkg/brandcheck"
+	"github.com/xhelix/xhelix/pkg/capwatch"
 	"github.com/xhelix/xhelix/pkg/catalog"
+	"github.com/xhelix/xhelix/pkg/cgroupclass"
 	"github.com/xhelix/xhelix/pkg/chain"
+	"github.com/xhelix/xhelix/pkg/cloudmeta"
 	"github.com/xhelix/xhelix/pkg/coldstore"
-	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/config"
+	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/connstate"
+	"github.com/xhelix/xhelix/pkg/contescape"
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/execguard"
 	"github.com/xhelix/xhelix/pkg/forensic"
+	"github.com/xhelix/xhelix/pkg/idlehint"
 	"github.com/xhelix/xhelix/pkg/imagecache"
 	"github.com/xhelix/xhelix/pkg/intel"
 	"github.com/xhelix/xhelix/pkg/kintegrity"
+	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/lockout"
+	"github.com/xhelix/xhelix/pkg/lolbin"
 	"github.com/xhelix/xhelix/pkg/memscan"
 	"github.com/xhelix/xhelix/pkg/ml"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/netban"
 	"github.com/xhelix/xhelix/pkg/posture"
 	"github.com/xhelix/xhelix/pkg/proctree"
+	"github.com/xhelix/xhelix/pkg/ptraceguard"
 	"github.com/xhelix/xhelix/pkg/remediate"
 	"github.com/xhelix/xhelix/pkg/response"
+	"github.com/xhelix/xhelix/pkg/revshell"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
 	"github.com/xhelix/xhelix/pkg/session"
-	"github.com/xhelix/xhelix/pkg/store"
-	"github.com/xhelix/xhelix/pkg/activity"
-	"github.com/xhelix/xhelix/pkg/alertdedupe"
-	"github.com/xhelix/xhelix/pkg/brandcheck"
-	"github.com/xhelix/xhelix/pkg/capwatch"
-	"github.com/xhelix/xhelix/pkg/cloudmeta"
-	"github.com/xhelix/xhelix/pkg/contescape"
-	"github.com/xhelix/xhelix/pkg/idlehint"
-	"github.com/xhelix/xhelix/pkg/localapi"
-	"github.com/xhelix/xhelix/pkg/lolbin"
-	"github.com/xhelix/xhelix/pkg/ptraceguard"
-	"github.com/xhelix/xhelix/pkg/revshell"
 	"github.com/xhelix/xhelix/pkg/shmguard"
+	"github.com/xhelix/xhelix/pkg/store"
 	storehistory "github.com/xhelix/xhelix/pkg/store/history"
 	"github.com/xhelix/xhelix/pkg/suppression"
 	"github.com/xhelix/xhelix/pkg/tamperguard"
-	"github.com/xhelix/xhelix/pkg/webshellguard"
-	"github.com/xhelix/xhelix/sensors/dnsresolver"
 	"github.com/xhelix/xhelix/pkg/threatintel"
 	"github.com/xhelix/xhelix/pkg/version"
+	"github.com/xhelix/xhelix/pkg/webshellguard"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/sensors"
 	"github.com/xhelix/xhelix/sensors/decoy"
+	"github.com/xhelix/xhelix/sensors/dnsresolver"
+	dpisensor "github.com/xhelix/xhelix/sensors/dpi"
 	ebpfsensor "github.com/xhelix/xhelix/sensors/ebpf"
 	fimsensor "github.com/xhelix/xhelix/sensors/fim"
-	dpisensor "github.com/xhelix/xhelix/sensors/dpi"
 	"github.com/xhelix/xhelix/sensors/heartbeat"
 	"github.com/xhelix/xhelix/sensors/identity"
 	"github.com/xhelix/xhelix/sensors/lsmaudit"
@@ -401,6 +401,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// them; their actual instances are created further down.
 	var dedupe *alertdedupe.Engine
 	var liveHub *liveHubT
+	var webServer *web.Server
 	if cfg.Baseline.Enabled {
 		ignore := map[string]bool{}
 		for _, b := range cfg.Baseline.IgnoreBinaries {
@@ -604,6 +605,9 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			}
 		}
 		bus.Send(a)
+		if webServer != nil {
+			webServer.AddAlert(a)
+		}
 		if sessionTracker != nil {
 			sessionTracker.IngestAlert(a)
 		}
@@ -621,30 +625,34 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			_, _ = fmt.Sscanf(p, "%d", &pp)
 			dport = uint16(pp)
 		}
-		dedupe.Observe(alertdedupe.Alert{
-			At:      time.Now(),
-			RuleID:  a.RuleID,
-			PID:     a.Event.PID,
-			Exe:     a.Event.Image,
-			ExeSHA:  a.Event.Tags["exe_sha256"],
-			DstIP:   dst,
-			DstPort: dport,
-			Reason:  a.Reason,
-			Tags:    a.Event.Tags,
-		})
+		if dedupe != nil {
+			dedupe.Observe(alertdedupe.Alert{
+				At:      time.Now(),
+				RuleID:  a.RuleID,
+				PID:     a.Event.PID,
+				Exe:     a.Event.Image,
+				ExeSHA:  a.Event.Tags["exe_sha256"],
+				DstIP:   dst,
+				DstPort: dport,
+				Reason:  a.Reason,
+				Tags:    a.Event.Tags,
+			})
+		}
 		// Broadcast to live SSE subscribers.
-		liveHub.publish(map[string]any{
-			"kind":     "alert",
-			"ts":       time.Now().Format(time.RFC3339),
-			"rule_id":  a.RuleID,
-			"reason":   a.Reason,
-			"pid":      a.Event.PID,
-			"exe":      a.Event.Image,
-			"comm":     a.Event.Comm,
-			"dst_ip":   dst,
-			"dst_port": dport,
-			"severity": a.Event.Severity.String(),
-		})
+		if liveHub != nil {
+			liveHub.publish(map[string]any{
+				"kind":     "alert",
+				"ts":       time.Now().Format(time.RFC3339),
+				"rule_id":  a.RuleID,
+				"reason":   a.Reason,
+				"pid":      a.Event.PID,
+				"exe":      a.Event.Image,
+				"comm":     a.Event.Comm,
+				"dst_ip":   dst,
+				"dst_port": dport,
+				"severity": a.Event.Severity.String(),
+			})
+		}
 	}
 
 	// Tamper guard — emits an alert when something attacks the daemon
@@ -1160,7 +1168,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Web dashboard — protected enterprise UI when cfg.UI.Enabled.
 	// Falls back to legacy unprotected mode if not enabled, to keep
 	// upgrades from older configs working.
-	webServer := web.NewServer(web.Config{
+	webServer = web.NewServer(web.Config{
 		Addr:        webBindAddr(cfg),
 		Log:         log,
 		Store:       hot,
@@ -1234,8 +1242,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	}
 
 	// Dispatch loop
-	go dispatch(ctx, log, events, hot, ruleEngine, corrEngine, bus, webServer,
-		quarantine, soak, panicSwitch, yaraScanner, intelMgr, mlDetector,
+	go dispatch(ctx, log, events, hot, ruleEngine, corrEngine,
+		yaraScanner, intelMgr, mlDetector,
 		procTree, forensicsChain, imgCache, sessionTracker,
 		beaconDet, dnsexfilDet, baselineAgg,
 		cgroupClassifier, connTable, dnsCollector,
@@ -1326,11 +1334,6 @@ func dispatch(
 	hot *store.HotStore,
 	eng *rules.Engine,
 	corr *correlator.Engine,
-	bus *alert.Bus,
-	webSrv *web.Server,
-	quarantine *enforce.Quarantine,
-	soak *enforce.Soak,
-	panicSwitch *enforce.PanicSwitch,
 	yaraScanner *yara.Scanner,
 	intelMgr *intel.Manager,
 	mlDetector *ml.AnomalyDetector,
@@ -1483,10 +1486,7 @@ func dispatch(
 			// YARA scan on execve events
 			if yaraScanner != nil && yaraScanner.Enabled() && ev.Sensor == "ebpf.spawn" {
 				if a := yaraScanner.ScanEvent(ctx, ev); a != nil {
-					bus.Send(*a)
-					if webSrv != nil {
-						webSrv.AddAlert(*a)
-					}
+					emit(*a)
 				}
 			}
 
@@ -1585,10 +1585,10 @@ func dispatch(
 			// Ptrace classifier (existing ebpf ptrace events).
 			if ev.Tags["ptrace_attach"] == "true" {
 				if f := ptraceguard.Classify(ptraceguard.Spec{
-					Request:    parseUint32(ev.Tags["ptrace_request"]),
-					SourcePID:  ev.PID, SourceComm: ev.Comm, SourceExe: ev.Image,
-					TargetPID:  parseUint32(ev.Tags["ptrace_target_pid"]),
-					TargetComm: ev.Tags["ptrace_target"],
+					Request:   parseUint32(ev.Tags["ptrace_request"]),
+					SourcePID: ev.PID, SourceComm: ev.Comm, SourceExe: ev.Image,
+					TargetPID:   parseUint32(ev.Tags["ptrace_target_pid"]),
+					TargetComm:  ev.Tags["ptrace_target"],
 					CGroupClass: ev.Tags["cgroup_class"],
 				}); f.Severity >= ptraceguard.SeverityHigh {
 					emit(model.Alert{
@@ -1634,16 +1634,12 @@ func dispatch(
 				for _, tag := range []string{"dst_ip", "src_ip"} {
 					if ipStr := ev.Tags[tag]; ipStr != "" {
 						if ip := net.ParseIP(ipStr); ip != nil && intelMgr.IsBad(ip) {
-							a := model.Alert{
+							emit(model.Alert{
 								Event:  ev,
 								RuleID: "intel.bad_ip",
 								Reason: fmt.Sprintf("Known malicious IP (%s): %s", tag, ipStr),
 								Mode:   model.ModeDetect,
-							}
-							bus.Send(a)
-							if webSrv != nil {
-								webSrv.AddAlert(a)
-							}
+							})
 						}
 					}
 				}
@@ -1716,7 +1712,7 @@ func dispatch(
 						ae.Tags["dnsexfil_avg_entropy"] = fmt.Sprintf("%.2f", v.AvgEntropy)
 						ae.Tags["dnsexfil_txt_frac"] = fmt.Sprintf("%.2f", v.TxtFraction)
 						emit(model.Alert{
-							Event: ae,
+							Event:  ae,
 							RuleID: "dnsexfil.tunnel_pattern",
 							Reason: fmt.Sprintf("DNS tunnel-shaped traffic to %s (%d queries, signals: %s)",
 								v.RegDomain, v.Queries, strings.Join(v.Reasons, "+")),
@@ -1732,75 +1728,34 @@ func dispatch(
 				if qname != "" {
 					score := netids.DGAScore(qname)
 					if score > 0.7 {
-						a := model.Alert{
+						emit(model.Alert{
 							Event:  ev,
 							RuleID: "netids.dga",
 							Reason: fmt.Sprintf("DGA score %.2f for %s", score, qname),
 							Mode:   model.ModeDetect,
-						}
-						bus.Send(a)
-						if webSrv != nil {
-							webSrv.AddAlert(a)
-						}
+						})
 					}
 				}
 			}
 
 			// ML anomaly detection
 			if mlDetector != nil && mlDetector.Observe(ev) {
-				a := model.Alert{
+				emit(model.Alert{
 					Event:  ev,
 					RuleID: "ml.anomaly",
 					Reason: fmt.Sprintf("Anomalous behavior: %s uid=%d", ev.Comm, ev.UID),
 					Mode:   model.ModeDetect,
-				}
-				bus.Send(a)
-				if webSrv != nil {
-					webSrv.AddAlert(a)
-				}
-			}
-
-			// Automated response for critical events
-			if ev.Severity >= model.SeverityCritical && quarantine != nil && ev.PID != 0 {
-				if panicSwitch != nil && panicSwitch.Armed() {
-					log.Warn("panic switch armed; skipping quarantine", "pid", ev.PID)
-				} else {
-					ruleID := "ungated"
-					if ev.Rule != "" {
-						ruleID = ev.Rule
-					}
-					if soak != nil {
-						soak.Track(ruleID, ev.Time)
-						promotable, _ := soak.Promotable(ruleID, ev.Time)
-						if promotable {
-							if _, err := quarantine.Stop(ev.PID, ev.Comm, ev.Tags["image"], ruleID); err != nil {
-								log.Warn("quarantine failed", "pid", ev.PID, "err", err)
-							} else {
-								log.Info("quarantined", "pid", ev.PID, "comm", ev.Comm, "rule", ruleID)
-							}
-						}
-					} else {
-						if _, err := quarantine.Stop(ev.PID, ev.Comm, ev.Tags["image"], ruleID); err != nil {
-							log.Warn("quarantine failed", "pid", ev.PID, "err", err)
-						} else {
-							log.Info("quarantined", "pid", ev.PID, "comm", ev.Comm, "rule", ruleID)
-						}
-					}
-				}
+				})
 			}
 
 			// Gated critical alert
 			if ev.Severity >= model.SeverityCritical {
-				a := model.Alert{
+				emit(model.Alert{
 					Event:  ev,
 					RuleID: "ungated",
 					Reason: ev.Tags["msg"],
 					Mode:   model.ModeDetect,
-				}
-				bus.Send(a)
-				if webSrv != nil {
-					webSrv.AddAlert(a)
-				}
+				})
 			}
 		}
 	}
@@ -2454,10 +2409,10 @@ func registerLocalAPIHandlers(srv *localapi.Server, hist *storehistory.Store,
 		var out []map[string]any
 		for rows.Next() {
 			var (
-				id, pid, start, end                  int64
-				bytesIn, bytesOut                    uint64
-				flows                                int
-				host, ip, verdict                    string
+				id, pid, start, end int64
+				bytesIn, bytesOut   uint64
+				flows               int
+				host, ip, verdict   string
 			)
 			_ = rows.Scan(&id, &pid, &start, &end, &host, &ip, &bytesIn, &bytesOut, &flows, &verdict)
 			out = append(out, map[string]any{
