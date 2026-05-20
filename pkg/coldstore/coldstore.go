@@ -49,6 +49,16 @@ type Options struct {
 	// FlushInterval forces a flush even if the batch is not full.
 	// Default: 1 s.
 	FlushInterval time.Duration
+
+	// RetentionDays caps how many day-partition tables are kept.
+	// DropOldDays() removes every events_YYYYMMDD whose UTC day is
+	// older than RetentionDays days ago. 0 = use default (14 days).
+	// Negative = no pruning (keep forever — disk-fill risk).
+	//
+	// Per ERRORS.md: cold.db grew unbounded because per-day tables
+	// were created but never dropped. The Witness contract from
+	// pkg/configaudit requires this knob to have a consumer.
+	RetentionDays int
 }
 
 // Store is the cold-store handle. Construct with New, call Start to
@@ -60,6 +70,7 @@ type Store struct {
 	queueSize     int
 	batchSize     int
 	flushInterval time.Duration
+	retentionDays int
 
 	queueMu   sync.Mutex
 	queue     []*model.Event // ring buffer-ish — append, drop-oldest on overflow
@@ -97,6 +108,9 @@ func New(opts Options) (*Store, error) {
 	if opts.FlushInterval <= 0 {
 		opts.FlushInterval = time.Second
 	}
+	if opts.RetentionDays == 0 {
+		opts.RetentionDays = 14
+	}
 
 	// Use _pragma URL params so the pragmas are applied on every
 	// connection in the pool. modernc.org/sqlite supports this.
@@ -126,6 +140,7 @@ func New(opts Options) (*Store, error) {
 		queueSize:     opts.QueueSize,
 		batchSize:     opts.BatchSize,
 		flushInterval: opts.FlushInterval,
+		retentionDays: opts.RetentionDays,
 		queue:         make([]*model.Event, 0, opts.QueueSize),
 		done:          make(chan struct{}),
 	}
@@ -476,6 +491,68 @@ func (s *Store) tableExists(table string) bool {
 		table,
 	).Scan(&name)
 	return err == nil
+}
+
+// RetentionDays returns the configured retention horizon in days.
+func (s *Store) RetentionDays() int { return s.retentionDays }
+
+// DropOldDays removes every events_YYYYMMDD partition whose UTC day
+// is older than RetentionDays days before now. Returns the names of
+// tables dropped (useful for logging) and the count.
+//
+// Safe to call repeatedly: DROP TABLE IF EXISTS is idempotent, and
+// the day-table enumeration is cheap (sqlite_master query).
+//
+// Negative retention = no-op (operator opted to keep everything;
+// audit chain off-host mirror is expected to be the long-term store).
+func (s *Store) DropOldDays(now time.Time) ([]string, error) {
+	if s.retentionDays < 0 {
+		return nil, nil
+	}
+	cutoff := now.UTC().AddDate(0, 0, -s.retentionDays)
+	cutoffKey := dayKey(cutoff) // YYYYMMDD; lexicographic compare works
+
+	rows, err := s.db.Query(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'events_________'`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("coldstore enum tables: %w", err)
+	}
+	var candidates []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("coldstore scan table name: %w", err)
+		}
+		candidates = append(candidates, name)
+	}
+	rows.Close()
+
+	var dropped []string
+	for _, name := range candidates {
+		// events_YYYYMMDD — extract the 8-char suffix
+		if len(name) != len("events_")+8 {
+			continue
+		}
+		dayPart := name[len("events_"):]
+		// Don't drop the currently-active table even if it's at the
+		// boundary; the flush path may be mid-batch.
+		s.currentTableMu.Lock()
+		isCurrent := s.currentTable == name
+		s.currentTableMu.Unlock()
+		if isCurrent {
+			continue
+		}
+		if dayPart >= cutoffKey {
+			continue // within retention window
+		}
+		if _, err := s.db.Exec(`DROP TABLE IF EXISTS ` + name); err != nil {
+			return dropped, fmt.Errorf("coldstore drop %s: %w", name, err)
+		}
+		dropped = append(dropped, name)
+	}
+	return dropped, nil
 }
 
 // AbsPath returns the resolved absolute DB path. Useful for the

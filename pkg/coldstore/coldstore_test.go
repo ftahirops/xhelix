@@ -232,6 +232,128 @@ func TestStore_Submit_AfterClose_IsNoOp(t *testing.T) {
 	}
 }
 
+func TestDropOldDays_RemovesPartitionsPastRetention(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := tmpStore(t, Options{BatchSize: 5, RetentionDays: 7})
+	s.Start(ctx)
+
+	// Submit events on 3 days: 30 days ago, 10 days ago, today.
+	// All should land in separate per-day tables.
+	now := time.Now().UTC()
+	old := now.AddDate(0, 0, -30)
+	mid := now.AddDate(0, 0, -10)
+
+	s.Submit(makeEvent(old, "x", model.SeverityNotice))
+	s.Submit(makeEvent(mid, "x", model.SeverityNotice))
+	s.Submit(makeEvent(now, "x", model.SeverityNotice))
+
+	// Wait for flush.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.Stats().Written >= 3 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if s.Stats().Written < 3 {
+		t.Fatalf("written = %d, want 3", s.Stats().Written)
+	}
+
+	// All three tables should exist.
+	for _, day := range []time.Time{old, mid, now} {
+		if !s.tableExists("events_" + dayKey(day)) {
+			t.Fatalf("expected events_%s to exist", dayKey(day))
+		}
+	}
+
+	// Now drop old days. 30d (old) is past the 7d retention; 10d (mid)
+	// is also past; today survives.
+	dropped, err := s.DropOldDays(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dropped) != 2 {
+		t.Errorf("dropped = %d, want 2 (got %v)", len(dropped), dropped)
+	}
+
+	if s.tableExists("events_" + dayKey(old)) {
+		t.Errorf("events_%s should have been dropped", dayKey(old))
+	}
+	if s.tableExists("events_" + dayKey(mid)) {
+		t.Errorf("events_%s should have been dropped", dayKey(mid))
+	}
+	if !s.tableExists("events_" + dayKey(now)) {
+		t.Errorf("events_%s should have survived (current day)", dayKey(now))
+	}
+}
+
+func TestDropOldDays_NegativeRetentionIsNoOp(t *testing.T) {
+	s := tmpStore(t, Options{RetentionDays: -1})
+
+	// Force-create an old day table by submitting + flushing.
+	old := time.Now().UTC().AddDate(0, 0, -365)
+	s.Submit(makeEvent(old, "x", model.SeverityNotice))
+	_ = s.flushOnce()
+
+	dropped, err := s.DropOldDays(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dropped) != 0 {
+		t.Errorf("RetentionDays<0 should drop nothing; got %v", dropped)
+	}
+	if !s.tableExists("events_" + dayKey(old)) {
+		t.Errorf("ancient table should survive when retention is disabled")
+	}
+}
+
+func TestDropOldDays_NeverDropsCurrentTable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Retention=0 days means "drop everything older than today"
+	// but the current-day table must always survive.
+	s := tmpStore(t, Options{RetentionDays: 1})
+	s.Start(ctx)
+
+	now := time.Now().UTC()
+	s.Submit(makeEvent(now, "x", model.SeverityNotice))
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.Stats().Written >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Today's table should NOT be dropped even if we advance the
+	// "now" parameter — the current_table check protects it.
+	dropped, err := s.DropOldDays(now.AddDate(0, 0, 100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range dropped {
+		if d == "events_"+dayKey(now) {
+			t.Errorf("DropOldDays dropped the currently-active table %s", d)
+		}
+	}
+	if !s.tableExists("events_" + dayKey(now)) {
+		t.Error("today's table disappeared")
+	}
+}
+
+func TestRetentionDays_Default(t *testing.T) {
+	tmp := t.TempDir()
+	s, err := New(Options{Path: filepath.Join(tmp, "c.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.RetentionDays() != 14 {
+		t.Errorf("default RetentionDays = %d, want 14", s.RetentionDays())
+	}
+}
+
 func BenchmarkSubmit(b *testing.B) {
 	s, err := New(Options{Path: filepath.Join(b.TempDir(), "bench.db")})
 	if err != nil {

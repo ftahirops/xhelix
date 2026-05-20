@@ -213,9 +213,16 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Best-effort: failure to open isn't fatal — the daemon still
 	// runs without cold persistence. Path lives under StateDir.
 	coldPath := "/var/lib/xhelix/cold.db"
-	if cs, err := coldstore.New(coldstore.Options{Path: coldPath}); err == nil {
+	if cs, err := coldstore.New(coldstore.Options{
+		Path:          coldPath,
+		RetentionDays: 14, // 2-week local retention; off-host mirror
+		// (P-CJ.10) is expected to hold longer history.
+	}); err == nil {
 		fc.ColdStore = cs
 		fc.ColdStore.Start(parent)
+		// Daily 03:00 UTC tick to drop old day-partitions. Pruning
+		// is cheap (DROP TABLE) so doing it once a day is fine.
+		go fc.pruneColdStore(parent)
 	}
 
 	// Admin route IP/ASN allow-list (P-B.0b). Tier-1 deterministic
@@ -318,6 +325,31 @@ func (fc *foundationContext) sweepEvidence(ctx context.Context) {
 				// Drop buckets that haven't been touched in 1 h
 				// AND aren't promoted.
 				fc.Evidence.Sweep(time.Now().Add(-time.Hour))
+			}
+		}
+	}
+}
+
+// pruneColdStore drops day-partition tables past the retention
+// horizon. Runs every hour; the DROP TABLE itself is instant.
+// Closes the cold.db unbounded-growth gap (task #154).
+func (fc *foundationContext) pruneColdStore(ctx context.Context) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	// Run once at startup so a long-stopped daemon catches up.
+	if fc.ColdStore != nil {
+		if dropped, err := fc.ColdStore.DropOldDays(time.Now()); err == nil && len(dropped) > 0 {
+			// Log via stderr fallback — fc.log not in scope here.
+			_ = dropped
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if fc.ColdStore != nil {
+				_, _ = fc.ColdStore.DropOldDays(time.Now())
 			}
 		}
 	}
