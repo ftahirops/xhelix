@@ -60,9 +60,17 @@ type AuthConfig struct {
 	// RateLimitPerSecond caps requests-per-source-ip. 0 = 10.
 	RateLimitPerSecond int
 
-	// TrustForwardedFor accepts X-Forwarded-For when xhelix sits
-	// behind a reverse proxy you control. Default false (safe).
+	// TrustForwardedFor accepts X-Forwarded-For / X-Real-IP, but
+	// ONLY when the immediate TCP peer is in TrustedProxies.
+	// Default false (safe). Setting this true without populating
+	// TrustedProxies has no effect — header is ignored (fail closed).
+	// See code-analysis-report 2026-05-20 finding #1.
 	TrustForwardedFor bool
+
+	// TrustedProxies is the set of CIDRs that may legitimately set
+	// X-Forwarded-For / X-Real-IP on requests xhelix sees. If empty,
+	// TrustForwardedFor is silently disabled even when set true.
+	TrustedProxies []*net.IPNet
 
 	// Logger for audit + auth events.
 	Logger *slog.Logger
@@ -118,10 +126,13 @@ func NewAuthGuard(cfg AuthConfig) (*AuthGuard, error) {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "    "+string(tok))
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Add to URL:")
-		fmt.Fprintf(os.Stderr,  "    https://your-host/ui?token=%s\n", string(tok))
-		fmt.Fprintln(os.Stderr, "or as header:")
+		fmt.Fprintln(os.Stderr, "Send as Authorization header:")
 		fmt.Fprintf(os.Stderr,  "    Authorization: Bearer %s\n", string(tok))
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr,
+			"Note: URL query token (?token=) is REJECTED — tokens leak via")
+		fmt.Fprintln(os.Stderr,
+			"shell history, browser history, proxy logs, screenshots, Referer.")
 		fmt.Fprintln(os.Stderr,
 			"==================================================================")
 	}
@@ -363,13 +374,27 @@ func loadOrCreateToken(path string) (token []byte, fresh bool, err error) {
 	return tok, true, nil
 }
 
+// tokenOK extracts the presented bearer token and constant-time
+// compares it against the stored sha256.
+//
+// Accepted sources (in order):
+//
+//	1. Authorization: Bearer <tok>     (preferred — headers don't leak)
+//	2. Cookie: xhelix_token=<tok>      (set by first-login flow)
+//
+// The query parameter `?token=` is NOT accepted. Tokens in URLs
+// leak via shell history, browser history, server access logs,
+// proxy logs, screenshots, and HTTP Referer headers. See
+// code-analysis-report 2026-05-20 finding #2 (HIGH severity).
+//
+// For first-login bootstrap, operators paste the token into the
+// browser's "Authorization: Bearer" via a small HTML form that
+// xhelix serves at /ui/login and which sets the cookie. The
+// printed startup URL no longer carries the token.
 func (g *AuthGuard) tokenOK(r *http.Request) bool {
 	var presented string
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		presented = strings.TrimPrefix(h, "Bearer ")
-	}
-	if presented == "" {
-		presented = r.URL.Query().Get("token")
 	}
 	if presented == "" {
 		if c, err := r.Cookie("xhelix_token"); err == nil {
@@ -449,23 +474,59 @@ func (g *AuthGuard) gcLimiter() {
 	}
 }
 
+// peerIsTrustedProxy reports whether the immediate TCP peer's IP
+// is in the operator-declared TrustedProxies allow-list.
+// CIDR-aware, IPv4 + IPv6.
+func peerIsTrustedProxy(peer net.IP, trusted []*net.IPNet) bool {
+	for _, n := range trusted {
+		if n.Contains(peer) {
+			return true
+		}
+	}
+	return false
+}
+
 // ==========================================================
 // Source IP extraction
 // ==========================================================
 
+// clientIP returns the true client IP.
+//
+// X-Forwarded-For / X-Real-IP are accepted ONLY when ALL THREE
+// conditions hold:
+//
+//	1. TrustForwardedFor is true                         (operator opt-in)
+//	2. TrustedProxies is non-empty                        (proxies declared)
+//	3. The immediate TCP peer is in TrustedProxies        (proxy is real)
+//
+// Without #3 the header is attacker-controlled — anyone able to
+// reach the socket could spoof their source IP and bypass IP
+// allowlists. See code-analysis-report 2026-05-20 finding #1
+// (HIGH severity).
+//
+// Fails closed: if any of the three conditions fail, the peer's
+// own IP is returned.
 func (g *AuthGuard) clientIP(r *http.Request) net.IP {
-	if g.cfg.TrustForwardedFor {
-		if h := r.Header.Get("X-Forwarded-For"); h != "" {
-			parts := strings.Split(h, ",")
-			ip := net.ParseIP(strings.TrimSpace(parts[0]))
-			if ip != nil {
-				return ip
-			}
-		}
-		if h := r.Header.Get("X-Real-IP"); h != "" {
-			ip := net.ParseIP(strings.TrimSpace(h))
-			if ip != nil {
-				return ip
+	if g.cfg.TrustForwardedFor && len(g.cfg.TrustedProxies) > 0 {
+		// First extract the actual peer IP, then check if THAT is
+		// in the trusted-proxy list. Only then trust the headers.
+		peerHost, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err == nil {
+			peerIP := net.ParseIP(peerHost)
+			if peerIP != nil && peerIsTrustedProxy(peerIP, g.cfg.TrustedProxies) {
+				if h := r.Header.Get("X-Forwarded-For"); h != "" {
+					parts := strings.Split(h, ",")
+					ip := net.ParseIP(strings.TrimSpace(parts[0]))
+					if ip != nil {
+						return ip
+					}
+				}
+				if h := r.Header.Get("X-Real-IP"); h != "" {
+					ip := net.ParseIP(strings.TrimSpace(h))
+					if ip != nil {
+						return ip
+					}
+				}
 			}
 		}
 	}

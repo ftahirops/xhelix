@@ -49,34 +49,76 @@ func main() {
 	}
 }
 
+// describeInsecureReason returns a human-readable explanation of why
+// xhub is refusing to start, used by the fail-closed gate.
+func describeInsecureReason(missingAuth, missingTLS, isLoopback bool) string {
+	switch {
+	case missingAuth && missingTLS && !isLoopback:
+		return "missing --token-file AND --tls-cert/--tls-key on non-loopback bind"
+	case missingAuth && missingTLS && isLoopback:
+		return "missing --token-file (loopback bind is OK without TLS, but auth is required)"
+	case missingAuth:
+		return "missing --token-file"
+	case missingTLS && !isLoopback:
+		return "missing --tls-cert/--tls-key on non-loopback bind (token would be sniffable)"
+	}
+	return "insecure configuration detected"
+}
+
 func newRunCmd() *cobra.Command {
 	var (
-		bind      string
-		dataDir   string
-		tokenFile string
-		certFile  string
-		keyFile   string
+		bind         string
+		dataDir      string
+		tokenFile    string
+		certFile     string
+		keyFile      string
+		devInsecure  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the xhub HTTP(S) server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runHub(bind, dataDir, tokenFile, certFile, keyFile)
+			return runHub(bind, dataDir, tokenFile, certFile, keyFile, devInsecure)
 		},
 	}
 	cmd.Flags().StringVar(&bind, "bind", "127.0.0.1:18444", "HTTP(S) listen address")
 	cmd.Flags().StringVar(&dataDir, "data", "/var/lib/xhub", "Directory for ingested feed data")
 	cmd.Flags().StringVar(&tokenFile, "token-file", "",
-		"Path to file containing the bearer token agents use (empty = auth disabled, dev only)")
-	cmd.Flags().StringVar(&certFile, "tls-cert", "", "TLS cert path (omit for plain HTTP)")
+		"Path to file containing the bearer token agents use (REQUIRED unless --dev-insecure)")
+	cmd.Flags().StringVar(&certFile, "tls-cert", "", "TLS cert path (REQUIRED for non-loopback bind unless --dev-insecure)")
 	cmd.Flags().StringVar(&keyFile, "tls-key", "", "TLS key path")
+	cmd.Flags().BoolVar(&devInsecure, "dev-insecure", false,
+		"Allow auth-disabled and/or plaintext HTTP — DEV ONLY. xhub refuses to start without this flag if either auth or TLS is missing.")
 	return cmd
 }
 
-func runHub(bind, dataDir, tokenFile, certFile, keyFile string) error {
+func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool) error {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	log.Info("xhub starting", "version", version.Version,
 		"commit", version.Commit, "bind", bind, "data", dataDir)
+
+	// Fail closed: a security product must not silently run without
+	// auth or TLS on a non-loopback bind. Operator must explicitly
+	// opt in to insecure mode. See code-analysis-report 2026-05-20
+	// finding #3 (HIGH severity).
+	isLoopback := strings.HasPrefix(bind, "127.0.0.1:") ||
+		strings.HasPrefix(bind, "[::1]:") ||
+		strings.HasPrefix(bind, "localhost:")
+	missingAuth := tokenFile == ""
+	missingTLS := certFile == "" || keyFile == ""
+	if (missingAuth || (missingTLS && !isLoopback)) && !devInsecure {
+		return fmt.Errorf(
+			"refusing to start: %s. "+
+				"Pass --dev-insecure to override (DEV ONLY — never in production). "+
+				"For production: provide --token-file AND, for non-loopback binds, --tls-cert + --tls-key.",
+			describeInsecureReason(missingAuth, missingTLS, isLoopback))
+	}
+	if devInsecure {
+		log.Warn("RUNNING IN INSECURE MODE — --dev-insecure was set",
+			"missing_auth", missingAuth, "missing_tls", missingTLS,
+			"bind_is_loopback", isLoopback,
+			"action", "DEV ONLY — switch to authenticated TLS before any deployment")
+	}
 
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir data dir: %w", err)
@@ -99,7 +141,7 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string) error {
 		}
 		log.Info("auth enabled", "token_file", tokenFile)
 	} else {
-		log.Warn("auth DISABLED — token-file empty (dev mode)")
+		log.Warn("auth DISABLED via --dev-insecure (no token-file)")
 	}
 
 	srv := baselinehub.NewServer(baselinehub.ServerConfig{
