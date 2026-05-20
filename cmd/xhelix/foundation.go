@@ -414,6 +414,119 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 		}
 		return fc.HotGraph.Stats(), nil
 	})
+	srv.RegisterHandler("graph.ancestors", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.HotGraph == nil {
+			return nil, errors.New("hot graph not initialised")
+		}
+		var req struct {
+			PID        uint32 `json:"pid"`
+			StartTicks uint64 `json:"start_ticks"`
+			Depth      int    `json:"depth"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.PID == 0 {
+			return nil, errors.New("pid required")
+		}
+		if req.Depth == 0 {
+			req.Depth = -1
+		}
+		key := canonical.ProcKey{PID: req.PID, StartTicks: req.StartTicks}
+		nodes := fc.HotGraph.Ancestors(key, req.Depth)
+		return map[string]any{"count": len(nodes), "nodes": nodes}, nil
+	})
+	srv.RegisterHandler("graph.descendants", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.HotGraph == nil {
+			return nil, errors.New("hot graph not initialised")
+		}
+		var req struct {
+			PID        uint32 `json:"pid"`
+			StartTicks uint64 `json:"start_ticks"`
+			Depth      int    `json:"depth"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.PID == 0 {
+			return nil, errors.New("pid required")
+		}
+		if req.Depth == 0 {
+			req.Depth = -1
+		}
+		key := canonical.ProcKey{PID: req.PID, StartTicks: req.StartTicks}
+		nodes := fc.HotGraph.Descendants(key, req.Depth)
+		return map[string]any{"count": len(nodes), "nodes": nodes}, nil
+	})
+	srv.RegisterHandler("graph.lineage", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.HotGraph == nil {
+			return nil, errors.New("hot graph not initialised")
+		}
+		var req struct {
+			LineageID uint64 `json:"lineage_id"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.LineageID == 0 {
+			return nil, errors.New("lineage_id required")
+		}
+		nodes := fc.HotGraph.ByLineage(lineage.LineageID(req.LineageID))
+		return map[string]any{"count": len(nodes), "nodes": nodes}, nil
+	})
+	srv.RegisterHandler("graph.by_origin", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.HotGraph == nil {
+			return nil, errors.New("hot graph not initialised")
+		}
+		var req struct {
+			OriginIP string `json:"origin_ip"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.OriginIP == "" {
+			return nil, errors.New("origin_ip required")
+		}
+		nodes := fc.HotGraph.ByOriginIP(req.OriginIP)
+		return map[string]any{"count": len(nodes), "nodes": nodes}, nil
+	})
+	srv.RegisterHandler("graph.by_cgroup", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.HotGraph == nil {
+			return nil, errors.New("hot graph not initialised")
+		}
+		var req struct {
+			CGroupID uint64 `json:"cgroup_id"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.CGroupID == 0 {
+			return nil, errors.New("cgroup_id required")
+		}
+		nodes := fc.HotGraph.ByCgroup(req.CGroupID)
+		return map[string]any{"count": len(nodes), "nodes": nodes}, nil
+	})
+	srv.RegisterHandler("graph.get", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.HotGraph == nil {
+			return nil, errors.New("hot graph not initialised")
+		}
+		var req struct {
+			PID        uint32 `json:"pid"`
+			StartTicks uint64 `json:"start_ticks"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.PID == 0 {
+			return nil, errors.New("pid required")
+		}
+		key := canonical.ProcKey{PID: req.PID, StartTicks: req.StartTicks}
+		node, ok := fc.HotGraph.Get(key)
+		if !ok {
+			return map[string]any{"found": false}, nil
+		}
+		return map[string]any{"found": true, "node": node}, nil
+	})
 	srv.RegisterHandler("evidence.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
 		if fc.Evidence == nil {
 			return map[string]any{"enabled": false}, nil
