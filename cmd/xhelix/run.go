@@ -121,6 +121,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		// P-RF.9b takeover knobs
 		"takeover.active", "takeover.tick_interval", "takeover.min_score",
 		"takeover.bastion_available", "takeover.off_host_mirror",
+		// P-RF.9d protected-services loader
+		"protected_services.enabled", "protected_services.services",
 	} {
 		cfgAudit.Declare(k)
 	}
@@ -970,10 +972,20 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	registerLocalAPIHandlers(apiSrv, histStore, suppressor, dedupe, connTable, liveHub, vctx, procHist, log)
 
 	// P-RF.9c: register P-PS.13 operator-UX handlers.
-	// Registry + IOC store start empty — populated by future config
-	// loading + forensic ingest paths. Empty results from xhelixctl
-	// are the correct "no protected services configured" answer.
+	// P-RF.9d: load protected_services from config (Registry was
+	// empty in P-RF.9c). The forensic store is still empty until
+	// the JSON-lines ingest path lands in P-RF.9e.
 	protectedRegistry := protectedsvc.NewRegistry()
+	if cfg.ProtectedServices.Enabled && len(cfg.ProtectedServices.Services) > 0 {
+		if err := protectedRegistry.Load(cfg.ProtectedServices.Services); err != nil {
+			log.Error("protected_services config refused", "err", err)
+		} else {
+			cfgAudit.Witness("protected_services.enabled", "protectedRegistry")
+			cfgAudit.Witness("protected_services.services", "protectedRegistry")
+			log.Info("protected services loaded",
+				"count", protectedRegistry.Count())
+		}
+	}
 	(&protectsvcapi.API{Reg: protectedRegistry}).Register(apiSrv)
 	forensicStore := forensic.NewStore()
 	(&forensicapi.API{Store: forensicStore}).Register(apiSrv)

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/xhelix/xhelix/pkg/protectedsvc"
 )
 
 // Config is the root document.
@@ -56,6 +58,20 @@ type Config struct {
 	// Takeover — P-RF.9b daemon wiring for the planner pipeline.
 	// Default: shadow mode (planner runs, Executor logs only).
 	Takeover TakeoverConfig `yaml:"takeover"`
+
+	// ProtectedServices — operator declares nginx/apache services
+	// that should be locked down with Ring 1 + Ring 2.
+	// See PROTECTED_SERVICES_TRAP.md.
+	ProtectedServices ProtectedServicesConfig `yaml:"protected_services"`
+}
+
+// ProtectedServicesConfig wraps the operator's list of declared
+// services. Empty by default; the daemon's Registry stays empty
+// and xhelixctl protect list returns nothing — correct posture
+// when no services are configured.
+type ProtectedServicesConfig struct {
+	Enabled  bool                          `yaml:"enabled"`
+	Services []protectedsvc.ProtectedService `yaml:"services"`
 }
 
 // TakeoverConfig — pkg/daemon/wire knobs.
