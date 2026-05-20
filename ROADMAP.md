@@ -19,6 +19,7 @@
 | P7    | Data Leak Containment Fabric      |   55 | planned    |
 | P-RC  | Request Contract layer            |   13 | planned    |
 | P-BEHAVIOR | Behavioral Defense (valid-looking attacks) | 28 | planned |
+| P-CJ  | Crown-Jewel Profile (SMB post-compromise)| 50 | planned    |
 
 Total core ship: 17 days (P1–P4). Polished release: 23 days (P1–P6).
 DLCF subsystem (P7): adds ~11 weeks on top, split into v1/v2/v3 (see § Phase 7).
@@ -631,6 +632,85 @@ BEHAVIORAL_DEFENSE.md §7):
 - Application-layer step-up UI (apps already have password-reset
   flows we hook into).
 - Threat-intel feeds (deliberately not built in).
+
+---
+
+## Phase P-CJ — Crown-Jewel Profile (SMB / solo / medium-enterprise)
+
+**Goal**: Layered defense around catalog-declared crown jewels.
+Target audience: solo operators, SMB, and medium enterprise (≤200
+people). Full design in
+[CROWN_JEWEL_PROFILE.md](CROWN_JEWEL_PROFILE.md).
+
+**Strategic principle**: integrate (not reinvent) cloud KMS for
+passport signing and Vault for app secrets. Build only the xhelix-
+specific glue: catalog wizard, brokers, watchdog, audit mirror.
+
+| Task    | Description                                                  | Days | Type |
+| ------- | ------------------------------------------------------------ | ---: | ---- |
+| P-CJ.1  | Crown-Jewel Wizard — scan filesystem + DB + access log, propose catalog entries | 5 | Build |
+| P-CJ.2  | Crown-jewel diff alert — new asset detected, prompt classify | 3 | Build |
+| P-CJ.3  | Delete-broker — gate destructive ops behind L5 passport      | 10 | Build |
+| P-CJ.4  | Two-person L6 generalization — N-distinct-passport workflow  | 3 | Build |
+| P-CJ.5  | Watchdog + remote heartbeat                                  | 5 | Build |
+| P-CJ.6  | WebAuthn enforcement (aliases P-B.0a)                        | 4 | Build |
+| P-CJ.7  | DBSC verifier (Chrome-only OK for SMB)                       | 3 | Build |
+| P-CJ.8  | Cloud KMS Signer for passport key (AWS/GCP/Azure)            | 3 | Integrate |
+| P-CJ.9  | Vault integration for app secrets via secrets.broker LocalAPI | 5 | Integrate |
+| P-CJ.10 | Off-host chain mirror to S3 Object Lock / GCS Bucket Lock   | 2 | Integrate |
+| P-CJ.11 | `xhelixctl posture db` — flag DB users with DROP/TRUNCATE/ALTER | 3 | Build (matches P7.3.3) |
+| P-CJ.12 | Interactive operator setup wizard                            | 4 | Build |
+
+### Success criteria (SMB-realistic)
+
+- Operator with no prior catalog config can run
+  `xhelixctl wizard scan` and have a reviewable proposed catalog
+  within 30 seconds for a typical WordPress install.
+- Passport signing works through AWS KMS / GCP KMS / Azure Key
+  Vault with the local key never touching disk after setup.
+- Bulk-export attempt without an active Data Passport is refused
+  by the Egress Valve in the synthetic exfil test.
+- Destructive DB action attempted directly by the app DB user
+  fails (operator removed DROP/TRUNCATE/ALTER from the grant) AND
+  is logged as a refusal.
+- Daemon-kill is detected via remote heartbeat within 5 minutes
+  and operator-alerted.
+- Off-host chain mirror in S3 Object Lock cannot be retroactively
+  edited by an attacker with full root on the xhelix host (verified
+  by trying).
+
+### Performance implementation spec
+
+| Target | Mechanism |
+|---|---|
+| KMS Sign latency | 10-30 ms acceptable (passport issuance is human-paced) |
+| Vault credential fetch | < 100 ms (app-startup or session-bound, not per-request) |
+| Watchdog detection of daemon kill | < 5 min (xhub heartbeat interval) |
+| Off-host audit mirror lag | < 5 min (batched uploader) |
+
+### Operator cost (SMB-realistic)
+
+- Cloud KMS + storage + Vault hosted: ~$3-25/month
+- One YubiKey for the operator: $55 one-time
+- Operator setup time: ~1 day initial + ~30 min/month maintenance
+
+### Honest non-promises (operator contract)
+
+1. xhelix does NOT make same-host root harmless. T4 threat tier
+   is "cost-raised, not blocked."
+2. Tier-2/3 behavioral detectors have non-zero FP rate. Composition
+   rule (BEHAVIORAL_DEFENSE.md §5) keeps user-visible FP rate low.
+3. xhelix does NOT defend against nation-state (T5). Different
+   product domain.
+
+### Out of scope (P-CJ for SMB)
+
+- On-prem HSM / PKCS#11 integration — enterprise edition only
+- SGX / TDX enclave for daemon — enterprise edition only
+- Identity proofing / KYC — integrate Onfido/Persona, don't build
+- Multi-tenant secret broker — different product line
+- Cross-account fleet correlation at scale — xhub exists, mature
+  the existing code rather than rebuild
 
 ---
 
