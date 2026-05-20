@@ -14,6 +14,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/budget"
 	"github.com/xhelix/xhelix/pkg/canonical"
 	"github.com/xhelix/xhelix/pkg/catalog"
+	"github.com/xhelix/xhelix/pkg/coldstore"
 	"github.com/xhelix/xhelix/pkg/eac"
 	"github.com/xhelix/xhelix/pkg/egress"
 	"github.com/xhelix/xhelix/pkg/hotgraph"
@@ -67,6 +68,7 @@ type foundationContext struct {
 	Passports  *passport.Store
 	AdminGuard *adminguard.Guard
 	HotGraph   *hotgraph.Graph
+	ColdStore  *coldstore.Store
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -170,6 +172,15 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	})
 	go fc.sweepHotGraph(parent)
 
+	// Cold store (P2.3). Durable per-day-partitioned event store.
+	// Best-effort: failure to open isn't fatal — the daemon still
+	// runs without cold persistence. Path lives under StateDir.
+	coldPath := "/var/lib/xhelix/cold.db"
+	if cs, err := coldstore.New(coldstore.Options{Path: coldPath}); err == nil {
+		fc.ColdStore = cs
+		fc.ColdStore.Start(parent)
+	}
+
 	// Admin route IP/ASN allow-list (P-B.0b). Tier-1 deterministic
 	// guard. No geoip provider passed for v1 — daemon main wires
 	// one in via SetGeoIP() if available.
@@ -194,10 +205,15 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 }
 
 func (fc *foundationContext) Stop() {
-	if fc == nil || fc.EAC == nil {
+	if fc == nil {
 		return
 	}
-	fc.EAC.Stop()
+	if fc.EAC != nil {
+		fc.EAC.Stop()
+	}
+	if fc.ColdStore != nil {
+		_ = fc.ColdStore.Close()
+	}
 }
 
 func (fc *foundationContext) sweepHotGraph(ctx context.Context) {
@@ -255,6 +271,7 @@ type healthSnapshot struct {
 	EAC        healthEACBlock      `json:"eac"`
 	ProcCache  healthProcCacheBlock `json:"proc_cache"`
 	HotGraph   healthHotGraphBlock  `json:"hot_graph"`
+	ColdStore  healthColdStoreBlock `json:"cold_store"`
 	Lineage    healthLineageBlock  `json:"lineage"`
 	DLCF       healthDLCFBlock     `json:"dlcf"`
 	Runtime    healthRuntimeBlock  `json:"runtime"`
@@ -292,6 +309,18 @@ type healthEACBlock struct {
 	LossEvents    uint64 `json:"loss_events"`
 	BufferSize    int    `json:"buffer_size"`
 	ReorderWindow string `json:"reorder_window"`
+}
+
+type healthColdStoreBlock struct {
+	Path         string `json:"path,omitempty"`
+	QueueSize    int    `json:"queue_size"`
+	QueueCap     int    `json:"queue_cap"`
+	Submitted    uint64 `json:"submitted"`
+	Written      uint64 `json:"written"`
+	Dropped      uint64 `json:"dropped"`
+	Batches      uint64 `json:"batches"`
+	FlushErrs    uint64 `json:"flush_errs"`
+	CurrentTable string `json:"current_table,omitempty"`
 }
 
 type healthHotGraphBlock struct {
@@ -349,6 +378,38 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 			return map[string]any{"enabled": false}, nil
 		}
 		return fc.HotGraph.Stats(), nil
+	})
+	srv.RegisterHandler("coldstore.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.ColdStore == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		return fc.ColdStore.Stats(), nil
+	})
+	srv.RegisterHandler("coldstore.query", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.ColdStore == nil {
+			return nil, errors.New("cold store not initialised")
+		}
+		var f coldstore.EventFilter
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &f); err != nil {
+				return nil, err
+			}
+		}
+		// Default severity filter = -1 (any) when unset; JSON's
+		// default zero is 0 which would only match SeverityNotice.
+		// Accept absence of the field via a wrapper.
+		var w struct {
+			HasSeverity bool `json:"-"`
+		}
+		_ = w
+		if f.Severity == 0 {
+			f.Severity = -1
+		}
+		events, err := fc.ColdStore.Query(f)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"count": len(events), "events": events}, nil
 	})
 	srv.RegisterHandler("proccache.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
 		if fc.ProcCache == nil {
@@ -575,6 +636,25 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 	})
 }
 
+// coldStoreBlock returns the cold-store summary for health.snapshot.
+func (fc *foundationContext) coldStoreBlock() healthColdStoreBlock {
+	if fc.ColdStore == nil {
+		return healthColdStoreBlock{}
+	}
+	s := fc.ColdStore.Stats()
+	return healthColdStoreBlock{
+		Path:         s.Path,
+		QueueSize:    s.QueueSize,
+		QueueCap:     s.QueueCap,
+		Submitted:    s.Submitted,
+		Written:      s.Written,
+		Dropped:      s.Dropped,
+		Batches:      s.Batches,
+		FlushErrs:    s.FlushErrs,
+		CurrentTable: s.CurrentTable,
+	}
+}
+
 // hotGraphBlock returns the hot graph summary for health.snapshot.
 func (fc *foundationContext) hotGraphBlock() healthHotGraphBlock {
 	if fc.HotGraph == nil {
@@ -682,6 +762,7 @@ func (fc *foundationContext) snapshot() healthSnapshot {
 		},
 		ProcCache: fc.procCacheBlock(),
 		HotGraph:  fc.hotGraphBlock(),
+		ColdStore: fc.coldStoreBlock(),
 		Lineage: healthLineageBlock{
 			StoredOrigins:     fc.Origins.Size(),
 			TaintedLineages:   fc.Origins.TaintedCount(),
