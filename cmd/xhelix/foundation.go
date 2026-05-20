@@ -10,6 +10,7 @@ import (
 
 	"net"
 
+	"github.com/xhelix/xhelix/pkg/adminguard"
 	"github.com/xhelix/xhelix/pkg/budget"
 	"github.com/xhelix/xhelix/pkg/canonical"
 	"github.com/xhelix/xhelix/pkg/catalog"
@@ -35,6 +36,13 @@ var defaultEgressPaths = []string{
 	"/usr/share/xhelix/ruleset/dlcf/egress.yaml",
 }
 
+// defaultAdminGuardPaths is the analogous list for the admin
+// IP/ASN allow-list (P-B.0b).
+var defaultAdminGuardPaths = []string{
+	"/etc/xhelix/dlcf/admin_allowlist.yaml",
+	"/usr/share/xhelix/ruleset/dlcf/admin_allowlist.yaml",
+}
+
 // foundationContext groups the Phase-1 evidence-truth primitives:
 // the Event Admission Controller, the lineage minter + origin store,
 // and the daemon's own canonical ProcKey for universal self-exclusion.
@@ -54,8 +62,9 @@ type foundationContext struct {
 	// DLCF subsystem (P7). May be nil if no catalog is configured.
 	Catalog   *catalog.Catalog
 	Budgets   *budget.Tracker
-	Egress    *egress.Policy
-	Passports *passport.Store
+	Egress     *egress.Policy
+	Passports  *passport.Store
+	AdminGuard *adminguard.Guard
 }
 
 // newFoundationContext constructs and starts the Phase-1 primitives.
@@ -150,6 +159,19 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Passport sweeper — drop expired/old-revoked records every minute.
 	go fc.sweepPassports(parent)
 
+	// Admin route IP/ASN allow-list (P-B.0b). Tier-1 deterministic
+	// guard. No geoip provider passed for v1 — daemon main wires
+	// one in via SetGeoIP() if available.
+	fc.AdminGuard = adminguard.New(nil)
+	for _, p := range defaultAdminGuardPaths {
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		if err := fc.AdminGuard.Load(p); err == nil {
+			break
+		}
+	}
+
 	fc.EAC.Start(parent)
 
 	// Sweep ancient origin metadata every minute. Keeps the store
@@ -223,6 +245,10 @@ type healthDLCFBlock struct {
 	EgressDenied   uint64 `json:"egress_denied"`
 	PassportActive int    `json:"passport_active"`
 	PassportKeyID  string `json:"passport_key_id,omitempty"`
+	AdminGuardRules   int    `json:"admin_guard_rules"`
+	AdminGuardChecks  uint64 `json:"admin_guard_checks"`
+	AdminGuardDenied  uint64 `json:"admin_guard_denied"`
+	AdminGuardSource  string `json:"admin_guard_source,omitempty"`
 }
 
 type healthSelfBlock struct {
@@ -407,6 +433,37 @@ func registerFoundationHandlers(srv *localapi.Server, fc *foundationContext) {
 		}
 		return map[string]any{"reloaded": true, "stats": fc.Egress.Stats()}, nil
 	})
+	srv.RegisterHandler("adminguard.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.AdminGuard == nil {
+			return map[string]any{"loaded": false}, nil
+		}
+		return fc.AdminGuard.Stats(), nil
+	})
+	srv.RegisterHandler("adminguard.reload", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if fc.AdminGuard == nil {
+			return nil, errors.New("admin guard not initialised")
+		}
+		if err := fc.AdminGuard.Reload(); err != nil {
+			return nil, err
+		}
+		return map[string]any{"reloaded": true, "stats": fc.AdminGuard.Stats()}, nil
+	})
+	srv.RegisterHandler("adminguard.check", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if fc.AdminGuard == nil {
+			return nil, errors.New("admin guard not initialised")
+		}
+		var req struct {
+			Route    string `json:"route"`
+			SourceIP string `json:"source_ip"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.Route == "" || req.SourceIP == "" {
+			return nil, errors.New("route and source_ip are required")
+		}
+		return fc.AdminGuard.Check(req.Route, req.SourceIP), nil
+	})
 	srv.RegisterHandler("passport.issue", func(_ context.Context, raw json.RawMessage) (any, error) {
 		if fc.Passports == nil {
 			return nil, errors.New("passport store not initialised")
@@ -509,6 +566,13 @@ func (fc *foundationContext) dlcfBlock() healthDLCFBlock {
 		ps := fc.Passports.Stats()
 		b.PassportActive = ps.Active
 		b.PassportKeyID = ps.KeyID
+	}
+	if fc.AdminGuard != nil {
+		as := fc.AdminGuard.Stats()
+		b.AdminGuardRules = as.RuleCount
+		b.AdminGuardChecks = as.Checks
+		b.AdminGuardDenied = as.Denied
+		b.AdminGuardSource = as.Source
 	}
 	if fc.Catalog == nil {
 		return b
