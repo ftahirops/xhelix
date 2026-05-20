@@ -33,6 +33,8 @@
 !POST_COMPROMISE_DEFENSE.md
 !DATA_LEAK_FABRIC.md
 !BEHAVIORAL_DEFENSE.md
+!ERRORS.md
+!CLAUDE.md
 
 # Local state for development
 /var/
