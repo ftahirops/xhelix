@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xhelix/xhelix/pkg/credbroker"
+	"github.com/xhelix/xhelix/pkg/localapi"
 )
 
 // Default paths. The master key lives under /var/lib/xhelix so the
@@ -200,29 +201,53 @@ func newCredbrokerStatusCmd() *cobra.Command {
 
 func newCredbrokerHistoryCmd() *cobra.Command {
 	var sock string
+	var limit int
 	cmd := &cobra.Command{
 		Use:   "history",
 		Short: "Show recent broker decisions from the daemon's audit log",
-		Long: `Reads the daemon's in-memory audit log via LocalAPI. Each
-record covers one credential-release decision: allow/deny/honey,
-which lineage requested, what class was requested, and the reason
-the broker decided as it did.
-
-USG.1a: the daemon doesn't have a broker wired yet, so this command
-returns an empty list. Will be populated by USG.1b when the broker
-is integrated into pipeline.Pipeline.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("USG.1a: daemon-side broker not yet wired.")
-			fmt.Println("This commits the package + tooling so seal/unseal work today;")
-			fmt.Println("the LocalAPI handler lands in USG.1b alongside the policy gate.")
-			_ = sock
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			var resp struct {
+				Records []struct {
+					Time       time.Time `json:"time"`
+					SealedPath string    `json:"sealed_path"`
+					Class      string    `json:"class"`
+					Outcome    string    `json:"outcome"`
+					PID        uint32    `json:"pid"`
+					Comm       string    `json:"comm"`
+					Image      string    `json:"image"`
+					UID        uint32    `json:"uid"`
+					Reason     string    `json:"reason"`
+				} `json:"records"`
+			}
+			if err := c.Call("credbroker.history", struct{}{}, &resp); err != nil {
+				return fmt.Errorf("credbroker.history: %w", err)
+			}
+			if len(resp.Records) == 0 {
+				fmt.Println("No broker decisions recorded yet.")
+				return nil
+			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "TIME\tCLASS\tOUTCOME\tPID\tCOMM\tREASON")
+			fmt.Fprintln(tw, "TIME\tCLASS\tOUTCOME\tPID\tCOMM\tIMAGE\tREASON")
+			start := 0
+			if limit > 0 && len(resp.Records) > limit {
+				start = len(resp.Records) - limit
+			}
+			for _, r := range resp.Records[start:] {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+					r.Time.Format("15:04:05"), r.Class, r.Outcome,
+					r.PID, r.Comm, r.Image, r.Reason)
+			}
 			tw.Flush()
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&sock, "sock", defaultSock, "path to xhelix LocalAPI socket")
+	cmd.Flags().IntVar(&limit, "limit", 50, "max records to show (newest)")
 	return cmd
 }
 

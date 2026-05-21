@@ -19,29 +19,32 @@ import (
 // decision logic incrementally without re-touching the on-disk
 // format.
 type Broker struct {
-	sealer Sealer
+	sealer   Sealer
+	contract *Contract
 
 	mu    sync.RWMutex
 	audit []AuditRecord // ring buffer; xhelixctl credbroker history reads from this
 	cap   int           // max audit records retained
-
-	// stubAllowAll: when true, Decide returns OutcomeAllow for
-	// every request after audit. Set in USG.1a; turned off in
-	// USG.1b when real policy lands.
-	stubAllowAll bool
 }
 
 // NewBroker constructs a Broker. cap is the audit ring-buffer
-// capacity (default 1024 when ≤0).
+// capacity (default 1024 when ≤0). contract may be nil for the
+// migration-only stub behaviour (allow + audit); production
+// daemon callers must pass a real contract.
 func NewBroker(sealer Sealer, cap int) *Broker {
 	if cap <= 0 {
 		cap = 1024
 	}
 	return &Broker{
-		sealer:       sealer,
-		cap:          cap,
-		stubAllowAll: true, // USG.1a default — real policy in USG.1b
+		sealer: sealer,
+		cap:    cap,
 	}
+}
+
+// WithContract sets the policy contract. Returns broker for chaining.
+func (b *Broker) WithContract(c *Contract) *Broker {
+	b.contract = c
+	return b
 }
 
 // Seal encrypts plaintext under sealer, embeds meta, returns the
@@ -109,18 +112,77 @@ func (b *Broker) Decide(sf *SealedFile, req Request) Result {
 		rec.UID = req.Lineage[0].UID
 	}
 
-	if !b.stubAllowAll {
-		// USG.1b lands the real policy here. For now this branch
-		// is unreachable (stubAllowAll=true) but documents the
-		// intended structure.
-		rec.Outcome = OutcomeDeny
-		rec.Reason = "policy: USG.1b not yet implemented; default deny"
+	// No contract loaded: legacy fall-through (allow + audit).
+	// Production callers must pass a contract via WithContract.
+	if b.contract == nil {
+		pt, err := b.Unseal(sf)
+		if err != nil {
+			rec.Outcome = OutcomeDeny
+			rec.Reason = fmt.Sprintf("unseal failed: %v", err)
+			b.recordAudit(rec)
+			return Result{Outcome: OutcomeDeny, Audit: rec, Reason: rec.Reason}
+		}
+		rec.Outcome = OutcomeAllow
+		rec.Reason = "no contract loaded (migration-only stub)"
 		b.recordAudit(rec)
-		return Result{Outcome: OutcomeDeny, Audit: rec,
-			Reason: rec.Reason}
+		return Result{Outcome: OutcomeAllow, Plaintext: pt, Reason: rec.Reason, Audit: rec}
 	}
 
-	// USG.1a stub: allow + plaintext from sealer.
+	// Real policy: match the lineage against the contract.
+	m := b.contract.Match(req.Lineage, sf.Meta.Class)
+
+	if !m.Matched {
+		// Two cases:
+		//  - contract has DefaultDeny=true (strict)  → deny
+		//  - contract has DefaultDeny=false (legacy) → allow w/ warn
+		// USG.1c will add honey-on-deny here; for now we just deny.
+		if b.contract.DefaultDeny {
+			rec.Outcome = OutcomeDeny
+			rec.Reason = fmt.Sprintf(
+				"no contract rule matches lineage for class=%s (default_deny=true)",
+				sf.Meta.Class)
+			b.recordAudit(rec)
+			return Result{Outcome: OutcomeDeny, Audit: rec, Reason: rec.Reason}
+		}
+		// Not-strict: warn + allow. Operator can read the warning
+		// in `xhelixctl credbroker history` and tighten policy.
+		pt, err := b.Unseal(sf)
+		if err != nil {
+			rec.Outcome = OutcomeDeny
+			rec.Reason = fmt.Sprintf("unseal failed: %v", err)
+			b.recordAudit(rec)
+			return Result{Outcome: OutcomeDeny, Audit: rec, Reason: rec.Reason}
+		}
+		rec.Outcome = OutcomeAllow
+		rec.Reason = fmt.Sprintf(
+			"WARN: no contract rule for class=%s; allowed (default_deny=false)",
+			sf.Meta.Class)
+		b.recordAudit(rec)
+		return Result{Outcome: OutcomeAllow, Plaintext: pt, Reason: rec.Reason, Audit: rec}
+	}
+
+	// Matched rule. USG.1d enforces AttestRequired via Slack
+	// approval; until then we record the requirement and audit
+	// loudly. USG.1c adds honey-on-deny for repeat unattested.
+	if m.AttestRequired {
+		// For USG.1b, treat attest_required as warn+allow with a
+		// clear audit message. Real 2FA happens in USG.1d.
+		pt, err := b.Unseal(sf)
+		if err != nil {
+			rec.Outcome = OutcomeDeny
+			rec.Reason = fmt.Sprintf("unseal failed: %v", err)
+			b.recordAudit(rec)
+			return Result{Outcome: OutcomeDeny, Audit: rec, Reason: rec.Reason}
+		}
+		rec.Outcome = OutcomeAllow
+		rec.Reason = fmt.Sprintf(
+			"matched rule=%s (attest_required; not yet enforced, USG.1d)",
+			m.RuleName)
+		b.recordAudit(rec)
+		return Result{Outcome: OutcomeAllow, Plaintext: pt, Reason: rec.Reason, Audit: rec}
+	}
+
+	// Clean match — allow.
 	pt, err := b.Unseal(sf)
 	if err != nil {
 		rec.Outcome = OutcomeDeny
@@ -129,14 +191,9 @@ func (b *Broker) Decide(sf *SealedFile, req Request) Result {
 		return Result{Outcome: OutcomeDeny, Audit: rec, Reason: rec.Reason}
 	}
 	rec.Outcome = OutcomeAllow
-	rec.Reason = "USG.1a stub policy: allow + audit (real policy in USG.1b)"
+	rec.Reason = fmt.Sprintf("matched rule=%s", m.RuleName)
 	b.recordAudit(rec)
-	return Result{
-		Outcome:   OutcomeAllow,
-		Plaintext: pt,
-		Reason:    rec.Reason,
-		Audit:     rec,
-	}
+	return Result{Outcome: OutcomeAllow, Plaintext: pt, Reason: rec.Reason, Audit: rec}
 }
 
 // History returns a copy of the audit ring buffer (newest last).

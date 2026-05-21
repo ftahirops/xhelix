@@ -57,6 +57,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/burstdet"
+	"github.com/xhelix/xhelix/pkg/credbroker"
 	"github.com/xhelix/xhelix/pkg/runtimeallow"
 	"github.com/xhelix/xhelix/pkg/vendorcatalog"
 	"github.com/xhelix/xhelix/pkg/vhostdiscovery"
@@ -1160,6 +1161,66 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 		return map[string]any{"classes": out}, nil
 	})
+	// credbroker (P-USG.1b). Daemon-resident broker handles
+	// audit-log queries and (USG.2+) policy-gated unseals over
+	// LocalAPI. The seal/unseal/migration path stays on
+	// xhelixctl-side for operator workflows.
+	credBroker := loadCredBroker(log)
+	apiSrv.RegisterHandler("credbroker.history", func(_ context.Context, _ json.RawMessage) (any, error) {
+		hist := credBroker.History()
+		out := make([]map[string]any, 0, len(hist))
+		for _, r := range hist {
+			out = append(out, map[string]any{
+				"time":        r.Time,
+				"sealed_path": r.SealedPath,
+				"class":       r.Class,
+				"outcome":     r.Outcome,
+				"pid":         r.PID,
+				"comm":        r.Comm,
+				"image":       r.Image,
+				"uid":         r.UID,
+				"reason":      r.Reason,
+			})
+		}
+		return map[string]any{"records": out}, nil
+	})
+	apiSrv.RegisterHandler("credbroker.decide", func(_ context.Context, raw json.RawMessage) (any, error) {
+		// LocalAPI entry-point used by USG.2 kernel hook OR by
+		// xhelixctl when an operator-attested unseal is needed.
+		// USG.1b: accepts (sealed_path, requesting PID, optional
+		// lineage), returns Outcome + reason. Plaintext is NOT
+		// returned over LocalAPI by design — callers wanting
+		// plaintext use xhelixctl credbroker unseal --force on
+		// the host where the master key lives. USG.2 changes
+		// this: kernel hook will receive plaintext via a separate
+		// trusted FD channel, not via LocalAPI JSON.
+		var req struct {
+			SealedPath string                       `json:"sealed_path"`
+			PID        uint32                       `json:"pid"`
+			Lineage    []credbroker.LineageNode     `json:"lineage"`
+			Reason     string                       `json:"reason"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		sf, err := credbroker.ReadSealed(req.SealedPath)
+		if err != nil {
+			return nil, err
+		}
+		res := credBroker.Decide(sf, credbroker.Request{
+			SealedPath: req.SealedPath,
+			PID:        req.PID,
+			Lineage:    req.Lineage,
+			Reason:     req.Reason,
+		})
+		// Return outcome + reason but never plaintext over the API.
+		return map[string]any{
+			"outcome": res.Outcome,
+			"reason":  res.Reason,
+			"audit":   res.Audit,
+		}, nil
+	})
+	log.Info("credbroker LocalAPI handlers registered")
 	registerFoundationHandlers(apiSrv, foundation)
 	if err := apiSrv.Start(ctx); err != nil {
 		log.Warn("LocalAPI failed to start", "err", err)
