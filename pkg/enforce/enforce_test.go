@@ -13,8 +13,8 @@ func TestSoakAccumulatesAndResets(t *testing.T) {
 	now := time.Now()
 
 	// First track at t=0
-	s.Track("rule_x", now)
-	s.Track("rule_x", now.Add(time.Hour))
+	s.Track("rule_x", now, 0)
+	s.Track("rule_x", now.Add(time.Hour), 0)
 
 	// Without an FP, after 31 days, promotable.
 	ok, r := s.Promotable("rule_x", now.Add(31*24*time.Hour))

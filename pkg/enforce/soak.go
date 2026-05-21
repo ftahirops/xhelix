@@ -39,6 +39,27 @@ type Record struct {
 	LastFP               time.Time
 	ZeroFPSince          time.Time
 	ConsecutiveCleanDays uint
+	// Class is the rule's detection-class
+	// (LOW_FALSE_POSITIVE_ARCHITECTURE_2026-05-21.md §3):
+	//   1 = hard invariant (FP target <0.1%)
+	//   2 = strong exploit signal (FP target <0.5%)
+	//   3 = soft drift (FP target <5%)
+	// Set on first Track; never overwritten by zero so rules
+	// loaded before class_map.yaml don't lose their class.
+	Class int
+}
+
+// ClassStats is the aggregate FP-rate breakout the
+// low-FP architecture doc requires for operators to measure
+// adherence to the per-class targets.
+type ClassStats struct {
+	Class       int
+	Rules       int     // distinct rules with at least one fire
+	TotalFires  uint64  // sum of FireCount across rules in this class
+	TotalFPs    uint64  // sum of FPCount
+	FPRate      float64 // TotalFPs / TotalFires (0 when TotalFires=0)
+	Target      float64 // architectural target (0.001 / 0.005 / 0.05)
+	WithinTarget bool   // FPRate <= Target
 }
 
 // NewSoak returns an initialised tracker.
@@ -53,8 +74,9 @@ func NewSoak(minCleanDays uint) *Soak {
 }
 
 // Track marks rule as observed at t. It increments FireCount and
-// updates ConsecutiveCleanDays.
-func (s *Soak) Track(ruleID string, t time.Time) *Record {
+// updates ConsecutiveCleanDays. class is the rule's detection-class
+// (1/2/3); zero is treated as "leave existing class unchanged".
+func (s *Soak) Track(ruleID string, t time.Time, class int) *Record {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.records[ruleID]
@@ -66,6 +88,9 @@ func (s *Soak) Track(ruleID string, t time.Time) *Record {
 		}
 		s.records[ruleID] = r
 	}
+	if class > 0 {
+		r.Class = class
+	}
 	r.FireCount++
 	if !r.LastFP.IsZero() {
 		r.ConsecutiveCleanDays = uint(t.Sub(r.LastFP).Hours() / 24)
@@ -73,6 +98,40 @@ func (s *Soak) Track(ruleID string, t time.Time) *Record {
 		r.ConsecutiveCleanDays = uint(t.Sub(r.ZeroFPSince).Hours() / 24)
 	}
 	return r
+}
+
+// ClassBreakdown returns per-class aggregate FP statistics for the
+// LOW_FALSE_POSITIVE architecture's per-class metric model.
+// Targets are pinned to the architectural document:
+//   Class 1: 0.1%   Class 2: 0.5%   Class 3: 5%
+func (s *Soak) ClassBreakdown() []ClassStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	agg := map[int]*ClassStats{
+		1: {Class: 1, Target: 0.001},
+		2: {Class: 2, Target: 0.005},
+		3: {Class: 3, Target: 0.05},
+	}
+	for _, r := range s.records {
+		c := r.Class
+		if c < 1 || c > 3 {
+			c = 3
+		}
+		a := agg[c]
+		a.Rules++
+		a.TotalFires += r.FireCount
+		a.TotalFPs += r.FPCount
+	}
+	out := make([]ClassStats, 0, 3)
+	for _, c := range []int{1, 2, 3} {
+		a := agg[c]
+		if a.TotalFires > 0 {
+			a.FPRate = float64(a.TotalFPs) / float64(a.TotalFires)
+		}
+		a.WithinTarget = a.FPRate <= a.Target
+		out = append(out, *a)
+	}
+	return out
 }
 
 // MarkFP records a false positive, resetting the consecutive-clean

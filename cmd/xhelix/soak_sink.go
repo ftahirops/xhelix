@@ -37,7 +37,7 @@ func (s *soakSink) Send(_ context.Context, a model.Alert) error {
 	if s.soak == nil || a.RuleID == "" {
 		return nil
 	}
-	s.soak.Track(a.RuleID, time.Now().UTC())
+	s.soak.Track(a.RuleID, time.Now().UTC(), a.Class)
 	return nil
 }
 

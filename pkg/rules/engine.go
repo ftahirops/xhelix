@@ -126,6 +126,7 @@ func (e *Engine) Eval(ctx context.Context, ev model.Event) {
 			RuleID: c.rule.ID,
 			Reason: c.rule.Desc,
 			Mode:   c.rule.Mode,
+			Class:  c.rule.NormalizeClass(),
 		})
 	}
 }

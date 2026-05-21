@@ -223,7 +223,7 @@ func main() {
 				eng.Eval(ctx, ev)
 				corr.Ingest(ctx, ev)
 				if ev.Severity >= model.SeverityCritical && ev.Rule != "" {
-					soak.Track(ev.Rule, ev.Time)
+					soak.Track(ev.Rule, ev.Time, 0)
 				}
 			}
 		}

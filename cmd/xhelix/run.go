@@ -824,10 +824,33 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	} else if bundledRulesDir == "" {
 		log.Warn("no bundled rules found (looked in /usr/share/xhelix and ./ruleset/core)")
 	} else {
+		// Apply class_map.yaml so every rule has a detection-class
+		// for the per-class FP metric (P-AB.12). Missing file is
+		// fine — every rule defaults to class 3 (alert-only).
+		cm, cmErr := rules.LoadClassMap(bundledRulesDir)
+		if cmErr != nil {
+			log.Warn("class_map load failed (all rules default to class 3)", "err", cmErr)
+		} else {
+			cm.ApplyTo(bundledRules)
+		}
 		if err := ruleEngine.Load(bundledRules); err != nil {
 			log.Warn("failed to compile bundled rules", "err", err)
 		} else {
-			log.Info("rules loaded", "count", len(bundledRules))
+			var c1, c2, c3 int
+			for _, r := range bundledRules {
+				switch r.NormalizeClass() {
+				case 1:
+					c1++
+				case 2:
+					c2++
+				default:
+					c3++
+				}
+			}
+			log.Info("rules loaded", "count", len(bundledRules),
+				"class_1_hard_invariant", c1,
+				"class_2_strong_signal", c2,
+				"class_3_soft_drift", c3)
 		}
 	}
 
@@ -1096,6 +1119,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		for _, r := range recs {
 			out = append(out, map[string]any{
 				"rule_id":                r.RuleID,
+				"class":                  r.Class,
 				"entered_detect_at":      r.EnteredDetectAt,
 				"fire_count":             r.FireCount,
 				"fp_count":               r.FPCount,
@@ -1108,6 +1132,27 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			"min_clean_days": soakDays,
 			"records":        out,
 		}, nil
+	})
+	// rules.fp_class (P-AB.12): the per-class FP-rate breakout
+	// required by LOW_FALSE_POSITIVE_ARCHITECTURE_2026-05-21.md §12.
+	// Used by `xhelixctl rules fp` to confirm Class 1+2 are within
+	// architectural targets before any rule is promoted to a
+	// destructive action mask.
+	apiSrv.RegisterHandler("rules.fp_class", func(_ context.Context, _ json.RawMessage) (any, error) {
+		stats := soak.ClassBreakdown()
+		out := make([]map[string]any, 0, len(stats))
+		for _, c := range stats {
+			out = append(out, map[string]any{
+				"class":         c.Class,
+				"rules":         c.Rules,
+				"total_fires":   c.TotalFires,
+				"total_fps":     c.TotalFPs,
+				"fp_rate":       c.FPRate,
+				"target":        c.Target,
+				"within_target": c.WithinTarget,
+			})
+		}
+		return map[string]any{"classes": out}, nil
 	})
 	registerFoundationHandlers(apiSrv, foundation)
 	if err := apiSrv.Start(ctx); err != nil {

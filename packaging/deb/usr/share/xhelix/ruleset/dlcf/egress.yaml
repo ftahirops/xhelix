@@ -1,0 +1,82 @@
+# DLCF Egress Valve — destination policy v1.
+#
+# Each rule names a data class and the destinations a lineage tainted
+# with that class is permitted to talk to. A lineage carrying multiple
+# classes must have a matching rule for every class — that is the
+# whole point of the Valve.
+#
+# Loaded by pkg/egress at daemon start; hot-reloadable via egress.reload
+# LocalAPI handler.
+#
+# Default behaviour with no rule for a class: DENY. Operators must opt
+# in to destinations.
+
+version: 1
+
+rules:
+  # Backups may only flow to the backup mirror. No internet, no S3
+  # unless you uncomment a specific cloud rule below.
+  - class: backup
+    name: backup-mirror
+    cidrs:
+      - "10.0.10.0/24"     # internal backup network
+    host_suffixes:
+      - ".backups.internal"
+
+  # Source code does not leak to the internet from production.
+  # Allow only the artifact registry.
+  - class: source_code
+    name: artifact-registry
+    cidrs:
+      - "10.0.20.0/24"
+
+  # Customer orders flow only to the ops dashboard subnet and the
+  # finance export bastion.
+  - class: customer_order
+    name: ops-dashboard
+    cidrs:
+      - "10.0.30.0/24"
+
+  # Credentials should literally never travel outbound. The empty
+  # rule means *no* destination matches; every connection is denied.
+  - class: credentials
+    name: credentials-no-egress
+    cidrs: []
+    ips: []
+    host_suffixes: []
+
+  # API keys: same posture as credentials.
+  - class: api_key
+    name: api-keys-no-egress
+    cidrs: []
+
+  # Canary class is intentionally absent — any outbound from a
+  # canary-tainted lineage is a critical exfil indicator and must
+  # be denied unconditionally.
+
+  # PII goes only to the analytics gateway.
+  - class: pii
+    name: analytics-gateway
+    host_suffixes:
+      - ".analytics.internal"
+
+  # Payment tokens: payment-processor host suffix only.
+  - class: payment_token
+    name: payment-processor
+    host_suffixes:
+      - ".stripe.com"
+      - ".braintreepayments.com"
+
+  # Contact data: ops dashboard.
+  - class: contact
+    name: ops-dashboard-contact
+    cidrs:
+      - "10.0.30.0/24"
+
+  # Public data: anywhere. Mostly redundant since untainted lineages
+  # never hit the Valve, but covers the case where 'public' is
+  # explicitly stamped onto a lineage.
+  - class: public
+    name: anywhere
+    cidrs:
+      - "0.0.0.0/0"

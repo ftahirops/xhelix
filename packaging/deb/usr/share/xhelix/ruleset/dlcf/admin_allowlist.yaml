@@ -1,0 +1,60 @@
+# Admin route IP/ASN allow-list (P-B.0b, BEHAVIORAL_DEFENSE.md §3.12-b)
+#
+# Tier 1 deterministic detection. A request whose route matches one
+# of the patterns below MUST originate from one of the listed sources,
+# or it is refused.
+#
+# Loaded by pkg/adminguard at daemon start; hot-reloadable via
+# adminguard.reload LocalAPI handler.
+#
+# Semantics:
+#   - Routes NOT covered by any rule below: no policy applies (allow).
+#   - Routes covered by one or more rules: ALL matching rules'
+#     restrictions apply (fail-closed). Inside a rule, satisfying
+#     ANY of (CIDR, IP, ASN) is enough.
+#   - Trailing "/" in route_patterns = prefix match (covers sub-paths)
+#   - No trailing "/" = exact match
+#
+# This composes with WebAuthn (3.12-a) and Data Passport (P7.1.7);
+# none replaces another.
+
+version: 1
+
+rules:
+  # WordPress admin: corporate network only.
+  - name: wp-admin-corp-only
+    route_patterns:
+      - "/wp-admin/"
+      - "/wp-login.php"
+    allowed_cidrs:
+      - "10.0.0.0/8"      # internal RFC1918 — replace with your office range
+      - "192.168.0.0/16"
+
+  # Generic admin / dashboard surface.
+  - name: admin-corp-only
+    route_patterns:
+      - "/admin/"
+      - "/dashboard/"
+    allowed_cidrs:
+      - "10.0.0.0/8"
+      - "192.168.0.0/16"
+
+  # Bulk-export endpoints: even within the corp network, restrict to
+  # a designated bastion host. Stacks with wp-admin-corp-only, so
+  # /wp-admin/export... must satisfy BOTH (be in corp AND be the
+  # bastion IP).
+  - name: export-bastion-only
+    route_patterns:
+      - "/wp-admin/export.php"
+      - "/admin/export/"
+    allowed_ips:
+      - "10.0.99.10"      # designated bastion — change to your value
+
+  # Server-to-server API endpoints (webhooks, partner integrations).
+  # Allow specific partner ASNs.
+  # - name: partner-webhooks
+  #   route_patterns:
+  #     - "/api/webhook/"
+  #   allowed_asns:
+  #     - "AS13335"       # example: Cloudflare
+  #     - "AS16509"       # example: AWS

@@ -1,0 +1,56 @@
+# DLCF Living-Off-The-Land rules (P-B.7).
+#
+# Tier 2 detectors. The catalog stamps event.tags['lotl_score'] on
+# every exec event whose binary is in the catalog's lotl.binaries
+# list. These rules fire on score thresholds.
+#
+# Per BEHAVIORAL_DEFENSE.md §3.8: Tier 2 means soft-enforce (alert,
+# raise score, contribute to the composition rule); do not hard-block
+# from a single signal. The composition rule (P-B.9, future) escalates
+# when these stack with other Tier 2/3 signals.
+---
+id: dlcf_lotl_critical
+desc: Living-off-the-land binary spawned with critical lineage (score >= 90)
+severity: critical
+mitre: [T1059, T1105, T1041]
+match: |
+  (event.sensor == "ebpf.spawn" || event.sensor == "ebpf.proc") &&
+  has(event.tags.lotl_score) &&
+  int(event.tags.lotl_score) >= 90
+tags: [dlcf, lotl, execution]
+remediation: |
+  A LOTL binary (curl/wget/nc/bash/etc.) was spawned in a lineage
+  that should never produce it (e.g. nginx -> php-fpm -> bash). This
+  is the canonical post-auth RCE indicator. Capture the full argv,
+  resolve the request_contract_id, and consider freezing the
+  originating session.
+test_id: DLCF-LOTL-01
+---
+id: dlcf_lotl_high
+desc: Living-off-the-land binary spawned with elevated lineage (score 70-89)
+severity: high
+mitre: [T1059, T1105]
+match: |
+  (event.sensor == "ebpf.spawn" || event.sensor == "ebpf.proc") &&
+  has(event.tags.lotl_score) &&
+  int(event.tags.lotl_score) >= 70 && int(event.tags.lotl_score) < 90
+tags: [dlcf, lotl, execution]
+remediation: |
+  Elevated-risk LOTL exec. Common for: bash from a web parent, curl
+  from sshd interactive shell. Combine with session-binding or
+  baseline signals before hard action.
+test_id: DLCF-LOTL-02
+---
+id: dlcf_lotl_medium
+desc: Living-off-the-land binary spawned with notable lineage (score 40-69)
+severity: notice
+mitre: [T1059]
+match: |
+  (event.sensor == "ebpf.spawn" || event.sensor == "ebpf.proc") &&
+  has(event.tags.lotl_score) &&
+  int(event.tags.lotl_score) >= 40 && int(event.tags.lotl_score) < 70
+tags: [dlcf, lotl, execution]
+remediation: |
+  Notice-level LOTL event. Score-only contribution to the soft
+  enforcement ladder. Do not act on this single signal.
+test_id: DLCF-LOTL-03

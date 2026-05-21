@@ -44,6 +44,68 @@ so CI catches bad CEL before deploy.`,
 	lint.Flags().BoolVar(&strict, "strict", false, "fail on any rule that compiles but warns")
 	cmd.AddCommand(lint)
 	cmd.AddCommand(newRulesSoakCmd())
+	cmd.AddCommand(newRulesFPCmd())
+	return cmd
+}
+
+// newRulesFPCmd surfaces the per-class FP-rate breakout from
+// LOW_FALSE_POSITIVE_ARCHITECTURE_2026-05-21.md §12. Without this,
+// the doc's <0.1% / <0.5% / <5% targets are unmeasurable.
+func newRulesFPCmd() *cobra.Command {
+	var sock string
+	cmd := &cobra.Command{
+		Use:   "fp",
+		Short: "Per-class FP-rate breakout (Class 1 / 2 / 3)",
+		Long: `Shows aggregate FP-rate per detection class:
+  Class 1 = hard invariant       (auto-deny candidate;   target <0.1%)
+  Class 2 = strong exploit signal (freeze candidate;     target <0.5%)
+  Class 3 = soft behavior drift   (alert-only;           target <5%)
+
+Operators must check 'within_target=true' on Class 1+2 BEFORE
+promoting any rule to a destructive action mask. This is the
+measurement that backs the LOW_FALSE_POSITIVE_ARCHITECTURE
+2026-05-21 §12 metric model.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			var resp struct {
+				Classes []struct {
+					Class        int     `json:"class"`
+					Rules        int     `json:"rules"`
+					TotalFires   uint64  `json:"total_fires"`
+					TotalFPs     uint64  `json:"total_fps"`
+					FPRate       float64 `json:"fp_rate"`
+					Target       float64 `json:"target"`
+					WithinTarget bool    `json:"within_target"`
+				} `json:"classes"`
+			}
+			if err := c.Call("rules.fp_class", struct{}{}, &resp); err != nil {
+				return fmt.Errorf("rules.fp_class: %w", err)
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "CLASS\tNAME\tRULES\tFIRES\tFPS\tFP_RATE\tTARGET\tOK")
+			names := map[int]string{
+				1: "hard_invariant", 2: "strong_signal", 3: "soft_drift",
+			}
+			for _, c := range resp.Classes {
+				ok := "yes"
+				if !c.WithinTarget {
+					ok = "NO"
+				}
+				fmt.Fprintf(tw, "%d\t%s\t%d\t%d\t%d\t%.4f\t%.4f\t%s\n",
+					c.Class, names[c.Class], c.Rules, c.TotalFires,
+					c.TotalFPs, c.FPRate, c.Target, ok)
+			}
+			tw.Flush()
+			fmt.Println()
+			fmt.Println("Target source: docs/LOW_FALSE_POSITIVE_ARCHITECTURE_2026-05-21.md §12")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", defaultSock, "path to xhelix LocalAPI socket")
 	return cmd
 }
 

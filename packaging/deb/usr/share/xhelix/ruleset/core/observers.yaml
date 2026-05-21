@@ -15,8 +15,10 @@ remediation: |
 ---
 id: fim.drift
 desc: Any FIM drift event
-# Observer rule for harness verification. severity=info — see source
-# tree ruleset/core/observers.yaml for rationale.
+# Observer rule for harness verification. severity=info because
+# legitimate package installs / config reloads produce FIM drifts
+# routinely; this rule should not pollute high-severity counts.
+# Specific tamper_* rules carry the operational severity.
 severity: info
 match: |
   event.sensor == "fim.drift"

@@ -21,7 +21,27 @@ type Rule struct {
 	TestID      string    `yaml:"test_id" json:"test_id,omitempty"`
 	Soak        SoakState `yaml:"-" json:"soak,omitempty"`
 
+	// Class buckets the rule for the per-class FP metric model
+	// (LOW_FALSE_POSITIVE_ARCHITECTURE_2026-05-21.md §3+§12):
+	//   1 = hard invariant (auto-deny candidate; FP target <0.1%)
+	//   2 = strong exploit signal (freeze candidate; FP target <0.5%)
+	//   3 = soft behavior drift (alert-only; FP target <5%)
+	// Empty/zero defaults to 3 in NormalizeClass so untagged rules
+	// don't accidentally get auto-block treatment.
+	Class int `yaml:"class" json:"class,omitempty"`
+
 	RateLimit *RuleRateLimit `yaml:"rate_limit" json:"rate_limit,omitempty"`
+}
+
+// NormalizeClass returns the rule's class with safe default 3.
+// Centralised so every consumer (lint, runtime, metrics, CLI) sees
+// the same default.
+func (r *Rule) NormalizeClass() int {
+	c := r.Class
+	if c < 1 || c > 3 {
+		return 3
+	}
+	return c
 }
 
 // RuleRateLimit caps how often a rule may fire.

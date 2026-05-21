@@ -44,6 +44,13 @@ type Alert struct {
 	EvidenceIDs []ulid.ULID `json:"evidence_ids,omitempty"`
 	Mode        RuleMode    `json:"mode"`
 	Action      string      `json:"action,omitempty"`
+
+	// Class buckets the firing rule for per-class FP accounting.
+	//   1 = hard invariant       (auto-deny candidate;   FP <0.1%)
+	//   2 = strong exploit signal (freeze candidate;     FP <0.5%)
+	//   3 = soft behavior drift   (alert-only;           FP <5%)
+	// Populated by the rule engine from model.Rule.Class.
+	Class int `json:"class,omitempty"`
 }
 
 // Sink consumes alerts. Implementations must be safe for concurrent
