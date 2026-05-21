@@ -17,6 +17,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -394,19 +395,37 @@ func (e *Engine) OnAlert(a model.Alert) {
 	//      rules don't carry baseline_known because the behavior
 	//      we're keying on (decoy touch) is not something a
 	//      legitimate binary ever did during observe.
+	gateReason := ""
+	if e.monitorMode {
+		gateReason = "monitor_mode"
+	}
 	if tags := a.Event.Tags; tags != nil {
 		if tags["baseline_observing"] == "true" {
 			mask &= ActionLog | ActionWebhook
 			if mask == 0 {
 				mask = ActionLog
 			}
+			gateReason = "autobaseline:observe (day-0 learning; destructive suppressed)"
 		} else if tags["baseline_known"] == "true" {
 			// Keep evidence-collection actions, strip destructive.
 			mask &= ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan
 			if mask == 0 {
 				mask = ActionLog
 			}
+			gateReason = "autobaseline:known (action inside learned envelope; destructive suppressed)"
 		}
+	}
+
+	// Stamp the effective action + gate reason on the Alert so sinks
+	// (webhook, file) can include them in their payloads. The webhook
+	// formatter reads a.Action and event.Tags["xhelix_gate_reason"].
+	// Done here, NOT earlier, so the value reflects the final mask.
+	a.Action = describeMask(mask)
+	if gateReason != "" {
+		if a.Event.Tags == nil {
+			a.Event.Tags = map[string]string{}
+		}
+		a.Event.Tags["xhelix_gate_reason"] = gateReason
 	}
 
 	// Order matters:
@@ -685,4 +704,46 @@ func (e *Engine) Stop(ctx context.Context) error {
 	}
 	close(e.stopCh)
 	return nil
+}
+
+// describeMask returns a human-readable comma-separated list of the
+// actions selected by mask. Used to populate model.Alert.Action so
+// downstream sinks (webhook, file) can include "action taken" in
+// their payloads. Order matches the dispatch order in OnAlert.
+func describeMask(mask Action) string {
+	if mask == 0 {
+		return "none"
+	}
+	parts := []string{}
+	if mask&ActionLog != 0 {
+		parts = append(parts, "log")
+	}
+	if mask&ActionSnapshot != 0 {
+		parts = append(parts, "snapshot")
+	}
+	if mask&ActionMemScan != 0 {
+		parts = append(parts, "memscan")
+	}
+	if mask&ActionNetBan != 0 {
+		parts = append(parts, "netban")
+	}
+	if mask&ActionRemediate != 0 {
+		parts = append(parts, "remediate")
+	}
+	if mask&ActionQuarantine != 0 {
+		parts = append(parts, "quarantine")
+	}
+	if mask&ActionKill != 0 {
+		parts = append(parts, "kill")
+	}
+	if mask&ActionLockUser != 0 {
+		parts = append(parts, "lock-user")
+	}
+	if mask&ActionHostQuarantine != 0 {
+		parts = append(parts, "host-quarantine")
+	}
+	if mask&ActionWebhook != 0 {
+		parts = append(parts, "webhook")
+	}
+	return strings.Join(parts, ", ")
 }
