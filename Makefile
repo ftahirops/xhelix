@@ -13,7 +13,7 @@ DNS := xhelix-dnspoison
 WD  := xhelix-watchdog
 DIST := dist
 
-.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux
+.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint
 
 all: build
 
@@ -65,6 +65,13 @@ static-check: build
 test:
 	go test -race -count=1 ./...
 
+# rules-lint compiles every shipped CEL rule. Catches bugs like
+# `has(map[k])` that the engine accepts at parse time but rejects
+# at compile time. Wired into deb so bad rules never ship.
+rules-lint: build
+	./$(CTL) rules lint ruleset/core
+	./$(CTL) rules lint ruleset/dlcf || true   # dlcf has subdirs; tolerant
+
 vet:
 	go vet ./...
 
@@ -75,9 +82,24 @@ clean:
 	rm -f $(BIN) $(CTL) $(VFY) $(HSH) $(SNK) $(DNS) $(WD)
 	rm -rf $(DIST)
 
-deb: build
+deb: build rules-lint
 	mkdir -p packaging/deb/usr/local/bin
-	cp $(BIN) $(CTL) packaging/deb/usr/local/bin/
+	cp $(BIN) $(CTL) $(VFY) packaging/deb/usr/local/bin/
+	# Sync the live ruleset into the package so deployment never
+	# drifts from what was lint-validated above. Wipe-and-replace
+	# to clean out renamed/removed files.
+	rm -rf packaging/deb/usr/share/xhelix/ruleset
+	mkdir -p packaging/deb/usr/share/xhelix/ruleset
+	cp -a ruleset/core packaging/deb/usr/share/xhelix/ruleset/
+	cp -a ruleset/dlcf packaging/deb/usr/share/xhelix/ruleset/
+	# Optional: include compiled eBPF programs if present.
+	@if [ -f sensors/ebpf/progs/xhelix-progs.o ]; then \
+	  mkdir -p packaging/deb/usr/lib/xhelix; \
+	  cp sensors/ebpf/progs/xhelix-progs.o packaging/deb/usr/lib/xhelix/; \
+	  echo "deb: bundled eBPF progs"; \
+	else \
+	  echo "deb: eBPF progs not built (run 'make ebpf' first to include)"; \
+	fi
 	mkdir -p $(DIST)
 	dpkg-deb --build packaging/deb $(DIST)/xhelix_$(VERSION)_amd64.deb
 

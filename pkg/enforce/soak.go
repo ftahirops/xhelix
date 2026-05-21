@@ -16,6 +16,8 @@
 package enforce
 
 import (
+	"encoding/json"
+	"os"
 	"sync"
 	"time"
 )
@@ -120,4 +122,49 @@ func (s *Soak) Snapshot() []Record {
 		out = append(out, *r)
 	}
 	return out
+}
+
+// SaveTo persists the soak history to path as JSON. Atomic via
+// temp + rename so a crashed write doesn't corrupt the file.
+// Operator's view of "this rule has been clean for N days" must
+// survive daemon restart.
+func (s *Soak) SaveTo(path string) error {
+	s.mu.RLock()
+	snap := make([]Record, 0, len(s.records))
+	for _, r := range s.records {
+		snap = append(snap, *r)
+	}
+	s.mu.RUnlock()
+	body, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// LoadFrom rehydrates the soak history from path. Missing file
+// is not an error — fresh install starts with an empty tracker.
+func (s *Soak) LoadFrom(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var snap []Record
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range snap {
+		rr := r
+		s.records[r.RuleID] = &rr
+	}
+	return nil
 }

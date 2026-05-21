@@ -203,11 +203,27 @@ func runDaemon(parent context.Context, cfgPath string) error {
 
 	// Alert sinks
 	sinks := buildSinks(cfg.Alerts.Sinks, log)
+	// Soak tracker — single instance shared between the bus sink
+	// (advances Track on every alert), the web UI, and the
+	// LocalAPI handler that xhelixctl queries. Persisted to disk
+	// every minute so per-rule clean-day counters survive restart.
+	soakDays := uint(30)
+	if cfg.Response.SoakDays > 0 {
+		soakDays = cfg.Response.SoakDays
+	}
+	soak := enforce.NewSoak(soakDays)
+	soakPath := filepath.Join(cfg.Agent.StateDir, "soak.json")
+	if err := soak.LoadFrom(soakPath); err != nil {
+		log.Warn("soak load failed (starting fresh)", "err", err, "path", soakPath)
+	}
+	ss := newSoakSink(soak, soakPath)
+	sinks = append(sinks, ss)
 	bus := alert.NewBus(sinks, 4096, log)
 
 	ctx, cancel := signal.NotifyContext(parent,
 		syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
+	go ss.runFlusher(ctx, time.Minute)
 
 	// Phase-1 evidence-truth primitives: EAC + lineage + canonical self.
 	// Constructed early so they're available to every subsystem.
@@ -225,11 +241,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 
 	// Enforcement plane
 	quarantine := enforce.NewQuarantine(enforce.DefaultSignalFn)
-	soakDays := uint(30)
-	if cfg.Response.SoakDays > 0 {
-		soakDays = cfg.Response.SoakDays
-	}
-	soak := enforce.NewSoak(soakDays)
+	// soak constructed earlier alongside the bus sinks.
+	_ = soak
 	panicSwitch := enforce.NewPanicSwitch("")
 
 	// Session tracker — "who is doing what" timeline.
@@ -1073,6 +1086,27 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// webhook actually wired up?" without needing a real attack.
 	apiSrv.RegisterHandler("alerts.test_fire", func(_ context.Context, raw json.RawMessage) (any, error) {
 		return testFireAlert(bus, hostnameOrEmpty(), raw)
+	})
+	// rules.soak (P-AB.10): snapshot the per-rule clean-day counter
+	// so xhelixctl can show "rule X has been clean for N days".
+	apiSrv.RegisterHandler("rules.soak", func(_ context.Context, _ json.RawMessage) (any, error) {
+		recs := soak.Snapshot()
+		out := make([]map[string]any, 0, len(recs))
+		for _, r := range recs {
+			out = append(out, map[string]any{
+				"rule_id":                r.RuleID,
+				"entered_detect_at":      r.EnteredDetectAt,
+				"fire_count":             r.FireCount,
+				"fp_count":               r.FPCount,
+				"last_fp":                r.LastFP,
+				"zero_fp_since":          r.ZeroFPSince,
+				"consecutive_clean_days": r.ConsecutiveCleanDays,
+			})
+		}
+		return map[string]any{
+			"min_clean_days": soakDays,
+			"records":        out,
+		}, nil
 	})
 	registerFoundationHandlers(apiSrv, foundation)
 	if err := apiSrv.Start(ctx); err != nil {
