@@ -368,7 +368,7 @@ severity: critical
 mitre: [T1053.003, T1059]
 match: |
   event.sensor == "fim" &&
-  has(event.tags["cron_suspicion"]) &&
+  event.tags["cron_suspicion"] != "" &&
   int(event.tags["cron_suspicion"]) >= 50
 tags: [persistence, post_exploitation]
 remediation: |
