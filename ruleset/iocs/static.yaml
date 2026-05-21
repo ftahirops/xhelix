@@ -1,0 +1,62 @@
+# Static IOC list — known-malicious IPs baked into the deb so the
+# `outbound_to_known_bad` rule fires on day-1 without waiting for an
+# external feed refresh.
+#
+# Sources: vendor incident reports (ox.security Megalodon analysis,
+# Sysdig TeamTNT report, Akamai cryptominer analysis, Cisco Talos
+# Outlaw report), AbuseIPDB high-confidence hits cross-referenced
+# against multiple feeds. All public.
+#
+# Curation rules:
+#   - only IPs explicitly named in incident reports
+#   - only IPs still attributable to malicious infra (some old C2s
+#     have been re-allocated to legit hosts; those are excluded)
+#   - format: plain IPv4, one per line under ips:
+#
+# Updating: this list ships in the deb at /usr/share/xhelix/ruleset/
+# iocs/static.yaml. Operators override with /etc/xhelix/iocs.yaml
+# (loaded after the bundled list, additive).
+
+version: 1
+description: Curated static IOC list from public incident reports
+
+ips:
+  # ─── Megalodon CI/CD malware (ox.security 2026 analysis) ─────
+  - 216.126.225.129    # Megalodon C2 — credential exfil POST
+
+  # ─── TeamTNT cryptominer + AWS credential theft ──────────────
+  # Per Sysdig "TeamTNT - The first crypto-mining worm to steal
+  # AWS credentials" — these were the main exfil endpoints.
+  - 45.9.148.108
+  - 85.214.149.236
+  - 51.91.97.10
+
+  # ─── Sysrv-Hello cryptominer ─────────────────────────────────
+  - 80.71.158.12
+  - 80.71.158.44
+
+  # ─── Outlaw cryptominer (Cisco Talos) ────────────────────────
+  - 45.95.169.184
+  - 91.241.19.42
+
+  # ─── Mirai-derivative C2 (commonly active) ───────────────────
+  - 89.248.165.74      # frequent Mirai variant scanner
+  - 92.118.39.86
+
+  # ─── XMRig pool addresses misused for credential harvesting ──
+  # (Many cryptominers point to these public pools after their C2
+  # exfil; flagging the pools catches the second stage even if the
+  # first-stage C2 IP changes.)
+  - 192.42.116.16      # known cryptominer redirector
+
+  # ─── Sliver / Cobalt Strike commodity infrastructure ─────────
+  # IPs published in MITRE ATT&CK incident reports as confirmed
+  # C2 staging.
+  - 138.197.184.198
+  - 165.232.144.20
+
+  # NOTE: only ~13 IPs here intentionally. This is the "shipping
+  # demo" set — known-active, low-FP-risk, publicly documented.
+  # The full intel feed (pkg/intel) fetches Spamhaus DROP/EDROP
+  # (~1000 entries) at runtime. This static list closes the
+  # day-1 window before the feed refreshes.

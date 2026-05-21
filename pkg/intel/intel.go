@@ -165,3 +165,28 @@ func (m *Manager) refreshFeed(ctx context.Context, f Feed) error {
 	}
 	return scanner.Err()
 }
+
+// AddStatic seeds the bad-IP set from a slice of literal IP strings.
+// Used to bake in known-malicious indicators (campaign C2 servers,
+// commodity-malware infrastructure) so the rule fires without
+// waiting for an external feed refresh. Idempotent.
+//
+// Invalid entries are silently ignored — these files are operator-
+// editable and a typo shouldn't stop the daemon.
+func (m *Manager) AddStatic(ips []string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	added := 0
+	for _, s := range ips {
+		ip := net.ParseIP(strings.TrimSpace(s))
+		if ip == nil {
+			continue
+		}
+		key := ip.String()
+		if _, exists := m.badIPs[key]; !exists {
+			m.badIPs[key] = struct{}{}
+			added++
+		}
+	}
+	return added
+}

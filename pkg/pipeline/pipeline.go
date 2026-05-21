@@ -26,6 +26,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/baseline"
 	"github.com/xhelix/xhelix/pkg/beacon"
+	"github.com/xhelix/xhelix/pkg/burstdet"
 	"github.com/xhelix/xhelix/pkg/cronclassify"
 	"github.com/xhelix/xhelix/pkg/brandcheck"
 	"github.com/xhelix/xhelix/pkg/capwatch"
@@ -98,6 +99,16 @@ type Pipeline struct {
 	// Handle() queries IsKnown and tags `baseline_known=true` on
 	// matches so rules can branch. Nil is safe (no-op).
 	AutoBaseline *autobaseline.Manager
+
+	// FileReadBurst / SpawnBurst (P-AB.13) — per-PID sliding-window
+	// counters that fire when a single PID opens or spawns at a
+	// rate higher than a healthy workload would. Catches the
+	// credential-scan stage of Megalodon and TeamTNT-class
+	// malware where one process reads hundreds of files (grep for
+	// AWS keys) or spawns dozens of children (find / grep loop).
+	// Nil-safe.
+	FileReadBurst *burstdet.Counter
+	SpawnBurst    *burstdet.Counter
 
 	// Emit is the alert-bus sink. Required if any rule, detector,
 	// or threat-intel branch can fire. Pipeline never holds an
@@ -179,6 +190,53 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 					}
 					ev.Tags["baseline_known"] = "true"
 				}
+			}
+		}
+	}
+
+	// Burst detectors (P-AB.13). Per-PID sliding-window counters
+	// that emit a synthetic alert when a single PID's
+	// file-open-rate or spawn-rate crosses a threshold (the
+	// steady-state shape of credential-scan / workspace-recon
+	// malware). JIT runtimes are exempt via jit_allowlisted set
+	// earlier in this function.
+	//
+	// We don't gate on baseline_observing here — burst bursts are
+	// loud-by-construction and a Megalodon-shaped attack on day 0
+	// should still produce a visible signal even while the
+	// autobaseline learns. The response engine's gate still
+	// strips destructive actions during observe.
+	if ev.PID != 0 && ev.Tags["jit_allowlisted"] != "true" {
+		now := time.Now().UTC()
+		// Process-spawn burst: count ebpf.proc/spawn events
+		// keyed by PARENT pid (the spawner is what we want to
+		// flag, not each child).
+		if p.SpawnBurst != nil && ev.Sensor == "ebpf.proc" &&
+			ev.Tags["kind"] == "proc_spawn" && ev.ParentPID != 0 {
+			if cross, count := p.SpawnBurst.Observe(ev.ParentPID, now); cross {
+				p.emitBurst(ev, "process_spawn_burst", ev.ParentPID, count,
+					"PID spawned >threshold children in window")
+			}
+		}
+		// File-read burst: any ebpf event whose kind is file_open
+		// or whose tag indicates a path read. xhelix's eBPF
+		// emits kind=file_open on openat for tracked watch paths;
+		// we count on that.
+		if p.FileReadBurst != nil && ev.Sensor == "ebpf" &&
+			ev.Tags["kind"] == "file_open" {
+			if cross, count := p.FileReadBurst.Observe(ev.PID, now); cross {
+				p.emitBurst(ev, "file_read_burst", ev.PID, count,
+					"PID opened >threshold files in window")
+			}
+		}
+		// Clean up PID counters on proc_exit so PID reuse doesn't
+		// carry false history.
+		if ev.Sensor == "ebpf.proc" && ev.Tags["kind"] == "proc_exit" {
+			if p.SpawnBurst != nil {
+				p.SpawnBurst.Forget(ev.PID)
+			}
+			if p.FileReadBurst != nil {
+				p.FileReadBurst.Forget(ev.PID)
 			}
 		}
 	}
@@ -652,4 +710,32 @@ func isCronPath(path string) bool {
 		return true
 	}
 	return false
+}
+
+// emitBurst constructs and emits a burst alert. Centralised so
+// file-read-burst and process-spawn-burst share the same shape;
+// the rule engine doesn't need an explicit rule because the burst
+// IS the detection.
+func (p *Pipeline) emitBurst(triggerEv model.Event, ruleID string, pid uint32, count int, reason string) {
+	if p.Emit == nil {
+		return
+	}
+	ev := model.NewEvent("burstdet", model.SeverityHigh)
+	ev.Time = time.Now().UTC()
+	ev.Host = triggerEv.Host
+	ev.PID = pid
+	ev.Comm = triggerEv.Comm
+	ev.Image = triggerEv.Image
+	ev.UID = triggerEv.UID
+	ev.ProcTree = triggerEv.ProcTree
+	ev.Tags["kind"] = ruleID
+	ev.Tags["count"] = fmt.Sprintf("%d", count)
+	ev.Tags["reason"] = reason
+	ev.Tags["trigger_sensor"] = triggerEv.Sensor
+	p.Emit(model.Alert{
+		Event:  ev,
+		RuleID: ruleID,
+		Reason: reason,
+		Class:  2, // strong exploit signal
+	})
 }

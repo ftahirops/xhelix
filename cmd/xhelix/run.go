@@ -56,6 +56,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/response"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/autobaseline"
+	"github.com/xhelix/xhelix/pkg/burstdet"
 	"github.com/xhelix/xhelix/pkg/runtimeallow"
 	"github.com/xhelix/xhelix/pkg/vendorcatalog"
 	"github.com/xhelix/xhelix/pkg/vhostdiscovery"
@@ -1170,6 +1171,22 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	var intelMgr *intel.Manager
 	if cfg.Intel.Enabled {
 		intelMgr = intel.NewManager(intel.DefaultFeeds, filepath.Join(cfg.Agent.StateDir, "intel"), log)
+		// Seed with baked-in static IOCs (Megalodon C2, TeamTNT
+		// cryptominer infra, Outlaw, etc.) so outbound_to_known_bad
+		// fires on day-1 without waiting for the Spamhaus feed to
+		// refresh. Operator-overridable via /etc/xhelix/iocs.yaml.
+		for _, p := range []string{
+			"/etc/xhelix/iocs.yaml",
+			"/usr/share/xhelix/ruleset/iocs/static.yaml",
+			"ruleset/iocs/static.yaml",
+		} {
+			if ips, err := intel.LoadStaticFile(p); err != nil {
+				log.Warn("ioc load failed", "path", p, "err", err)
+			} else if len(ips) > 0 {
+				added := intelMgr.AddStatic(ips)
+				log.Info("static iocs seeded", "path", p, "added", added)
+			}
+		}
 		intelMgr.Start(ctx)
 		log.Info("threat intel started")
 	}
@@ -1676,6 +1693,32 @@ func dispatch(
 		}()
 	}
 
+	// Burst detectors (P-AB.13). Wired with default thresholds:
+	// 80 file-opens in 10s = "credential scan"; 20 spawns in 10s
+	// = "process-recon loop". Both have 60s cooldown per PID so a
+	// sustained burst from one attacker doesn't flood Slack.
+	fileBurstT, spawnBurstT := burstdet.Defaults()
+	fileBurst := burstdet.NewCounter(fileBurstT)
+	spawnBurst := burstdet.NewCounter(spawnBurstT)
+	// Sweep dead PIDs every 5 min so dropped exit events don't
+	// leak memory.
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				fileBurst.Sweep(time.Now(), 10*time.Minute)
+				spawnBurst.Sweep(time.Now(), 10*time.Minute)
+			}
+		}
+	}()
+	log.Info("burst detectors configured",
+		"file_window", fileBurstT.Window, "file_count", fileBurstT.Count,
+		"spawn_window", spawnBurstT.Window, "spawn_count", spawnBurstT.Count)
+
 	p := &pipeline.Pipeline{
 		Log:              log,
 		HotStore:         hot,
@@ -1700,6 +1743,8 @@ func dispatch(
 		ColdStore:        coldStore,
 		RuntimeAllow:     ra,
 		AutoBaseline:     abMgr,
+		FileReadBurst:    fileBurst,
+		SpawnBurst:       spawnBurst,
 		Emit:             emit,
 	}
 	p.Run(ctx, events)

@@ -1,0 +1,103 @@
+# Per-rule detection-class map.
+#
+# Bucket every shipped rule into one of three classes for the
+# per-class FP metric described in
+# docs/LOW_FALSE_POSITIVE_ARCHITECTURE_2026-05-21.md §3+§12:
+#
+#   1 = hard invariant       (auto-deny candidate;   FP target <0.1%)
+#   2 = strong exploit signal (freeze candidate;     FP target <0.5%)
+#   3 = soft behavior drift   (alert-only;           FP target <5%)
+#
+# This file is separate from the rule YAMLs so:
+#  - detection logic stays in the rule
+#  - policy / FP-class stays here (one place to tune)
+#  - operators can edit class without touching the rule body
+#
+# Loader behaviour: any rule_id NOT listed here defaults to class 3
+# (alert-only) so untagged rules don't accidentally get auto-block
+# treatment.
+
+class_1:  # Hard invariants — auto-deny candidates
+  # System-file integrity. These targets never have a legitimate
+  # writer outside the system-tool allowlist baked into the rules.
+  - tamper_passwd
+  - tamper_shadow
+  - ld_so_preload_modified
+  - ld_so_conf_modified
+  - ssh_key_added_root
+  - pam_module_drop
+  - boot_artifact_modified
+  - kernel_module_dropped
+  - kernel_module_load
+  - package_diff_critical_binary
+  # Cron / persistence — high-confidence indicators when triggered
+  # by web-uid or with malware shape.
+  - cron_web_user_added
+  - cron_malware_shape
+  - user_crontab_modified
+  - rc_local_modified
+  - ssh_login_hook_dropped
+  # Process-level hard invariants. Web worker should NEVER do these.
+  - web_server_spawns_shell
+  - web_user_runs_db_client
+  - uid0_no_transition
+  - shell_with_socket_fd
+  - ssh_tunnel_listener
+  # Container escape — never legitimate.
+  - mount_host_root_into_container
+  - container_escape_attempt
+  # Decoy / canary touch — adversarial by construction.
+  - decoy_file_opened
+  - decoy_service_connect
+  - decoy_canary_token_used
+  - decoy_dns_resolved
+  # Self-defence — xhelix's own binary tamper.
+  - tamper.binary_mtime
+  - tamper.binary_inode
+  - tamper.binary_missing
+  - tamper.pidfile
+  - tamper.auditd_dead
+  # Kernel-integrity.
+  - kallsyms_changed
+  - modules_changed
+  - syscall_address_drift
+
+class_2:  # Strong exploit signals — freeze candidates
+  # Memory-execution primitives.
+  - mem_mprotect_rwx
+  - mem_canary_fail
+  - mem_lkrg_violation
+  - memfd_run_pattern
+  - deleted_binary_running
+  - thread_outside_module
+  # Process-injection / debug abuse.
+  - ptrace_sensitive_target
+  - tamper.ptrace
+  # Dropper / unknown-binary patterns.
+  - binary_runs_from_tmp
+  - download_then_run
+  - first_seen_image_exec
+  # Auth bursts.
+  - ssh_brute_then_success
+  # bpf abuse.
+  - bpf_syscall_unexpected
+  # File integrity that crosses a hard line but is rarer than class_1.
+  - shell_rc_modified
+  - profile_d_dropped
+  - webroot_bootstrap_modified
+  - webroot_mu_plugin_dropped
+  - docker_compose_modified
+  - kube_manifest_modified
+  - env_secret_read_by_web
+  # Memory kernel anomaly.
+  - mem_kernel_anomaly
+
+# Everything else defaults to class 3 (soft drift / alert-only):
+# baseline.behavioural_deviation, baseline.rate_spike,
+# beacon.periodic_callback, brand.lookalike, dnsexfil.tunnel_pattern,
+# hosts_allow_deny_modified, sysctl_drift, xdg_autostart_dropped,
+# cron_new_unit (catches many legitimate package installs),
+# binary_runs_from_tmp (medium FP risk),
+# netids.dga, outbound_to_known_bad (lives in netban),
+# observers.* (heartbeat / config-witness), and any future
+# untagged rule.
