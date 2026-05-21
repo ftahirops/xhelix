@@ -832,6 +832,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			log.Warn("class_map load failed (all rules default to class 3)", "err", cmErr)
 		} else {
 			cm.ApplyTo(bundledRules)
+			// Re-stamp Class on every persisted soak record that
+			// was written before class_map became authoritative.
+			// Without this, records loaded from soak.json keep
+			// Class=0 (legacy) and skew the per-class FP table.
+			soak.Reclassify(cm.Lookup)
 		}
 		if err := ruleEngine.Load(bundledRules); err != nil {
 			log.Warn("failed to compile bundled rules", "err", err)

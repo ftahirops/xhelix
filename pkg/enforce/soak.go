@@ -172,6 +172,26 @@ func (s *Soak) Promotable(ruleID string, now time.Time) (bool, *Record) {
 	return cp.ConsecutiveCleanDays >= s.MinCleanDays, &cp
 }
 
+// Reclassify rewrites the Class field on every persisted Record
+// using the supplied lookup function. Called at daemon startup
+// after LoadFrom so records persisted before class_map.yaml was
+// authoritative get correctly bucketed for the per-class metric.
+//
+// classOf returns the rule's class (1/2/3); 0 means "unknown,
+// leave existing record's class unchanged".
+func (s *Soak) Reclassify(classOf func(ruleID string) int) {
+	if s == nil || classOf == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, r := range s.records {
+		if c := classOf(id); c > 0 {
+			r.Class = c
+		}
+	}
+}
+
 // Snapshot returns a copy of every record. Useful for the TUI.
 func (s *Soak) Snapshot() []Record {
 	s.mu.RLock()
