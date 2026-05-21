@@ -16,7 +16,10 @@ import (
 	"github.com/xhelix/xhelix/sensors"
 )
 
-// Sensor periodically verifies file integrity against a baseline.
+// Sensor combines real-time inotify file-watching (sub-second event
+// emission on create/write/delete/move) with a periodic SHA256
+// baseline verifier (catches drift accumulated while the daemon
+// was down or via VFS-bypassing writes).
 type Sensor struct {
 	dbPath     string
 	watchPaths []string
@@ -30,6 +33,11 @@ type Sensor struct {
 	baseline *fim.Baseline
 	healthy  atomic.Bool
 	reason   string
+
+	// inotifyArmed records how many paths the real-time watcher
+	// successfully bound to. Surfaces via Health() so operators
+	// can confirm inotify isn't silently disabled.
+	inotifyArmed int
 }
 
 // NewSensor creates a FIM sensor.
@@ -76,6 +84,16 @@ func (s *Sensor) Start(parent context.Context, out chan<- model.Event) error {
 		s.healthy.Store(true)
 	}
 
+	// Real-time inotify watcher (Linux only — see inotify_linux.go).
+	// Soft-fails to periodic-only on non-Linux or if inotify_init
+	// is unavailable (rare; CONFIG_INOTIFY_USER is on in every
+	// stock kernel).
+	if armed, err := s.startInotify(ctx); err != nil {
+		s.reason = s.reason + "; inotify off: " + err.Error()
+	} else {
+		s.inotifyArmed = armed
+	}
+
 	go s.loop(ctx)
 	return nil
 }
@@ -96,9 +114,13 @@ func (s *Sensor) Stop(ctx context.Context) error {
 
 // Health implements sensors.Sensor.
 func (s *Sensor) Health() sensors.Health {
+	r := s.reason
+	if s.inotifyArmed > 0 {
+		r = fmt.Sprintf("%s; inotify=%d paths", r, s.inotifyArmed)
+	}
 	return sensors.Health{
 		Healthy: s.healthy.Load(),
-		Reason:  s.reason,
+		Reason:  r,
 	}
 }
 
@@ -136,6 +158,20 @@ func (s *Sensor) verify(ctx context.Context) {
 		ev.Host = s.host
 		ev.Tags["path"] = d.Path
 		ev.Tags["reason"] = d.Reason
+		// Stamp the boolean tags rules look for so periodic drift
+		// events match the same predicates as real-time inotify
+		// events. Without these, every existing FIM rule that
+		// checks event.tags["write"] / ["create"] was dormant on
+		// the periodic path. Reason-string mapping:
+		switch d.Reason {
+		case "missing":
+			ev.Tags["delete"] = "true"
+		case "new":
+			ev.Tags["create"] = "true"
+		default:
+			// "hash-changed", "size-changed", etc. → treat as write.
+			ev.Tags["write"] = "true"
+		}
 		if d.Got.SHA256 != "" {
 			ev.Tags["sha256"] = d.Got.SHA256
 		}
