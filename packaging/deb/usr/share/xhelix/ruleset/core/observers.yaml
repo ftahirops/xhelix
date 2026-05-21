@@ -15,7 +15,9 @@ remediation: |
 ---
 id: fim.drift
 desc: Any FIM drift event
-severity: high
+# Observer rule for harness verification. severity=info — see source
+# tree ruleset/core/observers.yaml for rationale.
+severity: info
 match: |
   event.sensor == "fim.drift"
 tags: [observer]

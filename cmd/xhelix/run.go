@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -130,6 +132,33 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	} {
 		cfgAudit.Declare(k)
 	}
+	// Singleton check — refuse to start if another xhelix is already
+	// running, identified by the PID file. Added P-PS.25 after the
+	// mixed-traffic drill found three daemons racing on hot.db.
+	// PID-file write happens here so subsequent xhelix's see us.
+	if pidPath := cfg.Agent.PIDFile; pidPath != "" {
+		if data, err := os.ReadFile(pidPath); err == nil {
+			pidStr := strings.TrimSpace(string(data))
+			if pidStr != "" {
+				if existing, err := strconv.Atoi(pidStr); err == nil && existing > 0 {
+					if commData, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", existing)); err == nil {
+						if strings.TrimSpace(string(commData)) == "xhelix" {
+							return fmt.Errorf("xhelix already running (pid %d via %s); refuse to start second instance", existing, pidPath)
+						}
+					}
+				}
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(pidPath), 0o750); err == nil {
+			if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+				log.Warn("could not write pidfile", "path", pidPath, "err", err)
+			} else {
+				defer os.Remove(pidPath)
+			}
+		}
+		cfgAudit.Witness("agent.pid_file", "singleton-check")
+	}
+
 	log.Info("xhelix starting",
 		"preset", cfg.Preset,
 		"config", cfgPath,

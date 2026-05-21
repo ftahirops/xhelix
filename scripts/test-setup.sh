@@ -126,6 +126,15 @@ ruleset:
 
 alerts:
   severity_threshold: info     # surface everything
+  sinks:
+    - kind: stdout
+    - kind: file
+      path: /var/log/xhelix/alerts.jsonl
+      rotate_size_mb: 100
+      keep: 7
+  rate_limit:
+    per_rule_per_minute: 600
+    global_per_second: 5000
 
 # Response engine — monitor_mode forces every alert to ActionLog +
 # ActionWebhook only. No quarantine, kill, netban, or remediate.
@@ -238,6 +247,27 @@ EOF
     chmod 0640 "$CONFIG_FILE"
 }
 
+kill_all_xhelix_daemons() {
+    # P-PS.25: pkill against /usr/local/bin/xhelix doesn't match
+    # daemons launched as ./xhelix (relative). Match the run command
+    # invariant instead.
+    local pids
+    pids=$(pgrep -f 'xhelix run --config' 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+        log "  killing existing xhelix daemons: $pids"
+        # shellcheck disable=SC2086
+        kill -TERM $pids 2>/dev/null || true
+        sleep 2
+        # Hard-kill anything still up
+        pids=$(pgrep -f 'xhelix run --config' 2>/dev/null || true)
+        if [[ -n "$pids" ]]; then
+            # shellcheck disable=SC2086
+            kill -9 $pids 2>/dev/null || true
+            sleep 1
+        fi
+    fi
+}
+
 restart_xhelix() {
     log "restarting xhelix daemon"
     if systemctl is-active --quiet xhelix.service 2>/dev/null; then
@@ -249,14 +279,28 @@ restart_xhelix() {
             log "  xhelix systemd unit running"
         fi
     else
-        # No systemd unit — run in background with output to log
+        # No systemd unit — ensure singleton, then run in background
+        kill_all_xhelix_daemons
         log "  no systemd unit found, starting xhelix in background"
+        # Do NOT pre-write the pidfile: the daemon's own singleton
+        # check (P-PS.25) reads the pidfile to detect a prior
+        # instance. If we write our backgrounded pid here, the
+        # daemon sees its own pid and refuses to start. The daemon
+        # writes the pidfile itself after the singleton check.
         nohup "$XHELIX_BIN" run --config "$CONFIG_FILE" \
             > "$LOG_DIR/xhelix.out" 2>&1 &
-        echo $! > "$RUN_DIR/xhelix.pid"
-        sleep 2
-        if kill -0 "$(cat "$RUN_DIR/xhelix.pid")" 2>/dev/null; then
-            log "  xhelix running, pid $(cat "$RUN_DIR/xhelix.pid")"
+        # Remember our $! for the immediate kill check below
+        LAUNCHED_PID=$!
+        sleep 3
+        # Verify exactly ONE daemon is now running
+        local count
+        count=$(pgrep -cf 'xhelix run --config' 2>/dev/null || echo 0)
+        if [[ "$count" != "1" ]]; then
+            warn "  expected 1 xhelix daemon, found $count"
+            pgrep -af 'xhelix run --config'
+        fi
+        if kill -0 "$LAUNCHED_PID" 2>/dev/null; then
+            log "  xhelix running, pid $LAUNCHED_PID"
         else
             die "  xhelix failed to start — see $LOG_DIR/xhelix.out"
         fi
