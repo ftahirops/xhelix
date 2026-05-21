@@ -34,6 +34,7 @@ func main() {
 	root.AddCommand(newTakeoverCmd())
 	root.AddCommand(newStatusCmd())
 	root.AddCommand(newReportCmd())
+	root.AddCommand(newCredbrokerCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
