@@ -10,6 +10,7 @@ VFY := xhelix-verify
 HSH := xhelix-honeysh
 SNK := xhelix-sinkhole
 DNS := xhelix-dnspoison
+WD  := xhelix-watchdog
 DIST := dist
 
 .PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux
@@ -39,6 +40,7 @@ build:
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(HSH) ./cmd/xhelix-honeysh
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(SNK) ./cmd/xhelix-sinkhole
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DNS) ./cmd/xhelix-dnspoison
+	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(WD)  ./cmd/xhelix-watchdog
 
 race:
 	go test -race -count=1 ./...
@@ -70,7 +72,7 @@ tidy:
 	go mod tidy
 
 clean:
-	rm -f $(BIN) $(CTL) $(VFY) $(HSH) $(SNK) $(DNS)
+	rm -f $(BIN) $(CTL) $(VFY) $(HSH) $(SNK) $(DNS) $(WD)
 	rm -rf $(DIST)
 
 deb: build

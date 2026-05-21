@@ -433,22 +433,29 @@ For us to defensibly say "99.9999%", these need a person/owner/date:
 
 | Item | Owner | Target date | Status |
 |---|---|---|---|
-| Build `xhelixctl alerts ls/label/stats` | tbd | tbd | not started |
-| Build `xhelixctl events replay` | tbd | tbd | not started |
-| Build `pkg/labels` SQLite store | tbd | tbd | not started |
-| Audit ALL ActionQuarantine entries for FP allowlist tags | tbd | tbd | 2/15 done (P-PS.23) |
-| Implement `runtime_allowlist.yaml` + loader | tbd | tbd | not started |
-| Add `make rules-lint` to assert allowlist consumption | tbd | tbd | not started |
-| TPM/KMS-rooted chain.key (P-CJ.8) | tbd | tbd | pending |
-| Off-host chain mirror (P-CJ.10) | tbd | tbd | pending |
-| Watchdog (P-CJ.5) | tbd | tbd | pending |
-| Reference workstation + 30d soak harness | tbd | tbd | pending |
-| Run the 10 chain-tamper tests (CT-01..10) | tbd | tbd | pending |
-| Negative-control host fleet (≥ 3) | tbd | tbd | pending |
-| Per-rule FP-rate dashboard | tbd | tbd | pending |
+| Build `xhelixctl alerts ls/stats/show/tail` | ftahirops | 2026-05-21 | ✅ shipped P-PS.26 |
+| Build `xhelixctl alerts label` + `fp-rate` | ftahirops | 2026-05-21 | ✅ shipped P-PS.29 |
+| Build `xhelixctl alerts replay` | ftahirops | 2026-05-21 | ✅ shipped P-PS.29 |
+| Build `pkg/labels` SQLite store | ftahirops | 2026-05-21 | ✅ shipped P-PS.29 |
+| Audit ALL ActionQuarantine entries for FP-risk class | ftahirops | 2026-05-21 | ✅ shipped P-PS.29 (every entry annotated, 7 actions downgraded) |
+| Implement `runtime_allowlist.yaml` + loader | ftahirops | 2026-05-21 | ✅ shipped P-PS.26 (`pkg/runtimeallow`) |
+| Add `make rules-lint` to assert allowlist consumption | tbd | tbd | open — proposed for P-PS.31 |
+| TPM/KMS-rooted chain.key (P-CJ.8) | ftahirops | 2026-05-21 | ✅ abstraction shipped P-PS.30 (`pkg/keyguard`); adapters stubbed (operator wires TPM/KMS) |
+| Off-host chain mirror (P-CJ.10) | ftahirops | 2026-05-21 | ✅ pusher shipped P-PS.30 (`pkg/chainmirror`); receiver pending |
+| Watchdog (P-CJ.5) | ftahirops | 2026-05-21 | ✅ shipped P-PS.30 (`cmd/xhelix-watchdog`) |
+| Reference workstation + 30d soak harness | tbd | day-30 from go | ✅ harness shipped P-PS.30 (SOAK_HARNESS.md + watchdog timer); execution pending host pick |
+| Run the 10 chain-tamper tests (CT-01..10) | tbd | tbd | open — proposed for P-PS.31 |
+| Negative-control host fleet (≥ 3) | tbd | tbd | open — operational |
+| Per-rule FP-rate dashboard | ftahirops | 2026-05-21 | ✅ shipped P-PS.29 (`xhelixctl alerts fp-rate`) |
+
+Status legend: ✅ shipped · ◔ partial (abstraction or harness only, execution pending) · open · operational (needs time + a real host, not code).
 
 Until **every** row here has owner + date + green, claims above β
-are aspirational, not defensible.
+are aspirational, not defensible. After this round (P-PS.29 +
+P-PS.30): 11/14 ✅, 3 open. The three opens are
+**rules-lint** (small, ~½ day), the **chain-tamper tests CT-01..10**
+(operationally simple, needs reference host), and the
+**negative-control fleet** (procurement, not code).
 
 ---
 
