@@ -374,6 +374,41 @@ func (e *Engine) OnAlert(a model.Alert) {
 		}
 	}
 
+	// Autobaseline gate (P-AB.3). Two cases:
+	//
+	//   1. baseline_observing=true — we're in the day-0 silent
+	//      window. Destructive actions are NEVER acceptable here:
+	//      we're explicitly trying to learn what's normal, and
+	//      destroying a process we haven't characterised yet would
+	//      either (a) train the operator that xhelix is dangerous
+	//      to install or (b) destroy the very evidence we're
+	//      collecting. Strip to log+webhook (same as monitor mode).
+	//
+	//   2. baseline_known=true — the event's (image, behavior)
+	//      pair was observed during the day-0 window and is in the
+	//      sealed profile. The action falls inside the binary's
+	//      learned envelope. This is the "noise" axis only: we
+	//      strip destructive actions but keep snapshot/memscan so
+	//      operators retain evidence. Tier-1 deterministic facts
+	//      (canary touch, decoy access) still bypass this — those
+	//      rules don't carry baseline_known because the behavior
+	//      we're keying on (decoy touch) is not something a
+	//      legitimate binary ever did during observe.
+	if tags := a.Event.Tags; tags != nil {
+		if tags["baseline_observing"] == "true" {
+			mask &= ActionLog | ActionWebhook
+			if mask == 0 {
+				mask = ActionLog
+			}
+		} else if tags["baseline_known"] == "true" {
+			// Keep evidence-collection actions, strip destructive.
+			mask &= ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan
+			if mask == 0 {
+				mask = ActionLog
+			}
+		}
+	}
+
 	// Order matters:
 	//   1. Snapshot + memscan FIRST — they read from a live process,
 	//      and Quarantine/Kill destroys the process state.
