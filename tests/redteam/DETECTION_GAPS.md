@@ -188,6 +188,77 @@ bottom with the commit hash and date that fixed it.
 
 ---
 
+---
+
+## New gaps discovered Phase-2 (host-only FP testing, 2026-05-21)
+
+### Daemon/process management
+
+| ID | Class | Detail | Impact | Plan |
+|---|---|---|---|---|
+| GAP-130 | G-CFG | `scripts/test-setup.sh` does not enforce single-instance — re-running with an old daemon alive leaves TWO `xhelix run` processes racing on `hot.db`. Manifests as `SQLITE_BUSY` warnings flooding the log. | high | enforce pidfile lock in run.go OR have test-setup.sh hard-kill old daemon |
+| GAP-131 | G-CFG | hot.db is the locked file, but cold.db / fim.db / history.db all face the same risk under concurrent run | high | add `BUSY_TIMEOUT 5000` PRAGMA + serialize writers |
+| GAP-132 | G-FP | `cap.gained` fires on every `sudo` invocation — including the operator's own. Caps gained are exactly what sudo is designed to do. | medium | rule needs allowlist for `parent_image=/usr/bin/sudo` or `uid_transition=0` corroboration |
+
+### Host-only FP corpus results (2026-05-21)
+
+| Workload | Alerts fired | Verdict |
+|---|---|---|
+| `node -e` short script | many `memfd_run_pattern` + `mem_mprotect_rwx` | **alert-only ✅ post P-PS.23** (FP-grenade defused) |
+| `node http.createServer` 8s | many `mem_mprotect_rwx` (JIT) | alert-only ✅ |
+| `dotnet --list-runtimes` | 0 | clean ✅ |
+| `python3 -c` inline import | 0 | clean ✅ |
+| `python3 -m venv` | 0 | clean ✅ |
+| `perl -e` inline | 0 | clean ✅ |
+| `go env GOROOT` | 0 | clean ✅ |
+| `apt list --installed` | 0 | clean ✅ |
+| `dpkg -l` | 0 | clean ✅ |
+| `snap list` | 0 | clean ✅ |
+| `systemctl list-units` | 0 | clean ✅ |
+| `journalctl -n 5` | 0 | clean ✅ |
+| `nslookup` | 0 | clean ✅ |
+| `find /etc` | 0 | clean ✅ |
+| `grep -r /etc` | 0 | clean ✅ |
+| `ss -tnlp`, `ip a` | 0 | clean ✅ |
+| `strace -c /bin/true` | 0 | clean ✅ |
+| `ltrace -c /bin/true` | 0 | clean ✅ |
+| `git log + status` | 0 | clean ✅ |
+| `sudo <anything>` | `cap.gained` | ⚠️ **GAP-132** — noisy on every sudo |
+
+### What this means
+
+Host-level FP corpus (non-container, non-JIT) is **near-clean**. The
+only categories still firing are:
+- JIT runtimes (alert-only post P-PS.23 — by design until allowlist is wired)
+- Every `sudo` invocation (GAP-132 — needs rule allowlist for sudo parent)
+- Container-side runc/cgroup operations (out of scope this phase; documented in coverage matrix §3.1)
+
+This is good news for **non-container, non-JIT workloads** — they
+don't hit FP-grenades in monitor mode. Whether they are safe in
+enforce mode depends entirely on the per-rule action-mask audit
+(ALERTS_AND_FP_PLAN.md §4).
+
+### TP variants attempted this round
+
+| Variant | Outcome |
+|---|---|
+| Reverse-shell pattern `bash /dev/tcp/127.0.0.1/9999` | should produce `shell_with_socket_fd` |
+| `os.memfd_create + execv` in python | should produce `memfd_run_pattern` |
+| `base64 -d \| sh` chain | should produce cooccur if URL also seen |
+| FIM write to `/etc/cron.d/x` | should produce `cron_new_unit` |
+| `/etc/ld.so.preload.test` write | should produce `ld_so_preload_modified` |
+| `ptrace ATTACH` from python | should produce `ptrace_sensitive_target` |
+| `process_vm_readv` cross-pid | should produce NeverLearnable signal |
+
+Empirical result blocked by **GAP-130 concurrent-daemon SQLITE_BUSY**.
+Re-run after fixing daemon-singleton.
+
+---
+
 ## Closed gaps
 
-(none yet — populated as we resolve.)
+| ID | Closed in | Detail |
+|---|---|---|
+| GAP-01 (partial) | 4f5233b (P-PS.23) | `memfd_run_pattern` ActionQuarantine removed; alert+snapshot+memscan only |
+| GAP-02 (partial) | 4f5233b (P-PS.23) | `mem_mprotect_rwx` ActionQuarantine removed |
+| GAP-monitor-mode | 4f5233b (P-PS.23) | `response.monitor_mode` config flag + Engine short-circuit to Log+Webhook only |
