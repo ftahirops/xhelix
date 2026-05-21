@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/xhelix/xhelix/pkg/localapi"
 )
 
 // alertRow is the on-disk row shape in /var/log/xhelix/alerts.jsonl.
@@ -53,6 +55,59 @@ func newAlertsCmd() *cobra.Command {
 	cmd.AddCommand(newLabelSubcommand())   // P-PS.29: alerts label
 	cmd.AddCommand(newFPRateSubcommand())  // P-PS.29: alerts fp-rate
 	cmd.AddCommand(newReplaySubcommand())  // P-PS.29: alerts replay
+	cmd.AddCommand(newAlertsTestWebhookCmd()) // P-AB.5: alerts test-webhook
+	return cmd
+}
+
+// newAlertsTestWebhookCmd publishes a synthetic alert through the
+// running daemon's bus so file/stdout/webhook sinks ALL receive it.
+// Use to verify Slack/webhook wiring without waiting for a real
+// detection. Goes through response.OnAlert so the autobaseline +
+// monitor_mode gates are also exercised.
+func newAlertsTestWebhookCmd() *cobra.Command {
+	var (
+		sock     string
+		ruleID   string
+		severity string
+		reason   string
+	)
+	cmd := &cobra.Command{
+		Use:   "test-webhook",
+		Short: "Fire a synthetic alert through the live bus (smoke-test sinks)",
+		Long: `Publishes a fake alert through the running daemon's alert bus.
+File sink, stdout sink, and webhook sink all receive it. The response
+engine sees it too — so monitor_mode and autobaseline gates are
+exercised. Use after configuring a new webhook to confirm wiring.
+
+Examples:
+  xhelixctl alerts test-webhook
+  xhelixctl alerts test-webhook --severity=critical --rule=demo.canary
+  xhelixctl alerts test-webhook --reason="testing slack from prod"`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+
+			req := map[string]string{
+				"rule_id":  ruleID,
+				"severity": severity,
+				"reason":   reason,
+			}
+			var resp map[string]any
+			if err := c.Call("alerts.test_fire", req, &resp); err != nil {
+				return fmt.Errorf("test_fire: %w", err)
+			}
+			b, _ := json.MarshalIndent(resp, "", "  ")
+			fmt.Println(string(b))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", defaultSock, "path to xhelix LocalAPI socket")
+	cmd.Flags().StringVar(&ruleID, "rule", "test.synthetic", "rule_id to stamp on the synthetic alert")
+	cmd.Flags().StringVar(&severity, "severity", "high", "severity: info|notice|warn|high|critical")
+	cmd.Flags().StringVar(&reason, "reason", "", "human reason text (default: built-in)")
 	return cmd
 }
 

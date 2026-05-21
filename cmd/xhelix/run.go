@@ -1066,6 +1066,13 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	apiSrv.RegisterHandler("enforce.disarm", func(_ context.Context, _ json.RawMessage) (any, error) {
 		return enforceDisarm(enfCtx)
 	})
+	// alerts.test_fire (P-AB.5): publish a synthetic Alert through the
+	// real bus so file/stdout/webhook sinks AND the response engine
+	// process it end-to-end. Operator's smoke-test for "is my Slack
+	// webhook actually wired up?" without needing a real attack.
+	apiSrv.RegisterHandler("alerts.test_fire", func(_ context.Context, raw json.RawMessage) (any, error) {
+		return testFireAlert(bus, hostnameOrEmpty(), raw)
+	})
 	registerFoundationHandlers(apiSrv, foundation)
 	if err := apiSrv.Start(ctx); err != nil {
 		log.Warn("LocalAPI failed to start", "err", err)
