@@ -80,6 +80,7 @@ import (
 	"github.com/xhelix/xhelix/sensors/identity"
 	"github.com/xhelix/xhelix/sensors/lsmaudit"
 	"github.com/xhelix/xhelix/sensors/memory"
+	procmemsensor "github.com/xhelix/xhelix/sensors/procmem"
 	netidssensor "github.com/xhelix/xhelix/sensors/netids"
 	"github.com/xhelix/xhelix/ui/web"
 )
@@ -1250,6 +1251,18 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		dmesg := memory.NewDmesgWatcher("", hostname)
 		activeSensors = append(activeSensors, dmesg)
 		log.Info("memory sensor configured")
+
+		// procmem (P-AB.11) — periodic /proc walk for:
+		//   - deleted-binary-still-running (curl|sh + rm self
+		//     droppers, memfd replay patterns)
+		//   - thread-outside-module (anonymous-exec shellcode,
+		//     reflective loaders, Cobalt Strike / Sliver beacons)
+		// JIT runtimes exempted via the same runtimeallow.Set
+		// that the pipeline uses for jit_allowlisted tagging.
+		procmemRA, _ := runtimeallow.LoadFile("/etc/xhelix/runtime-allowlist.yaml")
+		pms := procmemsensor.NewSensor(hostname, 60*time.Second, procmemRA)
+		activeSensors = append(activeSensors, pms)
+		log.Info("procmem sensor configured", "interval", "60s")
 	}
 
 	// Decoy sensors

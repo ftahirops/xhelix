@@ -184,3 +184,44 @@ remediation: |
   outside startup, suggest exfil. Correlate against autobaseline
   (post-seal: a worker reading these mid-request is novel).
 test_id: K-07
+---
+# ─── P-AB.11 memory-execution detection (Doc 2 gaps) ──────────
+id: deleted_binary_running
+desc: Process is executing from a binary the kernel reports as (deleted)
+severity: critical
+mitre: [T1070.004, T1620]
+match: |
+  event.sensor == "procmem" &&
+  event.tags["kind"] == "deleted_exe"
+tags: [post_exploitation, dropper, fileless]
+remediation: |
+  Classic dropper pattern: the binary was unlinked while the
+  process kept running. Common with "curl|sh && rm self", memfd
+  replay loaders, and packed-payload chains. The unlink hides the
+  artefact from forensic file-system scans but the loaded text
+  segment is still in memory. Capture process memory before kill.
+  Pair with autobaseline's baseline_known check — if the image is
+  in the sealed profile it's likely a benign self-update; if not,
+  treat as live compromise.
+test_id: PMEM-01
+---
+id: thread_outside_module
+desc: A thread is executing from anonymous (non-file-backed) memory
+severity: critical
+mitre: [T1055, T1620]
+match: |
+  event.sensor == "procmem" &&
+  event.tags["kind"] == "thread_outside_module"
+tags: [post_exploitation, injection, fileless]
+remediation: |
+  The thread's current PC is inside an anonymous executable
+  mapping, not in any loaded shared library or main binary. This
+  is the steady-state signature of injected shellcode — reflective
+  DLL/.so loaders, Cobalt Strike beacons, Sliver implants, Meterp
+  payloads. JIT runtimes (Java, Node, .NET, PyPy) legitimately
+  produce this and are exempted via the runtime allowlist. If
+  this fires on a non-JIT binary (nginx, sshd, mysqld, an app
+  worker), treat as near-certain compromise and capture
+  /proc/<pid>/maps + /proc/<pid>/mem region around the offending
+  PC immediately.
+test_id: PMEM-02
