@@ -31,6 +31,9 @@ func main() {
 	root.AddCommand(newProtectCmd())
 	root.AddCommand(newForensicCmd())
 	root.AddCommand(newAlertsCmd())
+	root.AddCommand(newTakeoverCmd())
+	root.AddCommand(newStatusCmd())
+	root.AddCommand(newReportCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
