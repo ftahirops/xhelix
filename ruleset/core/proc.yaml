@@ -125,3 +125,62 @@ match: |
 tags: [post_exploitation, dropper]
 remediation: Inspect the URL the downloader contacted and the dropped binary.
 test_id: K-04
+---
+# ─── P-AB.7 backbone-persistence pack ──────────────────────────
+id: ssh_tunnel_listener
+desc: SSH invoked with port-forwarding flags (-R / -L / -D)
+severity: high
+mitre: [T1572, T1090.001]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.tags["kind"] == "proc_spawn" &&
+  event.comm in ["ssh", "sshd", "autossh"] &&
+  size(event.argv) > 1 &&
+  event.argv.exists(a, a.startsWith("-R") || a.startsWith("-L") || a.startsWith("-D"))
+tags: [post_exploitation, c2]
+remediation: |
+  SSH port-forwards are a classic stealthy C2 / lateral-movement
+  channel — encrypted, uses an existing trusted process, often
+  survives reboot via systemd. -R = reverse (most suspicious;
+  attacker opens a port on your host from theirs), -D = SOCKS
+  proxy. Inspect the user, the remote endpoint, the systemd unit
+  if any.
+test_id: NET-02
+---
+id: web_user_runs_db_client
+desc: A database client was invoked by a webserver / php-fpm worker
+severity: high
+mitre: [T1059, T1505]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.tags["kind"] == "proc_spawn" &&
+  event.comm in ["mysql", "mysqldump", "psql", "mongo", "mongodump", "redis-cli"] &&
+  event.tags["parent_comm"] in ["nginx", "apache2", "httpd", "php-fpm", "caddy", "lighttpd"]
+tags: [post_exploitation, credential_access, web]
+remediation: |
+  A web worker spawning a DB client almost always means RCE via
+  PHP system()/exec(). Legitimate apps use the DB driver, not the
+  shell client. Inspect the request that triggered this and the
+  client's argv (-e '<sql>' often contains the payload).
+test_id: K-06
+---
+id: env_secret_read_by_web
+desc: A web worker opened a known secret file (.env / wp-config.php / config.php)
+severity: warn
+mitre: [T1552.001]
+match: |
+  event.sensor == "ebpf.proc" &&
+  event.tags["kind"] == "file_open" &&
+  event.tags["parent_comm"] in ["nginx", "apache2", "httpd", "php-fpm"] &&
+  (event.tags["path"].endsWith("/.env") ||
+   event.tags["path"].endsWith("/wp-config.php") ||
+   event.tags["path"].endsWith("/configuration.php") ||
+   event.tags["path"].endsWith("/config.inc.php") ||
+   event.tags["path"].endsWith("/settings.php"))
+tags: [credential_access, web]
+remediation: |
+  Legitimate workers DO read these files at startup. The signal is
+  WHEN — repeated reads from a single PID mid-request, or reads
+  outside startup, suggest exfil. Correlate against autobaseline
+  (post-seal: a worker reading these mid-request is novel).
+test_id: K-07

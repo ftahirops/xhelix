@@ -127,3 +127,204 @@ match: |
 tags: [persistence, web]
 remediation: Inspect file content; correlate with web access logs.
 test_id: FIM-03
+---
+# ─── P-AB.7 backbone-persistence pack ──────────────────────────
+id: user_crontab_modified
+desc: A per-user crontab was created or modified
+severity: high
+mitre: [T1053.003]
+match: |
+  event.sensor == "fim" &&
+  (path.startsWith("/var/spool/cron/crontabs/") ||
+   path.matches("^/var/spool/cron/[^/]+$"))
+tags: [persistence]
+remediation: |
+  Per-user crontabs are a top-10 re-entry vector. Check the
+  ownership of the file vs the named user; cron entries can include
+  `MAILTO=` to hide output. `crontab -u <user> -l` shows the entry.
+test_id: FIM-04
+---
+id: shell_rc_modified
+desc: A system or per-user shell-startup file was modified
+severity: high
+mitre: [T1546.004]
+match: |
+  event.sensor == "fim" &&
+  (path == "/etc/bash.bashrc" ||
+   path == "/etc/bashrc" ||
+   path == "/etc/profile" ||
+   path == "/etc/zshrc" ||
+   path == "/etc/zsh/zshrc" ||
+   path == "/etc/zsh/zlogin" ||
+   path == "/etc/zsh/zprofile" ||
+   path == "/etc/zsh/zshenv" ||
+   path.matches("^/(root|home/[^/]+)/\\.(bashrc|bash_profile|bash_login|profile|zshrc|zshenv|zprofile|bash_logout)$"))
+tags: [persistence, hijack]
+remediation: |
+  Shell rc files run on every interactive login. Diff against
+  backup or package manifest. Common implant pattern: a single
+  appended line that curls + bashes a payload.
+test_id: FIM-04
+---
+id: profile_d_dropped
+desc: New file dropped into /etc/profile.d
+severity: high
+mitre: [T1546.004]
+match: |
+  event.sensor == "fim" &&
+  path.startsWith("/etc/profile.d/") &&
+  event.tags["create"] == "true"
+tags: [persistence, hijack]
+remediation: |
+  Anything in /etc/profile.d runs for every shell login system-wide.
+  Inspect contents. Real package installs do drop here (e.g.
+  bash_completion); diff against `dpkg -S` / `rpm -qf`.
+test_id: FIM-04
+---
+id: rc_local_modified
+desc: /etc/rc.local or sysv init script was modified
+severity: high
+mitre: [T1037.004]
+match: |
+  event.sensor == "fim" &&
+  (path == "/etc/rc.local" ||
+   path.startsWith("/etc/init.d/") ||
+   path.startsWith("/etc/rc.d/"))
+tags: [persistence]
+remediation: |
+  rc.local and init.d scripts still run on most distros. Common
+  legacy persistence path. Diff and verify ExecStart equivalents.
+test_id: FIM-04
+---
+id: xdg_autostart_dropped
+desc: New .desktop file in an XDG autostart directory
+severity: high
+mitre: [T1547.013]
+match: |
+  event.sensor == "fim" &&
+  (path.startsWith("/etc/xdg/autostart/") ||
+   path.matches("^/(root|home/[^/]+)/\\.config/autostart/")) &&
+  path.endsWith(".desktop") &&
+  event.tags["create"] == "true"
+tags: [persistence]
+remediation: |
+  XDG autostart .desktop entries run on next graphical login.
+  Mostly desktop, but jump-host bastions running X also hit this.
+test_id: FIM-04
+---
+id: hosts_allow_deny_modified
+desc: tcpwrappers hosts.allow / hosts.deny was modified
+severity: warn
+mitre: [T1562.004]
+match: |
+  event.sensor == "fim" &&
+  (path == "/etc/hosts.allow" || path == "/etc/hosts.deny")
+tags: [defense_evasion]
+remediation: |
+  Adding ALL: ALL to hosts.allow is a quick way for an attacker to
+  re-open access blocked by a downstream firewall. Diff vs backup.
+test_id: FIM-04
+---
+id: sysctl_drift
+desc: A sysctl tunable file was modified (kernel-policy drift)
+severity: warn
+mitre: [T1562.001]
+match: |
+  event.sensor == "fim" &&
+  (path == "/etc/sysctl.conf" || path.startsWith("/etc/sysctl.d/"))
+tags: [defense_evasion]
+remediation: |
+  Common abuse: setting kptr_restrict=0 / yama.ptrace_scope=0 /
+  kernel.unprivileged_bpf_disabled=0 to enable later exploitation
+  steps. Diff vs the package's shipped value.
+test_id: FIM-04
+---
+id: ssh_login_hook_dropped
+desc: SSH per-account login hook (.ssh/rc) was created or modified
+severity: high
+mitre: [T1546]
+match: |
+  event.sensor == "fim" &&
+  path.matches("^/(root|home/[^/]+)/\\.ssh/rc$")
+tags: [persistence]
+remediation: |
+  .ssh/rc runs after every SSH login for that user. Undocumented
+  in most cheatsheets, hence popular with attackers. Inspect.
+test_id: FIM-04
+---
+id: ld_so_conf_modified
+desc: Dynamic linker search path config was modified
+severity: high
+mitre: [T1574.006]
+match: |
+  event.sensor == "fim" &&
+  (path == "/etc/ld.so.conf" || path.startsWith("/etc/ld.so.conf.d/")) &&
+  event.tags["package_managed"] != "true"
+tags: [persistence, hijack]
+remediation: |
+  Adding a writable directory to the linker search path lets the
+  attacker plant a same-named .so that gets loaded by any binary.
+  Real package installs do drop here; gate on package_managed.
+test_id: FIM-04
+---
+id: webroot_bootstrap_modified
+desc: A CMS / web-app bootstrap file was modified (wp-config.php, .htaccess, configuration.php)
+severity: high
+mitre: [T1505, T1505.003]
+match: |
+  event.sensor == "fim" &&
+  (path.endsWith("/wp-config.php") ||
+   path.endsWith("/.htaccess") ||
+   path.endsWith("/configuration.php") ||
+   path.endsWith("/config.inc.php")) &&
+  event.tags["write"] == "true"
+tags: [persistence, web]
+remediation: |
+  Highest-leverage file in any tenant webroot. wp-config.php holds
+  DB creds + table_prefix + AUTH_KEY. .htaccess can redirect / RCE.
+  Diff against last known-good (FIM keeps inode + hash history).
+test_id: FIM-04
+---
+id: webroot_mu_plugin_dropped
+desc: New PHP file in WordPress mu-plugins (auto-loaded, no admin UI to disable)
+severity: critical
+mitre: [T1505]
+match: |
+  event.sensor == "fim" &&
+  path.matches("/wp-content/mu-plugins/.*\\.php$") &&
+  event.tags["create"] == "true"
+tags: [persistence, web]
+remediation: |
+  MU-plugins run on every request and don't appear in the WP plugins
+  admin page. Top-3 WordPress persistence vector. Capture the file,
+  hash it, check the source webserver request that wrote it.
+test_id: FIM-04
+---
+id: docker_compose_modified
+desc: A docker-compose.yml was modified outside the package manager
+severity: high
+mitre: [T1610]
+match: |
+  event.sensor == "fim" &&
+  (path.endsWith("/docker-compose.yml") ||
+   path.endsWith("/docker-compose.yaml")) &&
+  event.tags["package_managed"] != "true"
+tags: [persistence, container]
+remediation: |
+  Adding `volumes: ["/:/host"]` or `privileged: true` to a compose
+  service is a one-line container escape. Diff vs git / backup.
+test_id: FIM-04
+---
+id: kube_manifest_modified
+desc: A static kubelet manifest was modified
+severity: critical
+mitre: [T1610]
+match: |
+  event.sensor == "fim" &&
+  path.startsWith("/etc/kubernetes/manifests/") &&
+  (path.endsWith(".yaml") || path.endsWith(".yml"))
+tags: [persistence, container]
+remediation: |
+  Static pods specified in /etc/kubernetes/manifests run with
+  kubelet's authority — bypasses RBAC. Diff carefully.
+test_id: FIM-04

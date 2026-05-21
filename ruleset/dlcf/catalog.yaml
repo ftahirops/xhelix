@@ -66,6 +66,46 @@ paths:
   - glob: "/var/lib/xhelix/canary/*"
     classes: [canary]
 
+  # ─── P-AB.7 backbone secret paths ─────────────────────────
+  # Common app-secret files: legitimate workers read them on
+  # startup; egress valve flags secrets shipped outbound from
+  # them. Pair with the env_secret_read_by_web rule in proc.yaml.
+  - glob: "/var/www/vhosts/*/httpdocs/.env"
+    classes: [api_key, credentials]
+  - glob: "/var/www/vhosts/*/httpdocs/wp-config.php"
+    classes: [credentials]
+  - glob: "/var/www/vhosts/*/httpdocs/configuration.php"
+    classes: [credentials]
+  - glob: "/var/www/vhosts/*/httpdocs/config.inc.php"
+    classes: [credentials]
+  - glob: "/var/www/*/.env"
+    classes: [api_key, credentials]
+  - glob: "/srv/www/*/.env"
+    classes: [api_key, credentials]
+  - glob: "/opt/*/.env"
+    classes: [api_key, credentials]
+  - glob: "/root/.aws/*"
+    classes: [api_key]
+  - glob: "/root/.kube/config"
+    classes: [api_key]
+  - glob: "/root/.docker/config.json"
+    classes: [api_key]
+  - glob: "/etc/kubernetes/admin.conf"
+    classes: [api_key]
+  - glob: "/etc/kubernetes/pki/*.key"
+    classes: [credentials]
+  - glob: "/var/lib/kubelet/pki/*.key"
+    classes: [credentials]
+  # Deploy keys / CI keys.
+  - glob: "/root/.ssh/id_*"
+    classes: [credentials]
+  - glob: "/home/*/.ssh/id_*"
+    classes: [credentials]
+  - glob: "/srv/backups/*.dump"
+    classes: [backup]
+  - glob: "/var/backups/*.sql*"
+    classes: [backup]
+
 # Secret patterns. First match wins. Used by the egress valve and
 # response valve to detect raw secrets in transit.
 secrets:
@@ -92,6 +132,41 @@ secrets:
   - name: canary_marker
     regex: "xc-canary-[A-Za-z0-9]{8,}"
     classes: [canary]
+
+  # ─── P-AB.7 additional credential patterns ────────────────
+  - name: aws_secret
+    regex: "(?i)aws_secret_access_key[\"' :=]+[A-Za-z0-9/+]{40}"
+    classes: [api_key]
+  - name: gcp_service_account
+    regex: "\"type\": \"service_account\""
+    classes: [api_key]
+  - name: google_oauth_client
+    regex: "[0-9]+-[a-z0-9_]{32}\\.apps\\.googleusercontent\\.com"
+    classes: [api_key]
+  - name: gitlab_token
+    regex: "glpat-[A-Za-z0-9_-]{20}"
+    classes: [api_key]
+  - name: cloudflare_api_token
+    regex: "(?i)cloudflare[\"' :=]+v1\\.0-[A-Za-z0-9]+-[A-Za-z0-9-]+"
+    classes: [api_key]
+  - name: do_personal_token
+    regex: "dop_v1_[a-f0-9]{64}"
+    classes: [api_key]
+  - name: jwt
+    regex: "eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"
+    classes: [credentials]
+  - name: pem_private_key_header
+    regex: "-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY-----"
+    classes: [credentials]
+  - name: mysql_url_with_password
+    regex: "mysql://[^:]+:[^@]+@"
+    classes: [credentials]
+  - name: postgres_url_with_password
+    regex: "postgres(ql)?://[^:]+:[^@]+@"
+    classes: [credentials]
+  - name: wordpress_auth_keys
+    regex: "(?i)define\\([\"'](AUTH_KEY|SECURE_AUTH_KEY|LOGGED_IN_KEY|NONCE_KEY)[\"']"
+    classes: [credentials]
 
 # Route → allowed classes. The rule engine alerts when a route
 # touches data outside its allow-list (P7.1.5).
