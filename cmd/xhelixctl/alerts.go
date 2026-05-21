@@ -50,6 +50,9 @@ func newAlertsCmd() *cobra.Command {
 	cmd.AddCommand(newAlertsTailCmd())
 	cmd.AddCommand(newAlertsStatsCmd())
 	cmd.AddCommand(newAlertsShowCmd())
+	cmd.AddCommand(newLabelSubcommand())   // P-PS.29: alerts label
+	cmd.AddCommand(newFPRateSubcommand())  // P-PS.29: alerts fp-rate
+	cmd.AddCommand(newReplaySubcommand())  // P-PS.29: alerts replay
 	return cmd
 }
 

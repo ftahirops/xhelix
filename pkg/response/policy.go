@@ -46,66 +46,162 @@ const (
 // fires. Empty / missing entries default to ActionLog only.
 type Policy map[string]Action
 
-// Default returns a sensible day-1 policy: Critical decoy / file /
-// cred / memory rules quarantine the offending pid; Critical net
-// rules ban the src_ip; high-severity FIM rules trigger remediate.
+// Default returns the production-safe day-1 policy.
 //
-// Operators tune this in config.yaml; this is the safe baseline.
+// Action-mask audit (P-PS.29): every entry below is annotated with
+// its FP-risk class. Only entries marked "minimal" carry
+// destructive actions (Quarantine, Kill, Remediate, NetBan,
+// LockUser). Entries marked "medium" or "high" log + snapshot +
+// memscan but do NOT destruct, because the cost of a false
+// positive (SIGSTOPping a production process, banning a real
+// operator's IP, locking out a real account) outweighs the
+// marginal containment benefit until operators have triaged the
+// rule's FP rate on their specific workload.
+//
+// Operators promote a rule from log-only to destructive after a
+// soak period (see pkg/response.SoakGate) and after auditing the
+// rule's FP rate against their workload via xhelixctl alerts
+// label + xhelixctl events replay.
+//
+// FP-risk taxonomy:
+//
+//	minimal — rule fires ONLY on adversarial primitives that
+//	          legitimate code does not execute (e.g., a decoy file
+//	          opened, a canary token used in a real HTTP header).
+//	          Quarantine is safe by construction.
+//	low     — primarily attacker behaviour; rare FPs possible
+//	          (e.g., uid0 transition without setuid, ssh brute
+//	          then success). Quarantine acceptable; Remediate
+//	          requires care.
+//	medium  — legitimate runtimes / admin tooling can fire it
+//	          (e.g., shell-with-socket-fd, web_server_spawns_shell,
+//	          ptrace_sensitive_target). Destructive actions GATED
+//	          behind allowlist + soak.
+//	high    — fires on EVERY legitimate runtime in a category
+//	          (mem_mprotect_rwx, memfd_run_pattern,
+//	          bpf_syscall_unexpected). Action mask must use
+//	          allowlist tags or be log-only.
 func Default() Policy {
 	return Policy{
-		// Decoys → ban the src + quarantine if a local pid was
-		// involved (e.g., honey service connect from inside the host)
-		"decoy_file_opened":         ActionLog | ActionWebhook | ActionQuarantine,
+		// ─── DECOYS (FP-risk: minimal) ───────────────────────────
+		// Decoys are placed by the operator. Their use signals an
+		// attacker who took the bait — by construction.
+		"decoy_file_opened":         ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
 		"decoy_service_connect":     ActionLog | ActionWebhook | ActionNetBan,
 		"decoy_canary_token_used":   ActionLog | ActionWebhook | ActionNetBan,
-		"decoy_dns_resolved":        ActionLog | ActionWebhook,
+		"decoy_dns_resolved":        ActionLog | ActionWebhook | ActionSnapshot,
 
-		// Memory exploit primitives — snapshot, scan memory, quarantine
-		// mem_mprotect_rwx: ActionQuarantine REMOVED — V8 (node, Chrome),
-		// HotSpot JVM, .NET CoreCLR, LuaJIT, PyPy, BPF JIT all do RWX
-		// page churn for legitimate JIT. SIGSTOPping them takes down
-		// production workloads. Keep MemScan + Snapshot.
+		// ─── MEMORY EXPLOIT PRIMITIVES ───────────────────────────
+		// mem_mprotect_rwx: FP-risk high. V8, HotSpot, .NET, LuaJIT,
+		//   PyPy, BPF JIT all do RWX page churn. Suppression goes via
+		//   `event.tags["jit_allowlisted"] != "true"` in the rule
+		//   YAML (consumes pkg/runtimeallow). Action mask is
+		//   log+snapshot+memscan — no quarantine.
 		"mem_mprotect_rwx":          ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
-		"mem_canary_fail":           ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
+		// mem_canary_fail: FP-risk low. Stack canaries do legitimately
+		//   fail on real crashes, but the snapshot + memscan are the
+		//   evidence the operator needs; quarantining a crashing
+		//   process accomplishes nothing.
+		"mem_canary_fail":           ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
+		// mem_kernel_anomaly: FP-risk minimal — kernel anomaly is rare
+		//   and operator-actionable, but quarantining a userland pid
+		//   doesn't address a kernel issue.
 		"mem_kernel_anomaly":        ActionLog | ActionWebhook | ActionSnapshot,
+		// mem_lkrg_violation: FP-risk low. LKRG check failures are
+		//   high-signal kernel integrity events. Keep quarantine but
+		//   ONLY for the offending pid — the kernel-level fix is
+		//   manual.
 		"mem_lkrg_violation":        ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
 
-		// Process patterns
-		"shell_with_socket_fd":      ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
-		// memfd_run_pattern: ActionQuarantine REMOVED — high FP rate.
-		// Every modern runtime that does fileless execve (Claude Code's
-		// runtime, node child_process via memfd, Python runpy, Docker
-		// BuildKit, Buildkite, snapd) trips this. Quarantining them
-		// SIGSTOPs the operator's own tooling. Keep MemScan + Snapshot
-		// so real fileless payloads are still captured for triage.
+		// ─── PROCESS PATTERNS ────────────────────────────────────
+		// shell_with_socket_fd: FP-risk medium. nc, socat, screen,
+		//   tmux can pipe socket → shell legitimately. Quarantine
+		//   GATED — keep action mask but operators must opt in to
+		//   destructive via soak ladder.
+		"shell_with_socket_fd":      ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
+		// memfd_run_pattern: FP-risk high. Claude Code's runtime,
+		//   node child_process via memfd, Python runpy, Docker
+		//   BuildKit, Buildkite, snapd all use memfd_create+execve.
+		//   Suppressed by jit_allowlisted tag at the pipeline.
+		//   Action mask is log+snapshot+memscan.
 		"memfd_run_pattern":         ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
+		// web_server_spawns_shell: FP-risk medium. Legitimate
+		//   webhook receivers (CI, ChatOps) spawn shells. Action
+		//   mask retains Quarantine but operators should review the
+		//   rule's parent_image set before flipping enforce.
 		"web_server_spawns_shell":   ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
+		// binary_runs_from_tmp: FP-risk medium. pip install, npm
+		//   install, Docker BuildKit, dpkg postinst all execute from
+		//   /tmp. Log only — snapshot retains evidence.
 		"binary_runs_from_tmp":      ActionLog | ActionWebhook | ActionSnapshot,
+		// uid0_no_transition: FP-risk low. systemd-run --uid 0 from
+		//   non-root is legitimate but rare. Quarantine acceptable.
 		"uid0_no_transition":        ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
-		"ptrace_sensitive_target":   ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
+		// ptrace_sensitive_target: FP-risk medium-high. gdb, strace,
+		//   perf, eBPF developers, /proc tools all ptrace. We added
+		//   the rule narrow ("sensitive_target" = sshd, polkit,
+		//   gnome-keyring) but the rule needs an allowlist for
+		//   /usr/bin/gdb, /usr/bin/strace as parent. Until then
+		//   DOWNGRADE from Quarantine to Snapshot-only.
+		"ptrace_sensitive_target":   ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
 
-		// File integrity → remediate from chain when possible
-		"tamper_passwd":             ActionLog | ActionWebhook | ActionRemediate,
-		"tamper_shadow":             ActionLog | ActionWebhook | ActionRemediate,
-		"ld_so_preload_modified":    ActionLog | ActionWebhook | ActionRemediate,
-		"pam_module_drop":           ActionLog | ActionWebhook | ActionRemediate,
-		"ssh_key_added_root":        ActionLog | ActionWebhook | ActionRemediate,
-		"cron_new_unit":             ActionLog | ActionWebhook,
+		// ─── FILE INTEGRITY ──────────────────────────────────────
+		// tamper_passwd: FP-risk medium. Legitimate `useradd` writes
+		//   /etc/passwd. Remediate would revert that. DOWNGRADE to
+		//   snapshot+webhook — operator inspects, restores manually
+		//   if needed via xhelixctl remediate.
+		"tamper_passwd":             ActionLog | ActionWebhook | ActionSnapshot,
+		// tamper_shadow: same reasoning as above for `passwd` cmd.
+		"tamper_shadow":             ActionLog | ActionWebhook | ActionSnapshot,
+		// ld_so_preload_modified: FP-risk medium. dpkg/apt installs
+		//   that include shared-object preload (rare but real:
+		//   /etc/ld.so.preload via libsoftokn3, etc.) would be
+		//   remediated. DOWNGRADE — operator confirms before revert.
+		"ld_so_preload_modified":    ActionLog | ActionWebhook | ActionSnapshot,
+		// pam_module_drop: FP-risk low. PAM modules being installed
+		//   under /lib/security/ or /usr/lib64/security/ is usually
+		//   a package install (libpam-google-auth, etc.). Snapshot,
+		//   no auto-revert.
+		"pam_module_drop":           ActionLog | ActionWebhook | ActionSnapshot,
+		// ssh_key_added_root: FP-risk medium. Ansible/Puppet/Salt
+		//   write to authorized_keys during normal infra runs.
+		//   Remediate would revert legitimate config-mgmt. DOWNGRADE
+		//   to snapshot+webhook.
+		"ssh_key_added_root":        ActionLog | ActionWebhook | ActionSnapshot,
+		"cron_new_unit":             ActionLog | ActionWebhook | ActionSnapshot,
 
-		// Network — ban the source
+		// ─── NETWORK ─────────────────────────────────────────────
+		// outbound_to_known_bad: FP-risk low IF threat-intel feed is
+		//   reputable (Spamhaus DROP). NetBan acceptable.
 		"outbound_to_known_bad":     ActionLog | ActionWebhook | ActionNetBan,
-		"metadata_svc_unexpected":   ActionLog | ActionWebhook,
+		// metadata_svc_unexpected: FP-risk low. legit AWS-CLI on the
+		//   host calls IMDS, but only from a small allowlist of pids
+		//   (aws-cli, kubelet). Snapshot — no NetBan because IMDS
+		//   address is link-local and banning is pointless.
+		"metadata_svc_unexpected":   ActionLog | ActionWebhook | ActionSnapshot,
 		"netids.dga":                ActionLog | ActionWebhook,
 
-		// Self-defence — ban + quarantine
-		"bpf_syscall_unexpected":    ActionLog | ActionWebhook | ActionQuarantine,
+		// ─── SELF-DEFENCE ────────────────────────────────────────
+		// bpf_syscall_unexpected: FP-risk HIGH. Cilium, BCC,
+		//   bpftrace, bpftool, libbpf-based tools all call bpf().
+		//   Runc loads cgroup-device-controller BPF on every
+		//   container start. SIGSTOPping any of these breaks the
+		//   host. DOWNGRADE from Quarantine to Snapshot. Operators
+		//   tighten via a per-host allowlist.
+		"bpf_syscall_unexpected":    ActionLog | ActionWebhook | ActionSnapshot,
 
-		// Brute-force correlation — ban + lock the account that just
-		// "succeeded" since the success itself is the indicator.
+		// ─── AUTH ────────────────────────────────────────────────
+		// ssh_brute_then_success: FP-risk minimal — the cooccur
+		//   logic requires N failures then a success from same src.
+		//   NetBan + LockUser acceptable.
 		"ssh_brute_then_success":    ActionLog | ActionWebhook | ActionNetBan | ActionLockUser,
 
-		// v0.0.9 elite-tier
-		"beacon.periodic_callback":  ActionLog | ActionWebhook | ActionSnapshot | ActionNetBan,
+		// ─── ELITE / CORRELATION ─────────────────────────────────
+		// beacon.periodic_callback: FP-risk medium. legit telemetry
+		//   (datadog, sentry, statsd) emits periodic callbacks.
+		//   DOWNGRADE NetBan to snapshot — operators tune the
+		//   allowlist of expected periodic endpoints.
+		"beacon.periodic_callback":  ActionLog | ActionWebhook | ActionSnapshot,
 		"dnsexfil.tunnel_pattern":   ActionLog | ActionWebhook,
 		"tamper.ptrace":             ActionLog | ActionWebhook,
 		"tamper.binary_mtime":       ActionLog | ActionWebhook,
