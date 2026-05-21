@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // ApplyPreset overlays a profile on top of cfg. The profile fills
 // only fields that are still zero-valued, so user overrides win.
 //
@@ -11,12 +13,48 @@ package config
 func ApplyPreset(cfg Config) Config {
 	switch cfg.Preset {
 	case "desktop":
-		return mergeDesktop(cfg)
+		cfg = mergeDesktop(cfg)
 	case "container-host":
-		return mergeContainerHost(cfg)
+		cfg = mergeContainerHost(cfg)
 	case "server", "":
-		return mergeServer(cfg)
+		cfg = mergeServer(cfg)
 	}
+	return applyNewDefaults(cfg)
+}
+
+// applyNewDefaults fills sensible defaults for the P-RF.9b/d/e
+// fields (Takeover / ForensicIngest / ProtectedServices) without
+// changing the on/off state of any feature. Behaviour-preserving:
+// operator opt-in is still required to ENABLE these subsystems;
+// the defaults just spare them from re-specifying every interval
+// when they do.
+func applyNewDefaults(cfg Config) Config {
+	if cfg.Takeover.TickInterval == 0 {
+		cfg.Takeover.TickInterval = 5 * time.Second
+	}
+	if cfg.Takeover.MinScore == 0 {
+		cfg.Takeover.MinScore = 50
+	}
+	// Takeover.Active intentionally left at the user-set value
+	// (default false). Flipping to active is an explicit operator
+	// decision; no preset auto-enables it.
+
+	if cfg.ForensicIngest.Dir == "" {
+		cfg.ForensicIngest.Dir = "/var/lib/xhelix/forensic"
+	}
+	if cfg.ForensicIngest.ScanInterval == 0 {
+		cfg.ForensicIngest.ScanInterval = 5 * time.Second
+	}
+	if cfg.ForensicIngest.PollInterval == 0 {
+		cfg.ForensicIngest.PollInterval = 250 * time.Millisecond
+	}
+	// ForensicIngest.Enabled intentionally not flipped — the
+	// deception binaries write to ForensicIngest.Dir, so if no
+	// deception is running, ingesting from an empty dir is wasted
+	// goroutine. Operator opts in alongside Ring 2.
+
+	// ProtectedServices fields: nothing to default. Empty Services
+	// + Enabled=false is the correct "no services declared" state.
 	return cfg
 }
 

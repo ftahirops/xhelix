@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDefault(t *testing.T) {
@@ -140,4 +141,99 @@ func writeTempFile(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	return f.Name()
+}
+
+func TestApplyPreset_FillsTakeoverDefaults(t *testing.T) {
+	cfg := ApplyPreset(Config{Preset: "server"})
+	if cfg.Takeover.TickInterval != 5*time.Second {
+		t.Errorf("TickInterval = %v, want 5s", cfg.Takeover.TickInterval)
+	}
+	if cfg.Takeover.MinScore != 50 {
+		t.Errorf("MinScore = %d, want 50", cfg.Takeover.MinScore)
+	}
+	if cfg.Takeover.Active {
+		t.Error("Active should NOT auto-enable")
+	}
+}
+
+func TestApplyPreset_PreservesUserTakeoverOverrides(t *testing.T) {
+	cfg := ApplyPreset(Config{
+		Preset: "server",
+		Takeover: TakeoverConfig{
+			Active:       true,
+			TickInterval: 10 * time.Second,
+			MinScore:     75,
+		},
+	})
+	if !cfg.Takeover.Active {
+		t.Error("user Active=true should be preserved")
+	}
+	if cfg.Takeover.TickInterval != 10*time.Second {
+		t.Errorf("user TickInterval=10s preserved? got %v", cfg.Takeover.TickInterval)
+	}
+	if cfg.Takeover.MinScore != 75 {
+		t.Errorf("user MinScore=75 preserved? got %d", cfg.Takeover.MinScore)
+	}
+}
+
+func TestApplyPreset_FillsForensicIngestDefaults(t *testing.T) {
+	cfg := ApplyPreset(Config{Preset: "container-host"})
+	if cfg.ForensicIngest.Dir != "/var/lib/xhelix/forensic" {
+		t.Errorf("Dir = %q, want /var/lib/xhelix/forensic", cfg.ForensicIngest.Dir)
+	}
+	if cfg.ForensicIngest.ScanInterval != 5*time.Second {
+		t.Errorf("ScanInterval = %v, want 5s", cfg.ForensicIngest.ScanInterval)
+	}
+	if cfg.ForensicIngest.PollInterval != 250*time.Millisecond {
+		t.Errorf("PollInterval = %v, want 250ms", cfg.ForensicIngest.PollInterval)
+	}
+	if cfg.ForensicIngest.Enabled {
+		t.Error("Enabled should NOT auto-enable")
+	}
+}
+
+func TestApplyPreset_PreservesUserForensicOverrides(t *testing.T) {
+	cfg := ApplyPreset(Config{
+		Preset: "server",
+		ForensicIngest: ForensicIngestConfig{
+			Enabled:      true,
+			Dir:          "/srv/xhelix",
+			ScanInterval: 30 * time.Second,
+		},
+	})
+	if !cfg.ForensicIngest.Enabled {
+		t.Error("user Enabled=true should be preserved")
+	}
+	if cfg.ForensicIngest.Dir != "/srv/xhelix" {
+		t.Errorf("user Dir preserved? got %q", cfg.ForensicIngest.Dir)
+	}
+	if cfg.ForensicIngest.ScanInterval != 30*time.Second {
+		t.Errorf("user ScanInterval preserved? got %v", cfg.ForensicIngest.ScanInterval)
+	}
+	// PollInterval was zero — preset should still fill it.
+	if cfg.ForensicIngest.PollInterval != 250*time.Millisecond {
+		t.Errorf("PollInterval should be default-filled: got %v", cfg.ForensicIngest.PollInterval)
+	}
+}
+
+func TestApplyPreset_ProtectedServicesStayEmpty(t *testing.T) {
+	cfg := ApplyPreset(Config{Preset: "server"})
+	if cfg.ProtectedServices.Enabled {
+		t.Error("Enabled should NOT auto-enable")
+	}
+	if len(cfg.ProtectedServices.Services) != 0 {
+		t.Errorf("Services should be empty, got %d", len(cfg.ProtectedServices.Services))
+	}
+}
+
+func TestApplyPreset_AllPresetsGetTheDefaults(t *testing.T) {
+	for _, p := range []string{"desktop", "server", "container-host", ""} {
+		cfg := ApplyPreset(Config{Preset: p})
+		if cfg.Takeover.TickInterval == 0 {
+			t.Errorf("preset %q: Takeover.TickInterval not defaulted", p)
+		}
+		if cfg.ForensicIngest.Dir == "" {
+			t.Errorf("preset %q: ForensicIngest.Dir not defaulted", p)
+		}
+	}
 }
