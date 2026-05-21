@@ -209,7 +209,21 @@ func (s *Scorer) evalCoRule(r ScorerCoRule, byKind map[SignalKind][]Signal) (int
 //	idx 0 → 100  (full weight)
 //	idx 1 → 50
 //	idx 2 → 25
-//	idx ≥ 3 → 10
+//	idx 3 → 10
+//	idx ≥ 4 → 0   (HARD CAP — see P-PS.32 fix)
+//
+// The hard cap closes a DoS-style false-positive vector: an attacker
+// can spam thousands of one low-weight signal kind to slowly
+// accumulate score past the isolation threshold. With idx ≥ 4
+// returning 0, no single kind alone can push a lineage past
+// (4 × first-signal-weight × ~1.85). Real attacks fire MULTIPLE
+// kinds — those still stack because each kind has its own
+// dimFactor sequence.
+//
+// Empirical impact: TestDoS_SameKindFloodHandled previously
+// promoted on 10k NewEndpoint signals (weight 15 → score capped at
+// 100). With this cap: 4 signals × 1.85 × 15 ≈ 28, well below
+// promotion threshold.
 func dimFactor(idx int) int {
 	switch idx {
 	case 0:
@@ -218,8 +232,10 @@ func dimFactor(idx int) int {
 		return 50
 	case 2:
 		return 25
+	case 3:
+		return 10
 	}
-	return 10
+	return 0
 }
 
 // scaleInt computes weight × factorPct / 100, rounding to nearest.
