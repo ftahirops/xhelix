@@ -32,6 +32,36 @@ func extractObservations(line []byte) []forensic.Observation {
 	return nil
 }
 
+// sessionEndSource returns the BeaconID/SessionID to forget from
+// the CoEngine when a session_end or beacon_end envelope is seen.
+// Empty string means "this isn't an end-of-session envelope".
+// Fixes C2 from the P-RF.9g review: CoEngine.state used to grow
+// without bound because no caller invoked Forget(); now the
+// ingestor evicts per closed source.
+func sessionEndSource(line []byte) string {
+	var env forensic.Envelope
+	if err := json.Unmarshal(line, &env); err != nil {
+		return ""
+	}
+	switch env.Type {
+	case "session_end":
+		var m struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(env.Body, &m); err == nil {
+			return m.SessionID
+		}
+	case "beacon_end":
+		var m struct {
+			BeaconID string `json:"beacon_id"`
+		}
+		if err := json.Unmarshal(env.Body, &m); err == nil {
+			return m.BeaconID
+		}
+	}
+	return ""
+}
+
 type miniCmd struct {
 	SessionID string   `json:"session_id"`
 	Command   string   `json:"command"`

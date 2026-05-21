@@ -164,40 +164,40 @@ func (s *Scorer) Score(sigs []Signal) Result {
 }
 
 // evalCoRule returns (bonus, true) if every kind in r.Need has at
-// least one signal and the time delta between the earliest and
-// latest contributing signal is within r.Window.
+// least one signal AND the most-recent ("youngest") signal of each
+// kind falls within the same r.Window.
+//
+// Window math fix from P-RF.9g M1 review: the old logic compared
+// the max-youngest against the min-OLDEST across all kinds, which
+// false-rejected when one kind also had a stale background sample.
+// Correct semantics: every kind contributed recently. Compare each
+// kind's youngest signal; the span between them must be ≤ Window.
 func (s *Scorer) evalCoRule(r ScorerCoRule, byKind map[SignalKind][]Signal) (int, bool) {
-	var youngest, oldest time.Time
+	var maxYoungest, minYoungest time.Time
 	for i, k := range r.Need {
 		group := byKind[k]
 		if len(group) == 0 {
 			return 0, false
 		}
-		// Use the most-recent observation for this kind as the
-		// rule's contributing timestamp.
 		newest := group[0].At
-		earliest := group[0].At
 		for _, sig := range group[1:] {
 			if sig.At.After(newest) {
 				newest = sig.At
 			}
-			if sig.At.Before(earliest) {
-				earliest = sig.At
-			}
 		}
 		if i == 0 {
-			youngest = newest
-			oldest = earliest
+			maxYoungest = newest
+			minYoungest = newest
 			continue
 		}
-		if newest.After(youngest) {
-			youngest = newest
+		if newest.After(maxYoungest) {
+			maxYoungest = newest
 		}
-		if earliest.Before(oldest) {
-			oldest = earliest
+		if newest.Before(minYoungest) {
+			minYoungest = newest
 		}
 	}
-	if r.Window > 0 && youngest.Sub(oldest) > r.Window {
+	if r.Window > 0 && maxYoungest.Sub(minYoungest) > r.Window {
 		return 0, false
 	}
 	return r.Bonus, true

@@ -35,9 +35,12 @@ func TestCoEngine_DownloadAndExecute_Fires(t *testing.T) {
 }
 
 func TestCoEngine_ReverseShell(t *testing.T) {
+	// P-RF.9g H1: rule rewritten to require KindBeaconHost
+	// (sinkhole-captured, not text-extracted). Just an IP in
+	// honey-sh output no longer fires it.
 	e := NewCoEngine(DefaultCoRules())
 	t0 := time.Unix(1700000000, 0).UTC()
-	e.Observe(Observation{Kind: KindIPv4, Value: "1.2.3.4", At: t0, Source: "s1"})
+	e.Observe(Observation{Kind: KindBeaconHost, Value: "evil.c2.example.com", At: t0, Source: "s1"})
 	hits := e.Observe(Observation{Kind: KindCommand, Value: "/bin/sh", At: t0, Source: "s1"})
 
 	found := false
@@ -51,6 +54,20 @@ func TestCoEngine_ReverseShell(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("reverse_shell didn't fire: %+v", hits)
+	}
+}
+
+func TestCoEngine_ReverseShell_DoesNotFireOnRandomIP(t *testing.T) {
+	// Verify the P-RF.9g H1 fix: text-extracted KindIPv4 +
+	// KindCommand should NOT trigger reverse_shell anymore.
+	e := NewCoEngine(DefaultCoRules())
+	t0 := time.Unix(1700000000, 0).UTC()
+	e.Observe(Observation{Kind: KindIPv4, Value: "8.8.4.4", At: t0, Source: "s1"})
+	hits := e.Observe(Observation{Kind: KindCommand, Value: "ping", At: t0, Source: "s1"})
+	for _, h := range hits {
+		if h.RuleID == "cooccur.reverse_shell" {
+			t.Fatalf("reverse_shell should NOT fire on text-extracted IP + command")
+		}
 	}
 }
 

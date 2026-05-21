@@ -186,12 +186,19 @@ func DefaultCoRules() []CoRule {
 			Severity:    "high",
 			Description: "Attacker fetched a remote URL AND executed a command within one session — RCE payload-delivery pattern",
 		},
+		// NOTE (P-RF.9g review, H1): cooccur.reverse_shell was
+		// {KindIPv4, KindCommand} but KindIPv4 is text-extracted
+		// from honey-sh free text. ANY benign IP mention (ping
+		// 8.8.4.4, ifconfig output) plus any later command fires
+		// the rule. Replaced with {KindBeaconHost, KindCommand}:
+		// KindBeaconHost is only emitted by sinkhole on real
+		// outbound captures — much higher signal.
 		{
 			ID:          "cooccur.reverse_shell",
-			Need:        []Kind{KindIPv4, KindCommand},
+			Need:        []Kind{KindBeaconHost, KindCommand},
 			Window:      5 * time.Minute,
 			Severity:    "high",
-			Description: "Attacker opened raw outbound to a remote IP AND ran shell commands — reverse-shell composition",
+			Description: "Attacker beaconed to a sinkholed host AND ran shell commands — reverse-shell composition",
 		},
 		{
 			ID:          "cooccur.eval_dynamic_payload",
@@ -200,12 +207,20 @@ func DefaultCoRules() []CoRule {
 			Severity:    "high",
 			Description: "Attacker decoded a base64 payload AND ran a command — obfuscated-payload-execution pattern",
 		},
+		// HONEST SCOPE (P-RF.9g M3 review): CoEngine buckets by
+		// Source (SessionID / BeaconID). This rule fires only
+		// when both signals appear in the SAME source — i.e. the
+		// attacker reads + curls within one honey-sh session. The
+		// cross-layer case (read via honey-sh, exfil via sinkhole)
+		// can't fire here because they're different Sources;
+		// that's a per-lineage join (pkg/takeover.Scorer co-rules)
+		// not a per-source one.
 		{
 			ID:          "cooccur.cred_exfil_chain",
 			Need:        []Kind{KindAWSKey, KindURL},
 			Window:      10 * time.Minute,
 			Severity:    "high",
-			Description: "AWS access key surfaced AND outbound URL referenced — credential exfiltration pattern",
+			Description: "AWS access key surfaced AND outbound URL referenced WITHIN THE SAME HONEY-SH SESSION — credential exfiltration pattern (single-source)",
 		},
 		{
 			ID:          "cooccur.c2_command_chain",

@@ -424,7 +424,11 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				Comm:    ev.Comm,
 				DstIP:   dst,
 				DstPort: port,
-				At:      time.Now(),
+				// P-RF.9g H2: use the sensor-stamped event time,
+				// not wall-clock. Wall-clock breaks replay
+				// determinism + skews beacon-period analysis
+				// when events arrive batched.
+				At: ev.Time,
 			}); v != nil {
 				ae := ev
 				ae.Tags["beacon_count"] = fmt.Sprintf("%d", v.Count)
@@ -469,7 +473,9 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		qtype := ev.Tags["dns_qtype"]
 		if qname != "" {
 			if v := p.DNSExfilDet.Observe(dnsexfil.Event{
-				Domain: qname, QType: qtype, At: time.Now(),
+				// P-RF.9g H2: ev.Time, not time.Now() — same
+				// reason as the beacon detector above.
+				Domain: qname, QType: qtype, At: ev.Time,
 			}); v != nil {
 				ae := ev
 				ae.Tags["dnsexfil_reasons"] = strings.Join(v.Reasons, ",")

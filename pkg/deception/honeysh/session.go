@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"io"
 	"math/rand"
+	"os"
 	"strings"
 	"time"
 )
@@ -156,11 +157,29 @@ type Shell struct {
 }
 
 // New returns a Shell with the given config and logger.
+//
+// P-RF.9g L2: if cfg.Host matches the real host's os.Hostname()
+// the deception surface leaks fleet identity to the attacker.
+// New writes a warning to stderr in that case so operators catch
+// the misconfiguration during integration. Real production
+// deployments set Host to a plausible-but-fake value distinct
+// from the production hostname.
 func New(cfg Config, log Logger) *Shell {
 	if log == nil {
 		log = noopLogger{}
 	}
+	if real := realHostname(); real != "" && cfg.Host == real {
+		_, _ = os.Stderr.WriteString(
+			"xhelix-honeysh WARNING: cfg.Host == real os.Hostname() " +
+				"(" + real + ") — attacker can correlate honey host with " +
+				"fleet inventory. Set Host to a fake value.\n")
+	}
 	return &Shell{cfg: cfg.defaulted(), log: log, id: randSessionID(cfg.Rand)}
+}
+
+func realHostname() string {
+	h, _ := os.Hostname()
+	return h
 }
 
 // Serve runs one interactive shell session. Returns when the

@@ -66,6 +66,17 @@ type Config struct {
 	// state. Default 5min.
 	FireCooldown time.Duration
 
+	// ExemptSignals lists termination signals that should NOT count
+	// as crashes. Default ["SIGKILL"]: OOM-killed workers under
+	// legitimate memory pressure shouldn't trip the loop trap.
+	// Operators on hosts where SIGKILL is always suspicious (e.g.
+	// no OOM exposure) can set this to an empty slice to count
+	// every kill.
+	//
+	// Fix for P-RF.9g review H3 (crashloop SIGKILL false positive
+	// on OOM).
+	ExemptSignals []string
+
 	// Now / Sleep test hooks.
 	Now func() time.Time
 }
@@ -83,6 +94,9 @@ func (c Config) defaulted() Config {
 	}
 	if d.FireCooldown <= 0 {
 		d.FireCooldown = 5 * time.Minute
+	}
+	if d.ExemptSignals == nil {
+		d.ExemptSignals = []string{"SIGKILL"}
 	}
 	if d.Now == nil {
 		d.Now = time.Now
@@ -122,6 +136,14 @@ func (d *Detector) Observe(ev CrashEvent) *Decision {
 	}
 	if ev.ServiceName == "" {
 		return nil
+	}
+	// P-RF.9g H3: skip exempt signals (default SIGKILL) so OOM-
+	// killed worker storms under legitimate memory pressure don't
+	// trigger SuspendProcess + systemctl mask on the unit.
+	for _, exempt := range d.cfg.ExemptSignals {
+		if ev.Signal == exempt {
+			return nil
+		}
 	}
 
 	d.mu.Lock()

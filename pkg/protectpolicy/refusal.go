@@ -227,19 +227,83 @@ func pickSource(rf RefusalEvent) string {
 func buildDetail(rf RefusalEvent) string {
 	var parts []string
 	if rf.Path != "" {
-		parts = append(parts, rf.Path)
+		parts = append(parts, sanitizeForLog(rf.Path))
 	}
 	if rf.SyscallName != "" {
-		parts = append(parts, "syscall="+rf.SyscallName)
+		parts = append(parts, "syscall="+sanitizeForLog(rf.SyscallName))
 	}
 	if rf.RemoteIP != "" {
-		parts = append(parts, "remote="+rf.RemoteIP)
+		parts = append(parts, "remote="+sanitizeForLog(rf.RemoteIP))
 	}
 	if rf.Discrepancy != "" {
-		parts = append(parts, rf.Discrepancy)
+		parts = append(parts, sanitizeForLog(rf.Discrepancy))
 	}
 	if rf.Detail != "" {
-		parts = append(parts, rf.Detail)
+		parts = append(parts, sanitizeForLog(rf.Detail))
 	}
 	return strings.Join(parts, " ")
+}
+
+// sanitizeForLog strips attacker-controllable bytes that would
+// corrupt operator logs: ASCII control chars (newline, CR, ESC,
+// etc.) and Unicode BiDi-override codepoints. Fix for P-RF.9g M2
+// review (log injection via attacker-named filename in AppArmor
+// audit reasons).
+func sanitizeForLog(s string) string {
+	if s == "" {
+		return s
+	}
+	// Fast path: pure-ASCII strings without control chars are most
+	// common; avoid allocating a builder when nothing needs fixing.
+	clean := true
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 && c != '\t' {
+			clean = false
+			break
+		}
+		if c == 0x7f {
+			clean = false
+			break
+		}
+		// 0xE2 is the lead byte for the U+202A..U+202E BiDi
+		// override block (UTF-8: E2 80 AA..AE) and U+2066..U+2069
+		// (UTF-8: E2 81 A6..A9). Trigger a re-scan for any 0xE2.
+		if c == 0xe2 {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 && c != '\t' {
+			b.WriteByte(' ')
+			continue
+		}
+		if c == 0x7f {
+			b.WriteByte(' ')
+			continue
+		}
+		// Filter U+202A..U+202E and U+2066..U+2069 (BiDi overrides).
+		if c == 0xe2 && i+2 < len(s) {
+			c1, c2 := s[i+1], s[i+2]
+			if c1 == 0x80 && c2 >= 0xaa && c2 <= 0xae {
+				b.WriteByte(' ')
+				i += 2
+				continue
+			}
+			if c1 == 0x81 && c2 >= 0xa6 && c2 <= 0xa9 {
+				b.WriteByte(' ')
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }

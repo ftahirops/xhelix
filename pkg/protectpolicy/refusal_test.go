@@ -1,6 +1,7 @@
 package protectpolicy
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -355,5 +356,39 @@ func TestEvaluate_ArgvShape_TakesPrecedenceOverDownloader(t *testing.T) {
 	}, mkSvc(t))
 	if s.Kind != takeover.SignalDownloader {
 		t.Fatalf("curl → %q, want downloader (no argv-shape match)", s.Kind)
+	}
+}
+
+// P-RF.9g M2 regression test
+func TestSanitizeForLog_StripsControlChars(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"clean ascii", "clean ascii"},
+		{"with\tnewline\nhere", "with\tnewline here"},               // \n → space, \t preserved
+		{"esc\x1bsequence", "esc sequence"},                          // ESC stripped
+		{"crlf\r\nthere", "crlf  there"},                             // \r + \n → two spaces
+		{"del\x7fchar", "del char"},                                  // DEL stripped
+		{"bidi‮evil", "bidi evil"},                              // BiDi LRO → space
+		{"bidi⁦start", "bidi start"},                            // LRI → space
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := sanitizeForLog(c.in)
+		if got != c.want {
+			t.Errorf("sanitizeForLog(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestBuildDetail_SanitizesAttackerStrings(t *testing.T) {
+	rf := RefusalEvent{
+		Kind: RefuseExec,
+		Path: "/bin/sh\n[FAKE LOG ENTRY]",
+		Detail: "audit\x1battack",
+	}
+	got := buildDetail(rf)
+	for _, bad := range []string{"\n", "\x1b", "\r", "\x7f"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("buildDetail leaked control char %q in: %q", bad, got)
+		}
 	}
 }

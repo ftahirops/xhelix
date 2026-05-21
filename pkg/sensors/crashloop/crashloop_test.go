@@ -295,3 +295,52 @@ var errFakeHalt = stringError("simulated halt failure")
 type stringError string
 
 func (e stringError) Error() string { return string(e) }
+
+// P-RF.9g H3 regression test
+func TestDetector_ExemptSignalsSkipped(t *testing.T) {
+	d := New(Config{Threshold: 3, Window: time.Minute})
+	t0 := time.Unix(1700000000, 0).UTC()
+	// 5 SIGKILL crashes — should be ignored (default ExemptSignals
+	// includes SIGKILL for OOM resilience).
+	var dec *Decision
+	for i := 0; i < 5; i++ {
+		dec = d.Observe(CrashEvent{
+			ServiceName: "nginx",
+			At:          t0.Add(time.Duration(i) * 5 * time.Second),
+			Signal:      "SIGKILL",
+		})
+	}
+	if dec != nil {
+		t.Fatalf("SIGKILL bursts (likely OOM) should not fire crash loop; got %+v", dec)
+	}
+
+	// SIGSEGV is NOT exempt → still fires.
+	for i := 0; i < 3; i++ {
+		dec = d.Observe(CrashEvent{
+			ServiceName: "nginx",
+			At:          t0.Add(time.Duration(i+10) * 5 * time.Second),
+			Signal:      "SIGSEGV",
+		})
+	}
+	if dec == nil {
+		t.Fatal("SIGSEGV bursts should still fire")
+	}
+}
+
+func TestDetector_OperatorCanDisableExemption(t *testing.T) {
+	// Operators on hosts where SIGKILL is always suspicious can
+	// set ExemptSignals to empty.
+	d := New(Config{Threshold: 3, Window: time.Minute, ExemptSignals: []string{}})
+	t0 := time.Unix(1700000000, 0).UTC()
+	var dec *Decision
+	for i := 0; i < 3; i++ {
+		dec = d.Observe(CrashEvent{
+			ServiceName: "nginx",
+			At:          t0.Add(time.Duration(i) * 5 * time.Second),
+			Signal:      "SIGKILL",
+		})
+	}
+	if dec == nil {
+		t.Fatal("with ExemptSignals=[], SIGKILL bursts must fire")
+	}
+}

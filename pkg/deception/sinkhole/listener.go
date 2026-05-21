@@ -427,9 +427,15 @@ func randBeaconID(r *mrand.Rand) string {
 	return string(b)
 }
 
-// generateSelfSigned mints a self-signed cert for "*". TLS handshake
-// will succeed for any SNI — attacker malware that doesn't pin certs
-// happily completes the handshake. Cert is in-memory only.
+// generateSelfSigned mints a self-signed cert. TLS handshake
+// will succeed for any SNI — attacker malware that doesn't pin
+// certs happily completes the handshake. Cert is in-memory only.
+//
+// P-RF.9g L3: CN + DNSName are randomized from a list of
+// plausible cloud / CDN wildcards instead of the fixed "*" they
+// used to be. Static "*" was a fingerprint a sophisticated
+// attacker could use to identify the xhelix sinkhole; rotating
+// among real-world-looking CNs blends into typical TLS noise.
 func generateSelfSigned() (tls.Certificate, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -439,14 +445,15 @@ func generateSelfSigned() (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
+	cn := pickPlausibleCN()
 	tmpl := x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "*"},
+		Subject:      pkix.Name{CommonName: cn},
 		NotBefore:    time.Now().Add(-1 * time.Hour),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"*"},
+		DNSNames:     []string{cn},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)
 	if err != nil {
@@ -456,6 +463,28 @@ func generateSelfSigned() (tls.Certificate, error) {
 		Certificate: [][]byte{der},
 		PrivateKey:  priv,
 	}, nil
+}
+
+// pickPlausibleCN returns a randomized cloud/CDN wildcard string.
+// Each sinkhole instance picks one at startup so the cert blends
+// in with typical TLS noise rather than being a fingerprint.
+var plausibleCNs = []string{
+	"*.cloudfront.net",
+	"*.appspot.com",
+	"*.amazonaws.com",
+	"*.azureedge.net",
+	"*.fastly.net",
+	"*.akamaiedge.net",
+	"*.cdn.cloudflare.net",
+	"*.googleusercontent.com",
+}
+
+func pickPlausibleCN() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(plausibleCNs))))
+	if err != nil {
+		return plausibleCNs[0]
+	}
+	return plausibleCNs[n.Int64()]
 }
 
 // HTTP request reading helper kept short — uses the package-level

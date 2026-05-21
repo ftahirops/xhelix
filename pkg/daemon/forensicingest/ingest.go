@@ -185,6 +185,12 @@ func (i *Ingestor) follow(ctx context.Context, path string) {
 	br := bufio.NewReaderSize(f, 64*1024)
 	var lastSize int64
 
+	// P-RF.9g L1: use a single Ticker rather than re-allocating
+	// time.After timers each iteration. Allocating in a hot poll
+	// loop adds GC pressure under sub-100ms PollInterval values.
+	pollTicker := time.NewTicker(i.cfg.PollInterval)
+	defer pollTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -227,7 +233,7 @@ func (i *Ingestor) follow(ctx context.Context, path string) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(i.cfg.PollInterval):
+			case <-pollTicker.C:
 			}
 			continue
 		}
@@ -251,6 +257,12 @@ func (i *Ingestor) follow(ctx context.Context, path string) {
 // just lifts the (kind, value, source) tuples for the engine.
 func (i *Ingestor) evalCo(line []byte) {
 	if i.co == nil {
+		return
+	}
+	// session_end / beacon_end → free CoEngine state for that
+	// source. Fixes C2 from the P-RF.9g review.
+	if source := sessionEndSource(line); source != "" {
+		i.co.Forget(source)
 		return
 	}
 	for _, obs := range extractObservations(line) {
