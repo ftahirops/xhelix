@@ -45,6 +45,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/ptraceguard"
 	"github.com/xhelix/xhelix/pkg/revshell"
 	"github.com/xhelix/xhelix/pkg/rules"
+	"github.com/xhelix/xhelix/pkg/runtimeallow"
 	"github.com/xhelix/xhelix/pkg/session"
 	"github.com/xhelix/xhelix/pkg/shmguard"
 	"github.com/xhelix/xhelix/pkg/store"
@@ -80,6 +81,13 @@ type Pipeline struct {
 	BrandDet         *brandcheck.Detector
 	Catalog          *catalog.Catalog
 	ColdStore        *coldstore.Store
+
+	// RuntimeAllow recognises well-known userland runtimes that
+	// exercise primitives xhelix flags as suspicious. When the
+	// allowlist matches, Handle() sets event.tags["jit_allowlisted"]
+	// to "true" so downstream rules can branch. Nil = empty
+	// allowlist (no events tagged).
+	RuntimeAllow *runtimeallow.Set
 
 	// Emit is the alert-bus sink. Required if any rule, detector,
 	// or threat-intel branch can fire. Pipeline never holds an
@@ -121,6 +129,23 @@ type Pipeline struct {
 // Same order as before P-RF.7b. Any reordering changes behavior
 // and must be diff-tested against the golden corpus.
 func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
+	// Runtime-allowlist tag enrichment (P-PS.25). Set
+	// event.tags["jit_allowlisted"] = "true" when the event's image
+	// OR parent_image matches a known userland runtime. Rules in
+	// pkg/response/policy.go and rule yamls already consult this
+	// tag — setting it here is the systematic FP-reduction lever.
+	if p.RuntimeAllow != nil {
+		parentImage := ev.Tags["parent_image"]
+		parentComm := ev.Tags["parent_comm"]
+		if p.RuntimeAllow.MatchAny(ev.Image, ev.Comm) ||
+			p.RuntimeAllow.MatchAny(parentImage, parentComm) {
+			if ev.Tags == nil {
+				ev.Tags = map[string]string{}
+			}
+			ev.Tags["jit_allowlisted"] = "true"
+		}
+	}
+
 	// Durable persistence first. Non-blocking; the cold
 	// store drops on overflow and counts it. Done up front
 	// so even events that the downstream enrichment fails
@@ -309,12 +334,20 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 	}
 
 	// Capability escalation (capset tracepoint).
+	//
+	// P-PS.25: skip when the runtime-allowlist matched (typically
+	// sudo, su, systemd, runc — all of which legitimately gain
+	// capability sets by design). The signal is preserved in the
+	// event's tags for takeover scoring; only the standalone alert
+	// is suppressed to keep operator triage focused on anomalous
+	// capability gains.
 	if ev.Sensor == "ebpf.cap" && ev.Tags["capset"] == "true" {
 		eff := parseHexUint64(ev.Tags["cap_effective"])
 		if f := capwatch.Classify(capwatch.Change{
 			EffectiveAfter: eff,
 			PID:            ev.PID, Comm: ev.Comm, Exe: ev.Image,
-		}); f.Severity >= capwatch.SeverityHigh && len(f.Gained) > 0 {
+		}); f.Severity >= capwatch.SeverityHigh && len(f.Gained) > 0 &&
+			ev.Tags["jit_allowlisted"] != "true" {
 			p.Emit(model.Alert{
 				Event: ev, RuleID: "cap.gained",
 				Reason: "gained capabilities: " + strings.Join(f.Gained, ", "),

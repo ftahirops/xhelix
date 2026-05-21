@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -13,12 +14,16 @@ func newEventsCmd() *cobra.Command {
 	}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "tail",
-		Short: "Stream events as JSON-lines",
+		Short: "Stream events as JSON-lines (alias of 'alerts tail')",
+		Long: `P-PS.25: implemented by reading the daemon's
+file-sink at /var/log/xhelix/alerts.jsonl. Use 'xhelixctl alerts'
+for filtering, stats, and per-id show. This command exists for
+backward-compat with the original 'events tail' name.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Phase 0 stub: real implementation in Phase 1 reads
-			// from the daemon's hot store via a Unix socket.
-			fmt.Println(`{"phase":0,"msg":"events tail not implemented yet; daemon hot-store is the source"}`)
-			return nil
+			fmt.Fprintln(os.Stderr, "note: 'events tail' is an alias of 'alerts tail'")
+			tail := newAlertsTailCmd()
+			tail.SetArgs(args)
+			return tail.Execute()
 		},
 	})
 	return cmd

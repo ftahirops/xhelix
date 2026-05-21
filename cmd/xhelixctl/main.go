@@ -30,6 +30,7 @@ func main() {
 	root.AddCommand(newWizardCmd())
 	root.AddCommand(newProtectCmd())
 	root.AddCommand(newForensicCmd())
+	root.AddCommand(newAlertsCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

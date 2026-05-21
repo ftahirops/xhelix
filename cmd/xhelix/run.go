@@ -55,6 +55,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/remediate"
 	"github.com/xhelix/xhelix/pkg/response"
 	"github.com/xhelix/xhelix/pkg/rules"
+	"github.com/xhelix/xhelix/pkg/runtimeallow"
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
 	"github.com/xhelix/xhelix/pkg/session"
@@ -1475,6 +1476,21 @@ func dispatch(
 	coldStore *coldstore.Store,
 	cat *catalog.Catalog,
 ) {
+	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
+	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
+	// dpkg/apt/snap, runc/docker, sudo/systemd. Missing file is not
+	// an error; the daemon falls back to defaults. P-PS.25.
+	ra, raErr := runtimeallow.LoadFile("/etc/xhelix/runtime-allowlist.yaml")
+	if raErr != nil {
+		log.Warn("runtime-allowlist load",
+			"path", "/etc/xhelix/runtime-allowlist.yaml",
+			"err", raErr,
+			"fallback", "default set in use")
+	} else {
+		log.Info("runtime-allowlist loaded",
+			"path", "/etc/xhelix/runtime-allowlist.yaml")
+	}
+
 	p := &pipeline.Pipeline{
 		Log:              log,
 		HotStore:         hot,
@@ -1497,6 +1513,7 @@ func dispatch(
 		BrandDet:         brandDet,
 		Catalog:          cat,
 		ColdStore:        coldStore,
+		RuntimeAllow:     ra,
 		Emit:             emit,
 	}
 	p.Run(ctx, events)
