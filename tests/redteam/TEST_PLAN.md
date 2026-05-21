@@ -256,6 +256,11 @@ loses correlation context.
 
 ### 3.7 Container & VM escape (T1611, T1610)
 
+> **DEFERRED 2026-05-21**: per operator decision, container/docker
+> testing is out of scope for the current phase. All CE-* rows below
+> are marked `pending-deferred`. Re-engage once host-level testing is
+> green.
+
 Run inside Ring B containers. Expected: xhelix on the host sees the
 escape attempt.
 
@@ -433,8 +438,8 @@ For each, the rule must alert ONLY OR not fire at all.
 | FP-04 | dotnet run | mem_mprotect_rwx | alert-only |
 | FP-05 | `python -c 'import torch'` | mem_mprotect_rwx via libtorch | alert-only |
 | FP-06 | `python -m venv` | binary_runs_from_tmp (no), memfd (no) | clean |
-| FP-07 | `docker run alpine sh` | shell_with_socket_fd risk if attached | alert-only |
-| FP-08 | `kubectl exec` | proc + shell | alert-only |
+| FP-07 | `docker run alpine sh` | DEFERRED — container testing out of scope this phase | n/a |
+| FP-08 | `kubectl exec` | DEFERRED — container testing out of scope this phase | n/a |
 | FP-09 | systemd unit reload | tamper.systemd | clean |
 | FP-10 | apt-get install pkg with maintainer scripts | binary_runs_from_tmp / ld_preload | clean |
 | FP-11 | snap refresh | mount + binary_runs | clean |
