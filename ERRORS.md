@@ -171,3 +171,58 @@ shrinks (or maintains a bounded size) when the pruner runs.
 
 **For next time**: <generalizable lesson — what to check / do differently>
 ```
+
+---
+
+## xhelix SIGSTOP'd the operator's own shell (memfd self-DoS)
+
+**What happened**: Live-attack demo with all sensors enabled. Response
+engine fired `memfd_run_pattern` → ActionQuarantine on every new bash
+spawned by Claude Code (Claude's runtime exec's bash via memfd_create
++ execveat, so `image == /proc/self/fd/N`). Every CLI invocation got
+SIGSTOPped before printing a single byte. Also fired
+`mem_mprotect_rwx` on node, python, runc, java for normal JIT — all
+SIGSTOPped. Operator could not run `pkill xhelix` from the agent
+shell because that shell itself was quarantined. Cost: ~45 min and
+required a separate SSH session to recover.
+
+Same operator config had `response.enabled: true` (intent: monitor
+mode), but ActionQuarantine ran anyway — the engine had no
+observe-only mode wired. The runbook in `scripts/test-setup.sh`
+*comments* claimed monitor semantics but the code path delivered
+enforce.
+
+**What works** (P-PS.23):
+
+1. `pkg/response/policy.go`: removed `ActionQuarantine` from
+   `memfd_run_pattern` and `mem_mprotect_rwx` defaults. Both fire on
+   legitimate runtimes (V8/Node, HotSpot, .NET, LuaJIT, BPF JIT,
+   Python runpy, Docker BuildKit, Claude Code, Buildkite, snapd) —
+   the FP rate is too high to justify a SIGSTOP default. Kept Log +
+   Snapshot + MemScan so real fileless payloads are still triagable.
+2. `ResponseConfig.MonitorMode bool` + `response.Config.MonitorMode`
+   + `Engine.monitorMode`. When true, `OnAlert` masks every alert to
+   `ActionLog | ActionWebhook` BEFORE dispatch, regardless of policy.
+3. `scripts/test-setup.sh` writes `response.monitor_mode: true` in
+   the generated YAML.
+
+**For next time**:
+
+- Any rule whose match expression can fire on a legitimate userland
+  runtime must NOT have `ActionQuarantine` or `ActionKill` in its
+  default policy. Triage criterion: would the worst-case FP STOP a
+  production process? If yes, log-only by default. Operator opts in
+  per-rule once they've audited their workload.
+- "Monitor mode" must be a single config flag that short-circuits
+  the dispatch path. Documentation-only "monitor mode" (comments in
+  a setup script) is a lie until it's a `MonitorMode bool` the
+  engine actually reads.
+- Before enabling the response engine on a live host, search policy
+  defaults for `ActionQuarantine|ActionKill` and confirm each rule
+  fires only on attacker behavior, not common-runtime behavior. Run
+  `grep -E 'Action(Quarantine|Kill)' pkg/response/policy.go` as a
+  pre-deploy checklist.
+- Recovery procedure when self-DoS hits: separate SSH session →
+  `sudo pkill -9 -f xhelix` → `for p in $(ps -eo pid,stat | awk
+  "\$2~/T/{print \$1}"); do kill -CONT $p; done` to release SIGSTOP'd
+  victims.

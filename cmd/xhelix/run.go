@@ -315,10 +315,12 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				}
 				return webhookSink.Send(c, a)
 			},
-			Logger: log,
+			Logger:      log,
+			MonitorMode: cfg.Response.MonitorMode,
 		})
 		_ = respEngine.Start(ctx)
-		log.Info("response engine enabled")
+		log.Info("response engine enabled",
+			"monitor_mode", cfg.Response.MonitorMode)
 	}
 
 	// P-RF.9b daemon wiring: planner pipeline runs in shadow mode

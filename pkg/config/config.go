@@ -312,6 +312,12 @@ type ResponseConfig struct {
 	// consecutive days without an operator-marked false positive
 	// before it can take destructive action. Default 30.
 	SoakDays uint `yaml:"soak_days"`
+	// MonitorMode, when true, runs the engine observe-only — every
+	// per-alert action is masked to ActionLog|ActionWebhook before
+	// dispatch. Use this for learning-mode deployments where you
+	// want to see what xhelix would have done without it actually
+	// SIGSTOPping production processes. Default false (enforce).
+	MonitorMode bool `yaml:"monitor_mode"`
 }
 
 // NetbanConfig configures the IP banning subsystem.

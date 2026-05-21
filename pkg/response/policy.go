@@ -61,14 +61,24 @@ func Default() Policy {
 		"decoy_dns_resolved":        ActionLog | ActionWebhook,
 
 		// Memory exploit primitives — snapshot, scan memory, quarantine
-		"mem_mprotect_rwx":          ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
+		// mem_mprotect_rwx: ActionQuarantine REMOVED — V8 (node, Chrome),
+		// HotSpot JVM, .NET CoreCLR, LuaJIT, PyPy, BPF JIT all do RWX
+		// page churn for legitimate JIT. SIGSTOPping them takes down
+		// production workloads. Keep MemScan + Snapshot.
+		"mem_mprotect_rwx":          ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
 		"mem_canary_fail":           ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
 		"mem_kernel_anomaly":        ActionLog | ActionWebhook | ActionSnapshot,
 		"mem_lkrg_violation":        ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
 
 		// Process patterns
 		"shell_with_socket_fd":      ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
-		"memfd_run_pattern":         ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
+		// memfd_run_pattern: ActionQuarantine REMOVED — high FP rate.
+		// Every modern runtime that does fileless execve (Claude Code's
+		// runtime, node child_process via memfd, Python runpy, Docker
+		// BuildKit, Buildkite, snapd) trips this. Quarantining them
+		// SIGSTOPs the operator's own tooling. Keep MemScan + Snapshot
+		// so real fileless payloads are still captured for triage.
+		"memfd_run_pattern":         ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
 		"web_server_spawns_shell":   ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
 		"binary_runs_from_tmp":      ActionLog | ActionWebhook | ActionSnapshot,
 		"uid0_no_transition":        ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
@@ -120,6 +130,18 @@ func Default() Policy {
 type Engine struct {
 	policy Policy
 	log    *slog.Logger
+
+	// MonitorMode, when true, masks every per-alert action to
+	// ActionLog | ActionWebhook before dispatch. The Engine still
+	// counts the alert and emits structured logs, but no destructive
+	// backend (quarantine, kill, netban, remediate, lockuser,
+	// hostquarantine) runs. Set via Config.MonitorMode and surfaced
+	// to operators as "response posture: observe-only".
+	//
+	// Added P-PS.23 after the daemon SIGSTOP'd the operator's own
+	// shell on memfd_run_pattern despite the runbook calling for
+	// monitor mode. See ERRORS.md entry "memfd self-DoS".
+	monitorMode bool
 
 	mu      sync.RWMutex
 	running atomic.Bool
@@ -195,6 +217,12 @@ type Config struct {
 	PanicSwitch      *enforce.PanicSwitch
 	Webhook          WebhookFn
 	Logger           *slog.Logger
+
+	// MonitorMode forces the engine into observe-only mode — every
+	// per-alert action is masked to ActionLog|ActionWebhook before
+	// dispatch. Set this from cfg.Response.MonitorMode (yaml:
+	// "monitor_mode: true") for learning-mode deployments.
+	MonitorMode bool
 }
 
 // New builds a response engine.
@@ -208,6 +236,7 @@ func New(cfg Config) *Engine {
 	e := &Engine{
 		policy:      cfg.Policy,
 		log:         cfg.Logger,
+		monitorMode: cfg.MonitorMode,
 		netBan:      cfg.NetBanner,
 		hostBanner:  cfg.HostBanner,
 		remediator:  cfg.Remediator,
@@ -237,6 +266,16 @@ func (e *Engine) OnAlert(a model.Alert) {
 	if mask == 0 {
 		// Unknown rule → log only.
 		mask = ActionLog
+	}
+
+	if e.monitorMode {
+		// Monitor (observe-only) — strip every destructive action.
+		// The alert still flows to log + webhook so operators can
+		// watch the policy that WOULD have fired.
+		mask &= ActionLog | ActionWebhook
+		if mask == 0 {
+			mask = ActionLog
+		}
 	}
 
 	// Order matters:
