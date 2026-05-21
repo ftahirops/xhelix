@@ -328,3 +328,68 @@ remediation: |
   Static pods specified in /etc/kubernetes/manifests run with
   kubelet's authority — bypasses RBAC. Diff carefully.
 test_id: FIM-04
+---
+id: boot_artifact_modified
+desc: A file under /boot (vmlinuz / initrd / grub) was modified
+severity: critical
+mitre: [T1542.003]
+match: |
+  event.sensor == "fim" &&
+  path.startsWith("/boot/") &&
+  event.tags["package_managed"] != "true"
+tags: [persistence, rootkit]
+remediation: |
+  Bootloader / kernel-image tamper is the highest-leverage
+  persistence — survives userland wipes. Real package upgrades
+  (linux-image-*) do drop here; gate on package_managed and
+  treat the rest as critical. Capture inode + hash.
+test_id: FIM-05
+---
+id: kernel_module_dropped
+desc: A new .ko file was placed under /lib/modules
+severity: critical
+mitre: [T1547.006]
+match: |
+  event.sensor == "fim" &&
+  (path.startsWith("/lib/modules/") || path.startsWith("/usr/lib/modules/")) &&
+  path.endsWith(".ko") &&
+  event.tags["create"] == "true" &&
+  event.tags["package_managed"] != "true"
+tags: [persistence, rootkit]
+remediation: |
+  Out-of-tree kernel module drop. Capture, hash, check signature.
+  Pair with the kernel_module_load rule (which fires when one
+  actually loads).
+test_id: FIM-05
+---
+id: cron_malware_shape
+desc: Cron entry has a malware-shaped command (shell-pipe / remote-fetch / tmp script / web-user / hidden script)
+severity: critical
+mitre: [T1053.003, T1059]
+match: |
+  event.sensor == "fim" &&
+  has(event.tags["cron_suspicion"]) &&
+  int(event.tags["cron_suspicion"]) >= 50
+tags: [persistence, post_exploitation]
+remediation: |
+  The classifier scored this cron file >=50/100 on malware-shape
+  heuristics. Inspect: cron_owner, cron_tmp_path, command shape
+  (cron_shell_pipe / cron_remote_fetch / cron_b64 / cron_hidden_script).
+  If cron_added_by_web=true OR cron_owner_mismatch=true treat as
+  near-certain post-exploitation.
+test_id: FIM-04
+---
+id: cron_web_user_added
+desc: Cron file owned by a web/service user (almost-certain RCE)
+severity: critical
+mitre: [T1053.003]
+match: |
+  event.sensor == "fim" &&
+  event.tags["cron_added_by_web"] == "true"
+tags: [persistence, post_exploitation, web]
+remediation: |
+  www-data / apache / nginx / php-fpm / mysql adding a cron entry
+  is near-certain post-exploitation via web RCE. Legitimate web
+  workers do not crontab. Capture the file, dump the offending
+  request from access logs, snapshot the parent process.
+test_id: FIM-04

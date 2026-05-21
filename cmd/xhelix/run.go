@@ -58,6 +58,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/runtimeallow"
 	"github.com/xhelix/xhelix/pkg/vendorcatalog"
+	"github.com/xhelix/xhelix/pkg/vhostdiscovery"
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
 	"github.com/xhelix/xhelix/pkg/session"
@@ -1260,9 +1261,35 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		if cfg.Storage.Hot.Path != "" && cfg.Storage.Hot.Path != ":memory:" {
 			fimDb = filepath.Join(filepath.Dir(cfg.Storage.Hot.Path), "fim.db")
 		}
-		fimSensor := fimsensor.NewSensor(fimDb, cfg.Sensors.FIM.WatchPaths, hostname, 5*time.Minute)
+		watchPaths := cfg.Sensors.FIM.WatchPaths
+
+		// P-AB.8: ask the running web servers what their document
+		// roots and reverse-proxy upstreams are, then fold the
+		// sentinel files (wp-config.php, .htaccess, .env, etc.)
+		// from each discovered root into the FIM watch list. This
+		// catches custom layouts (cPanel, DirectAdmin, raw nginx
+		// pointing at /srv/whatever, FastCGI apps whose code lives
+		// at the upstream's cwd) without operator-supplied paths.
+		vhostResult := vhostdiscovery.DiscoverAll()
+		vhostPaths := vhostdiscovery.FIMWatchPatterns(vhostResult)
+		if len(vhostPaths) > 0 {
+			watchPaths = append(watchPaths, vhostPaths...)
+			var srcs []string
+			for _, v := range vhostResult.Vhosts {
+				srcs = append(srcs, v.Source+":"+v.Root)
+			}
+			log.Info("vhost discovery enriched fim",
+				"vhosts", len(vhostResult.Vhosts),
+				"sentinels", len(vhostPaths),
+				"sources", srcs)
+		}
+		for _, e := range vhostResult.Errors {
+			log.Warn("vhost discovery soft error", "err", e)
+		}
+
+		fimSensor := fimsensor.NewSensor(fimDb, watchPaths, hostname, 5*time.Minute)
 		activeSensors = append(activeSensors, fimSensor)
-		log.Info("fim sensor configured", "db", fimDb, "paths", len(cfg.Sensors.FIM.WatchPaths))
+		log.Info("fim sensor configured", "db", fimDb, "paths", len(watchPaths))
 	}
 
 	// NetIDS sensor

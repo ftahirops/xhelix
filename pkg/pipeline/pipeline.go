@@ -26,6 +26,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/baseline"
 	"github.com/xhelix/xhelix/pkg/beacon"
+	"github.com/xhelix/xhelix/pkg/cronclassify"
 	"github.com/xhelix/xhelix/pkg/brandcheck"
 	"github.com/xhelix/xhelix/pkg/capwatch"
 	"github.com/xhelix/xhelix/pkg/catalog"
@@ -178,6 +179,23 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 					}
 					ev.Tags["baseline_known"] = "true"
 				}
+			}
+		}
+	}
+
+	// Cron classifier (P-AB.8). When a FIM event touches a cron
+	// path, read the file and stamp content/owner tags so the
+	// rule engine can fire on the malware shapes (curl|bash,
+	// /tmp scripts, web-user-added entries) without needing a
+	// sandbox.
+	if (ev.Sensor == "fim" || ev.Sensor == "fim.drift") && ev.Tags != nil {
+		if path := ev.Tags["path"]; isCronPath(path) {
+			tags := cronclassify.Classify(path)
+			for k, v := range tags {
+				ev.Tags[k] = v
+			}
+			if score := cronclassify.Suspicion(tags); score > 0 {
+				ev.Tags["cron_suspicion"] = fmt.Sprintf("%d", score)
 			}
 		}
 	}
@@ -615,4 +633,23 @@ func (p *Pipeline) Run(ctx context.Context, events <-chan model.Event) {
 			p.Handle(ctx, ev)
 		}
 	}
+}
+
+// isCronPath reports whether path is a cron drop-in location worth
+// classifying. Keeping the list short avoids running the classifier
+// on every FIM event.
+func isCronPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	if path == "/etc/crontab" || path == "/etc/anacrontab" {
+		return true
+	}
+	switch {
+	case strings.HasPrefix(path, "/etc/cron."):
+		return true
+	case strings.HasPrefix(path, "/var/spool/cron/"):
+		return true
+	}
+	return false
 }

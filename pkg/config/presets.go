@@ -210,6 +210,16 @@ func defaultServerWatchPaths() []string {
 		// ─── Container runtime config ─────────────────────────
 		"/etc/docker",
 		"/etc/containerd",
+		// ─── Kernel surface (P-AB.8) ──────────────────────────
+		// /boot holds vmlinuz + initrd; modifying these is the
+		// most powerful persistence vector that survives reinstall
+		// of userland packages. Rare-write directory so inotify
+		// load is negligible.
+		"/boot",
+		// Out-of-tree kernel modules land here. New .ko files are
+		// real rootkit surface.
+		"/lib/modules",
+		"/usr/lib/modules",
 	}
 }
 
