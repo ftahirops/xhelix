@@ -115,6 +115,35 @@ func Default() Config {
 			"/lib/systemd/systemd-*", "/usr/lib/systemd/systemd-*",
 			// Init / launchers.
 			"/usr/bin/init", "/sbin/init",
+			// P-PS.33: cron, system services, sysstat, named, mail.
+			// Added after the plesk.douxl.com deploy surfaced these as
+			// the day-1 FP cluster on a Plesk-managed host.
+			"/usr/sbin/cron", "/usr/sbin/CRON", "/usr/bin/cron",
+			"/usr/sbin/anacron",
+			"/usr/sbin/sshd", "/usr/lib/openssh/sshd-session",
+			"/usr/sbin/postfix", "/usr/lib/postfix/sbin/*",
+			"/usr/libexec/postfix/*",
+			"/usr/sbin/dovecot", "/usr/lib/dovecot/*",
+			"/usr/sbin/named", "/usr/sbin/rndc",
+			"/usr/sbin/apache2", "/usr/sbin/httpd",
+			"/usr/sbin/nginx",
+			"/usr/sbin/sa1", "/usr/sbin/sa2",
+			"/usr/lib/sysstat/*",
+			"/usr/lib/policykit-1/*", "/usr/libexec/polkitd",
+			"/usr/bin/qemu-ga", "/usr/sbin/qemu-ga",
+			// Plesk-specific (Plesk-managed hosts).
+			"/opt/plesk/php/*/sbin/*", "/opt/plesk/php/*/bin/*",
+			"/opt/plesk/admin/*", "/opt/psa/admin/sbin/*",
+			"/opt/psa/admin/bin/*",
+			"/usr/lib/plesk-9.0/*",
+			"/usr/local/psa/admin/sbin/*",
+			// Imunify360 / ImunifyAV (paired with Plesk).
+			"/usr/sbin/imunify-notifier",
+			"/usr/libexec/imunify-notifier/*",
+			"/opt/imunify360/*", "/opt/imunify-av/*",
+			"/usr/lib/imunify360/*",
+			// fail2ban-related (Plesk + standalone).
+			"/usr/bin/fail2ban-server", "/usr/bin/fail2ban-client",
 		},
 	}
 }
@@ -184,8 +213,20 @@ func (s *Set) Match(image string) bool {
 
 // MatchComm returns true if comm matches the basename of any
 // non-glob pattern. Use when image is unavailable.
+//
+// P-PS.33: Linux kernel + some readers wrap comm in parens when
+// the process used PR_SET_NAME or when comm comes from
+// /proc/PID/stat. Strip both forms before lookup so "(sa1)" and
+// "sa1" both match the allowlist entry for "sa1".
 func (s *Set) MatchComm(comm string) bool {
 	if s == nil || comm == "" {
+		return false
+	}
+	// Strip surrounding parens: "(sa1)" → "sa1"
+	if len(comm) >= 2 && comm[0] == '(' && comm[len(comm)-1] == ')' {
+		comm = comm[1 : len(comm)-1]
+	}
+	if comm == "" {
 		return false
 	}
 	s.mu.RLock()
