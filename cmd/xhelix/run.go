@@ -55,7 +55,9 @@ import (
 	"github.com/xhelix/xhelix/pkg/remediate"
 	"github.com/xhelix/xhelix/pkg/response"
 	"github.com/xhelix/xhelix/pkg/rules"
+	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/runtimeallow"
+	"github.com/xhelix/xhelix/pkg/vendorcatalog"
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
 	"github.com/xhelix/xhelix/pkg/session"
@@ -1491,6 +1493,58 @@ func dispatch(
 			"path", "/etc/xhelix/runtime-allowlist.yaml")
 	}
 
+	// Vendor catalog (P-AB.1): auto-detect hosting/control-panel
+	// stacks installed on the host. Each detected vendor contributes
+	// its known binary globs to the runtime allowlist seed so
+	// xhelix doesn't treat Plesk/cPanel/etc. as anomalous in the
+	// observation window. Missing /usr/share/xhelix/vendors is fine
+	// — Default() ships the baked-in catalog.
+	vc, _ := vendorcatalog.LoadDir("/usr/share/xhelix/vendors")
+	vendorBinaries := vendorcatalog.AllBinaries(vc.AutoDetect())
+	if len(vendorBinaries) > 0 {
+		ra.Extend(vendorBinaries)
+		var names []string
+		for _, d := range vc.AutoDetect() {
+			names = append(names, d.Vendor)
+		}
+		log.Info("vendor catalog auto-detected", "vendors", names,
+			"binaries_added", len(vendorBinaries))
+	}
+
+	// Autobaseline (P-AB.1): per-host silent observation → sealed
+	// detection. Database lives under the agent state dir; on a
+	// fresh install the manager starts in OBSERVE mode and seals
+	// after 24h. Pipeline.Handle queries IsKnown for suppression.
+	abPath := "/var/lib/xhelix/autobaseline.db"
+	abMgr, abErr := autobaseline.New(autobaseline.Options{
+		DBPath:      abPath,
+		Observation: 24 * time.Hour,
+	})
+	if abErr != nil {
+		log.Warn("autobaseline init failed (continuing without)",
+			"path", abPath, "err", abErr)
+		abMgr = nil
+	} else {
+		log.Info("autobaseline ready",
+			"mode", string(abMgr.Mode()),
+			"db", abPath)
+		// Periodic flush + auto-seal probe.
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					if err := abMgr.Tick(ctx); err != nil {
+						log.Warn("autobaseline tick", "err", err)
+					}
+				}
+			}
+		}()
+	}
+
 	p := &pipeline.Pipeline{
 		Log:              log,
 		HotStore:         hot,
@@ -1514,6 +1568,7 @@ func dispatch(
 		Catalog:          cat,
 		ColdStore:        coldStore,
 		RuntimeAllow:     ra,
+		AutoBaseline:     abMgr,
 		Emit:             emit,
 	}
 	p.Run(ctx, events)

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/baseline"
 	"github.com/xhelix/xhelix/pkg/beacon"
 	"github.com/xhelix/xhelix/pkg/brandcheck"
@@ -89,6 +90,14 @@ type Pipeline struct {
 	// allowlist (no events tagged).
 	RuntimeAllow *runtimeallow.Set
 
+	// AutoBaseline drives the day-0 silent observation + day-1+
+	// IsKnown query. When in ModeObserve, Handle() records
+	// (image, behavior) and tags the event `baseline_observing=true`
+	// so rules can suppress destructive actions. When in ModeDetect,
+	// Handle() queries IsKnown and tags `baseline_known=true` on
+	// matches so rules can branch. Nil is safe (no-op).
+	AutoBaseline *autobaseline.Manager
+
 	// Emit is the alert-bus sink. Required if any rule, detector,
 	// or threat-intel branch can fire. Pipeline never holds an
 	// alert bus directly — the daemon wires its own bus into a
@@ -143,6 +152,33 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				ev.Tags = map[string]string{}
 			}
 			ev.Tags["jit_allowlisted"] = "true"
+		}
+	}
+
+	// Autobaseline (P-AB.1): self-configuring per-host suppression.
+	// In ModeObserve we record (image, behavior) silently and tag
+	// the event so destructive rules know they're in the learning
+	// window. In ModeDetect we tag matches against the sealed
+	// profile so rules can branch on baseline_known.
+	if p.AutoBaseline != nil {
+		switch p.AutoBaseline.Mode() {
+		case autobaseline.ModeObserve:
+			if b, ok := autobaseline.EventToBehavior(ev); ok {
+				p.AutoBaseline.Observe(ev.Image, b)
+			}
+			if ev.Tags == nil {
+				ev.Tags = map[string]string{}
+			}
+			ev.Tags["baseline_observing"] = "true"
+		case autobaseline.ModeDetect:
+			if b, ok := autobaseline.EventToBehavior(ev); ok {
+				if p.AutoBaseline.IsKnown(ev.Image, b) {
+					if ev.Tags == nil {
+						ev.Tags = map[string]string{}
+					}
+					ev.Tags["baseline_known"] = "true"
+				}
+			}
 		}
 	}
 

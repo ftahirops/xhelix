@@ -195,6 +195,24 @@ func LoadFile(path string) (*Set, error) {
 	return New(cfg), nil
 }
 
+// Extend appends additional glob patterns to the Set. Used by the
+// daemon to fold in vendor-catalog auto-detected binaries
+// (Plesk, cPanel, etc.) at startup without rebuilding the file
+// overlay. Concurrency-safe.
+func (s *Set) Extend(patterns []string) {
+	if s == nil || len(patterns) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range patterns {
+		s.patterns = append(s.patterns, p)
+		if !strings.ContainsAny(p, "*?[") {
+			s.commSet[filepath.Base(p)] = struct{}{}
+		}
+	}
+}
+
 // Match returns true if image matches any allowlist glob.
 // Empty image is treated as no-match.
 func (s *Set) Match(image string) bool {
