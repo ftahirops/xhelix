@@ -333,36 +333,141 @@ func (m *Manager) Close() error {
 	return m.db.Close()
 }
 
+// ImageKey returns the unit of normality we profile against. For
+// most events the binary path is the right key; eBPF often emits
+// events with an empty Image (only comm is set), so we fall back to
+// "comm:<name>" to give the autobaseline something to bind to.
+// Heartbeat + identity events bind by sensor so they aggregate
+// instead of fanning out per-uid.
+func ImageKey(e model.Event) string {
+	if e.Image != "" {
+		return e.Image
+	}
+	if p := e.Tags["path"]; p != "" {
+		return p
+	}
+	if e.Comm != "" {
+		return "comm:" + e.Comm
+	}
+	return "sensor:" + e.Sensor
+}
+
 // EventToBehavior projects a model.Event onto a Behavior, or
 // returns ok=false if the event isn't baseline-relevant.
 //
-// Kept here (not in pipeline) so the rule for "what counts as
-// behaviour" lives next to the storage.
+// Match table grounded in real production tag shapes captured from
+// the plesk.douxl.com hot store (P-AB.6, 2026-05-21):
+//
+//	sensor          kind / tag         → Behavior.Action / Detail
+//	──────────────────────────────────────────────────────────────
+//	ebpf.cap        kind=cap_set       → cap_set       cap_effective hex
+//	ebpf.proc       kind=proc_spawn    → spawn         basename(path) or comm
+//	ebpf.proc       from_memfd=true    → memfd_spawn   basename(path)
+//	ebpf.proc       mprotect_rwx=true  → mprotect_rwx  (no detail)
+//	ebpf.proc       ptrace_attach=true → ptrace        comm
+//	ebpf.proc       uid0_transition    → uid0          (no detail)
+//	ebpf.proc       stdin/stdout_socket→ shell_socket  (no detail)
+//	ebpf.net        kind=net_bind      → net_bind      port
+//	ebpf.net        kind=net_connect   → net_connect   "dst_port"
+//	ebpf.net        outbound=true      → outbound      "dst_port"
+//	ebpf.ssl        kind=ssl_*         → ssl_io        (no detail)
+//	ebpf            mod_load=true      → mod_load      (no detail)
+//	ebpf            bpf_syscall=true   → bpf_syscall   (no detail)
+//	fim             tags["path"] set   → file_write    dir(path)
+//	identity.sshd   outcome=success    → auth_ok       user
+//	identity.sshd   outcome=failure    → auth_fail     user
+//	heartbeat       —                  → (skip)
+//	test.synthetic  —                  → (skip)
+//
+// Returning ok=false means "this event isn't behaviour-shaped" —
+// the pipeline still tags baseline_observing/known and the gate
+// still runs; we just don't add a row to the profile.
 func EventToBehavior(e model.Event) (Behavior, bool) {
 	tags := e.Tags
-	switch {
-	case tags["action"] == "cap_gained" || strings.Contains(e.Sensor, "cap"):
-		if cap := tags["capability"]; cap != "" {
-			return Behavior{Action: "cap_gained", Detail: cap}, true
+	// Always skip pure-noise sensors.
+	switch e.Sensor {
+	case "heartbeat", "test.synthetic":
+		return Behavior{}, false
+	}
+
+	// Behaviour-bearing tag bits applied via OR so a single event
+	// can carry multiple signals; we pick the most-specific one.
+	if tags["mprotect_rwx"] == "true" {
+		return Behavior{Action: "mprotect_rwx"}, true
+	}
+	if tags["uid0_transition"] == "true" {
+		return Behavior{Action: "uid0"}, true
+	}
+	if tags["ptrace_attach"] == "true" {
+		return Behavior{Action: "ptrace", Detail: e.Comm}, true
+	}
+	if tags["mod_load"] == "true" {
+		return Behavior{Action: "mod_load"}, true
+	}
+	if tags["bpf_syscall"] == "true" {
+		return Behavior{Action: "bpf_syscall"}, true
+	}
+	if tags["stdin_is_socket"] == "true" || tags["stdout_is_socket"] == "true" {
+		return Behavior{Action: "shell_socket"}, true
+	}
+	if tags["from_memfd"] == "true" {
+		return Behavior{Action: "memfd_spawn", Detail: shortPath(tags["path"], e.Comm)}, true
+	}
+
+	// Sensor-keyed projections.
+	switch e.Sensor {
+	case "ebpf.cap":
+		if k := tags["kind"]; k == "cap_set" || k == "cap_gain" {
+			detail := tags["cap_effective"]
+			if detail == "" {
+				detail = tags["capability"]
+			}
+			return Behavior{Action: "cap_set", Detail: detail}, true
 		}
-	case e.Sensor == "fim" || tags["action"] == "file_write":
-		if path := tags["path"]; path != "" {
-			return Behavior{Action: "file_write", Detail: filepath.Dir(path)}, true
+	case "ebpf.proc":
+		// Exit events are silent — they have no behaviour signal we
+		// haven't already captured at spawn time.
+		if tags["kind"] == "proc_exit" {
+			return Behavior{}, false
 		}
-	case e.Sensor == "netids" || tags["action"] == "outbound":
-		if ep := tags["endpoint"]; ep != "" {
-			return Behavior{Action: "outbound", Detail: ep}, true
+		return Behavior{Action: "spawn", Detail: shortPath(tags["path"], e.Comm)}, true
+	case "ebpf.net":
+		switch tags["kind"] {
+		case "net_bind":
+			return Behavior{Action: "net_bind", Detail: tags["dst_port"]}, true
+		case "net_connect":
+			return Behavior{Action: "net_connect", Detail: tags["dst_port"]}, true
 		}
-	case tags["action"] == "memfd_run" || strings.Contains(e.Sensor, "memfd"):
-		return Behavior{Action: "memfd_run"}, true
-	case tags["action"] == "child_spawn":
-		if c := tags["child_comm"]; c != "" {
-			return Behavior{Action: "child_spawn", Detail: c}, true
+		if tags["outbound"] == "true" {
+			return Behavior{Action: "outbound", Detail: tags["dst_port"]}, true
 		}
-	case e.Sensor == "ebpf" && tags["syscall"] != "":
-		return Behavior{Action: "syscall", Detail: tags["syscall"]}, true
+	case "ebpf.ssl":
+		// We don't profile every read/write — that would explode
+		// cardinality. Presence alone is the signal.
+		return Behavior{Action: "ssl_io"}, true
+	case "fim":
+		if p := tags["path"]; p != "" {
+			return Behavior{Action: "file_write", Detail: filepath.Dir(p)}, true
+		}
+	case "identity.sshd":
+		user := tags["user"]
+		if tags["outcome"] == "success" {
+			return Behavior{Action: "auth_ok", Detail: user}, true
+		}
+		if tags["outcome"] == "failure" {
+			return Behavior{Action: "auth_fail", Detail: user}, true
+		}
 	}
 	return Behavior{}, false
+}
+
+// shortPath returns the basename of p, or fallback if p is empty.
+// Keeps profile rows readable.
+func shortPath(p, fallback string) string {
+	if p == "" {
+		return fallback
+	}
+	return filepath.Base(p)
 }
 
 // ─────────────────────────── persistence ───────────────────────────

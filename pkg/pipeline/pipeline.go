@@ -164,7 +164,7 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		switch p.AutoBaseline.Mode() {
 		case autobaseline.ModeObserve:
 			if b, ok := autobaseline.EventToBehavior(ev); ok {
-				p.AutoBaseline.Observe(ev.Image, b)
+				p.AutoBaseline.Observe(autobaseline.ImageKey(ev), b)
 			}
 			if ev.Tags == nil {
 				ev.Tags = map[string]string{}
@@ -172,7 +172,7 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			ev.Tags["baseline_observing"] = "true"
 		case autobaseline.ModeDetect:
 			if b, ok := autobaseline.EventToBehavior(ev); ok {
-				if p.AutoBaseline.IsKnown(ev.Image, b) {
+				if p.AutoBaseline.IsKnown(autobaseline.ImageKey(ev), b) {
 					if ev.Tags == nil {
 						ev.Tags = map[string]string{}
 					}

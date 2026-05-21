@@ -94,7 +94,10 @@ func TestPersistAcrossRestart(t *testing.T) {
 	}
 }
 
-func TestEventToBehavior(t *testing.T) {
+// TestEventToBehaviorRealSensors uses tag shapes captured from
+// plesk.douxl.com hot.db on 2026-05-21 — proves the projection
+// matches what the daemon actually emits, not what was guessed.
+func TestEventToBehaviorRealSensors(t *testing.T) {
 	type ev struct {
 		sensor string
 		tags   map[string]string
@@ -105,24 +108,80 @@ func TestEventToBehavior(t *testing.T) {
 		want   Behavior
 		wantOK bool
 	}{
-		{"cap_gained", ev{"capwatch", map[string]string{"action": "cap_gained", "capability": "CAP_SYS_ADMIN"}},
-			Behavior{Action: "cap_gained", Detail: "CAP_SYS_ADMIN"}, true},
-		{"file_write_path_dir", ev{"fim", map[string]string{"path": "/etc/cron.d/evil"}},
-			Behavior{Action: "file_write", Detail: "/etc/cron.d"}, true},
-		{"outbound_endpoint", ev{"netids", map[string]string{"endpoint": "10.0.0.0/16:443"}},
-			Behavior{Action: "outbound", Detail: "10.0.0.0/16:443"}, true},
-		{"unrelated", ev{"heartbeat", map[string]string{}},
-			Behavior{}, false},
+		// Real ebpf.cap shape from prod (sshd capset).
+		{"ebpf.cap_set", ev{"ebpf.cap", map[string]string{
+			"kind": "cap_set", "cap_effective": "0x1ffffffffff", "cap_permitted": "0x1ffffffffff",
+		}}, Behavior{Action: "cap_set", Detail: "0x1ffffffffff"}, true},
+		// Real ebpf.proc spawn.
+		{"ebpf.proc_spawn", ev{"ebpf.proc", map[string]string{
+			"kind": "proc_spawn", "path": "/usr/bin/date",
+		}}, Behavior{Action: "spawn", Detail: "date"}, true},
+		{"ebpf.proc_exit_skip", ev{"ebpf.proc", map[string]string{
+			"kind": "proc_exit",
+		}}, Behavior{}, false},
+		// Memfd dominates regardless of sensor.
+		{"memfd_spawn", ev{"ebpf.proc", map[string]string{
+			"kind": "proc_spawn", "from_memfd": "true", "path": "/proc/self/fd/9",
+		}}, Behavior{Action: "memfd_spawn", Detail: "9"}, true},
+		// Net bind/connect.
+		{"net_bind", ev{"ebpf.net", map[string]string{
+			"kind": "net_bind", "dst_port": "443",
+		}}, Behavior{Action: "net_bind", Detail: "443"}, true},
+		{"net_connect", ev{"ebpf.net", map[string]string{
+			"kind": "net_connect", "dst_port": "80",
+		}}, Behavior{Action: "net_connect", Detail: "80"}, true},
+		// SSL presence.
+		{"ssl_io", ev{"ebpf.ssl", map[string]string{
+			"kind": "ssl_read", "ssl_read": "true",
+		}}, Behavior{Action: "ssl_io"}, true},
+		// FIM with real-ish tag.
+		{"fim_path", ev{"fim", map[string]string{
+			"path": "/etc/cron.d/evil",
+		}}, Behavior{Action: "file_write", Detail: "/etc/cron.d"}, true},
+		// Identity success/failure.
+		{"sshd_ok", ev{"identity.sshd", map[string]string{
+			"outcome": "success", "user": "root",
+		}}, Behavior{Action: "auth_ok", Detail: "root"}, true},
+		{"sshd_fail", ev{"identity.sshd", map[string]string{
+			"outcome": "failure", "user": "admin",
+		}}, Behavior{Action: "auth_fail", Detail: "admin"}, true},
+		// Tag-bit signals dominate.
+		{"mprotect_rwx", ev{"ebpf.proc", map[string]string{
+			"mprotect_rwx": "true", "kind": "proc_spawn",
+		}}, Behavior{Action: "mprotect_rwx"}, true},
+		{"shell_socket", ev{"ebpf.proc", map[string]string{
+			"stdin_is_socket": "true", "kind": "proc_spawn",
+		}}, Behavior{Action: "shell_socket"}, true},
+		// Skip noise sensors.
+		{"heartbeat", ev{"heartbeat", map[string]string{}}, Behavior{}, false},
+		{"synthetic", ev{"test.synthetic", map[string]string{}}, Behavior{}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got, ok := EventToBehavior(mkEvent(c.in.sensor, c.in.tags))
 			if ok != c.wantOK {
-				t.Fatalf("ok=%v want %v", ok, c.wantOK)
+				t.Fatalf("ok=%v want %v (got=%+v)", ok, c.wantOK, got)
 			}
 			if ok && got != c.want {
 				t.Fatalf("got %+v want %+v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestImageKeyFallbacks(t *testing.T) {
+	ev := mkEvent("ebpf.proc", map[string]string{"path": "/bin/ls"})
+	ev.Comm = "ls"
+	if got := ImageKey(ev); got != "/bin/ls" {
+		t.Errorf("with tag.path: got %q", got)
+	}
+	ev2 := mkEvent("ebpf.cap", map[string]string{})
+	ev2.Comm = "sshd"
+	if got := ImageKey(ev2); got != "comm:sshd" {
+		t.Errorf("comm fallback: got %q", got)
+	}
+	ev3 := mkEvent("heartbeat", map[string]string{})
+	if got := ImageKey(ev3); got != "sensor:heartbeat" {
+		t.Errorf("sensor fallback: got %q", got)
 	}
 }
