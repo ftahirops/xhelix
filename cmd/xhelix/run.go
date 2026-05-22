@@ -35,7 +35,11 @@ import (
 	"github.com/xhelix/xhelix/pkg/forensicapi"
 	"github.com/xhelix/xhelix/pkg/protectedsvc"
 	"github.com/xhelix/xhelix/pkg/protectsvcapi"
+	"github.com/xhelix/xhelix/pkg/appident"
+	"github.com/xhelix/xhelix/pkg/destclass"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
+	"github.com/xhelix/xhelix/pkg/egressmon"
+	"github.com/xhelix/xhelix/pkg/vhostcorr"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/execguard"
 	"github.com/xhelix/xhelix/pkg/forensic"
@@ -1166,8 +1170,84 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// audit-log queries and (USG.2+) policy-gated unseals over
 	// LocalAPI. The seal/unseal/migration path stays on
 	// xhelixctl-side for operator workflows.
+	// P-EGRESS.M1 — egress observer (Mode 1, default-off opt-in).
+	// Construct early so the LocalAPI handler closure below can
+	// capture it. Pipeline picks it up later via Pipeline.EgressObserver.
+	// Pure data layer: classifies every outbound connect; no enforcement.
+	var egressObs *egressmon.Observer
+	if cfg.Egress.Observe {
+		sampleTTL := cfg.Egress.SampleTTL
+		if sampleTTL == 0 {
+			sampleTTL = 10 * time.Minute
+		}
+		minFleet := cfg.Egress.MinFleetSeen
+		if minFleet == 0 {
+			minFleet = 3
+		}
+		_ = minFleet // fleet baseline provider lands in P-EGRESS.M1.b
+		// intel provider is attached later, after intelMgr is built,
+		// via egressObs.WithIntel-equivalent — but the observer's
+		// classifier is fixed at construction. For now build without
+		// intel; P-EGRESS.M1.b will reorder construction.
+		egressObs = egressmon.New(destclass.New(), sampleTTL)
+		cfgAudit.Witness("egress.observe", "EgressObserver")
+		cfgAudit.Witness("egress.sample_ttl", "EgressObserver")
+		cfgAudit.Witness("egress.min_fleet_seen", "EgressObserver")
+		log.Info("egress observer enabled (Mode 1 — observe + classify, no enforcement)",
+			"sample_ttl", sampleTTL, "min_fleet_seen", minFleet)
+		// Daily rollup writer — periodic snapshot to
+		// /var/lib/xhelix/egress-analytics/YYYY-MM-DD.jsonl.
+		rollupHost, _ := os.Hostname()
+		rollupDir := filepath.Join(cfg.Agent.StateDir, "egress-analytics")
+		rollup := egressmon.NewRollup(egressObs, rollupDir, 60*time.Second, rollupHost)
+		if err := rollup.Start(ctx); err != nil {
+			log.Warn("egress rollup start failed (continuing without daily file)", "err", err)
+		} else {
+			log.Info("egress rollup writer started", "dir", rollupDir, "period", "60s")
+		}
+	}
+
+	// App identification — load operator declarations from
+	// /etc/xhelix/apps.d/*.yaml + heuristics. Always constructed
+	// (cheap, nil-safe, no enforcement). Pipeline uses it to tag
+	// every event with app_id for analytics + grouping.
+	appDecls, appDeclErrs := appident.LoadDecls("/etc/xhelix/apps.d")
+	for _, e := range appDeclErrs {
+		log.Warn("appident decl load error", "err", e)
+	}
+	appIdentifier := appident.New(appDecls)
+	if len(appDecls) > 0 {
+		log.Info("appident declarations loaded", "count", len(appDecls))
+	}
+
+	// Vhost correlator — per-worker-pid pending vhost slot, TTL 2s.
+	// Always constructed; cheap, nil-safe. Pipeline notes inbound
+	// HTTP Host header → outbound connects within TTL get tagged
+	// with inbound_vhost.
+	vhostCorrelator := vhostcorr.New(2 * time.Second)
+	// Periodic sweep (cheap; lookups also lazy-prune).
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				vhostCorrelator.Sweep()
+			}
+		}
+	}()
+
 	credBroker := loadCredBroker(log)
-	startFanGate(ctx, log, credBroker)
+	// Bridge the daemon's emit closure into the fangate so cred-broker
+	// denies / honey-touches land in the alert bus AND the takeover
+	// planner (via plannerWiring.OnAlert which is wrapped inside emit).
+	startFanGate(ctx, log, credBroker, func(a interface{}) {
+		if ma, ok := a.(model.Alert); ok && emit != nil {
+			emit(ma)
+		}
+	})
 	apiSrv.RegisterHandler("credbroker.history", func(_ context.Context, _ json.RawMessage) (any, error) {
 		hist := credBroker.History()
 		out := make([]map[string]any, 0, len(hist))
@@ -1185,6 +1265,105 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			})
 		}
 		return map[string]any{"records": out}, nil
+	})
+	apiSrv.RegisterHandler("egress.block", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if banner == nil {
+			return map[string]any{"ok": false, "error": "netban disabled — set netban.enabled=true"}, nil
+		}
+		var req struct {
+			Dest   string `json:"dest"`
+			Reason string `json:"reason"`
+			CIDR   bool   `json:"cidr"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.CIDR {
+			return nil, fmt.Errorf("CIDR blocking via Banner not supported yet; v1 only single-IP")
+		}
+		ip := net.ParseIP(req.Dest)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP: %q", req.Dest)
+		}
+		if err := banner.Ban(ip, req.Reason, 0); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "banned": ip.String(), "reason": req.Reason}, nil
+	})
+	apiSrv.RegisterHandler("egress.deep_observe", func(_ context.Context, raw json.RawMessage) (any, error) {
+		// v1: deep-observe is a marker the operator sets; sensor-side
+		// elevation lands in P-EGRESS.M2. We record it in the daemon
+		// state for visibility but don't change observer behaviour.
+		var req struct {
+			Dest   string `json:"dest"`
+			Port   uint16 `json:"port"`
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		log.Info("egress.deep_observe marker recorded (sensor elevation in M2)",
+			"dest", req.Dest, "port", req.Port, "reason", req.Reason)
+		return map[string]any{"ok": true, "dest": req.Dest, "port": req.Port,
+			"note": "marker recorded; sensor-side elevation lands in P-EGRESS.M2"}, nil
+	})
+	apiSrv.RegisterHandler("egress.observe", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if egressObs == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		var req struct {
+			Lineage uint64 `json:"lineage"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		snaps := egressObs.Snapshot(egressmon.LineageID(req.Lineage))
+		out := make([]map[string]any, 0, len(snaps))
+		for _, s := range snaps {
+			byClass := map[string]int{}
+			for k, v := range s.ByClass {
+				byClass[string(k)] = v
+			}
+			sample := make([]map[string]any, 0, len(s.RecentSample))
+			for _, o := range s.RecentSample {
+				sample = append(sample, map[string]any{
+					"at":    o.At,
+					"ip":    o.IP.String(),
+					"sni":   o.SNI,
+					"port":  o.Port,
+					"class": string(o.Class),
+				})
+			}
+			out = append(out, map[string]any{
+				"lineage":           uint64(s.LineageID),
+				"total_connects":    s.TotalConnects,
+				"by_class":          byClass,
+				"unique_dests":      s.UniqueDests,
+				"unique_unknown":    s.UniqueUnknown,
+				"last_connect":      s.LastConnect,
+				"first_unknown_at":  s.FirstUnknownAt,
+				"first_intel_bad":   s.FirstIntelBadAt,
+				"recent_sample":     sample,
+			})
+		}
+		return map[string]any{"enabled": true, "lineages": out}, nil
+	})
+	apiSrv.RegisterHandler("credbroker.contracts", func(_ context.Context, _ json.RawMessage) (any, error) {
+		set := credBroker.AppContracts()
+		if set == nil {
+			return map[string]any{"contracts": []any{}}, nil
+		}
+		out := make([]map[string]any, 0)
+		for _, c := range set.Contracts() {
+			out = append(out, map[string]any{
+				"name":                c.Name,
+				"binary":              c.Binary,
+				"sha256_pin":          c.SHA256Pin,
+				"parent_shape":        c.ParentShape,
+				"allowed_credentials": c.AllowedCredentials,
+				"purpose":             c.Purpose,
+				"max_opens_per_min":   c.MaxOpensPerMin,
+			})
+		}
+		return map[string]any{"contracts": out}, nil
 	})
 	apiSrv.RegisterHandler("credbroker.decide", func(_ context.Context, raw json.RawMessage) (any, error) {
 		// LocalAPI entry-point used by USG.2 kernel hook OR by
@@ -1581,7 +1760,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		shmDet, brandDet,
 		emit,
 		foundation.ColdStore,
-		foundation.Catalog)
+		foundation.Catalog,
+		egressObs,
+		appIdentifier,
+		vhostCorrelator)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -1688,6 +1870,9 @@ func dispatch(
 	emit func(model.Alert),
 	coldStore *coldstore.Store,
 	cat *catalog.Catalog,
+	egressObs *egressmon.Observer,
+	appIdentifier *appident.Identifier,
+	vhostCorrelator *vhostcorr.Correlator,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -1809,6 +1994,9 @@ func dispatch(
 		FileReadBurst:    fileBurst,
 		SpawnBurst:       spawnBurst,
 		Emit:             emit,
+		EgressObserver:   egressObs,
+		AppIdent:         appIdentifier,
+		VhostCorr:        vhostCorrelator,
 	}
 	p.Run(ctx, events)
 }

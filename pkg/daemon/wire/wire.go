@@ -290,6 +290,10 @@ func mapRuleIDToKind(ruleID string) takeover.SignalKind {
 	case "baseline.behavioural_deviation",
 		"baseline.rate_spike":
 		return takeover.SignalNewBinary
+	case "credbroker.unauthentic_open":
+		return takeover.SignalCredBrokerDeny
+	case "credbroker.honey_touched":
+		return takeover.SignalCredBrokerHoneyTouch
 	}
 	return ""
 }

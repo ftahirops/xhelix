@@ -57,13 +57,28 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// markMode is how the gate treats opens of a marked path.
+type markMode uint8
+
+const (
+	modeSealed markMode = iota // .sealed: broker.Decide → ALLOW or DENY
+	modeHoney                  // .honey: always ALLOW, emit "honey touched" alert
+)
+
 // FanGate is the fanotify-backed permission gate.
 type FanGate struct {
 	broker *Broker
+	honey  *HoneyFactory // for honey-touched alert metadata; may be nil
+	emit   AlertEmitter  // optional alert sink; nil → no alerts
 
 	// fd is the fanotify file descriptor; -1 when stopped.
 	fdMu sync.RWMutex
 	fd   int
+
+	// pathMode records how each marked path is treated. Updated under
+	// marked's lock; read under fast path on every event.
+	pathModeMu sync.RWMutex
+	pathMode   map[string]markMode
 
 	// marked tracks the absolute paths we've successfully marked
 	// with FAN_OPEN_PERM. xhelixctl credbroker status reads this.
@@ -97,18 +112,32 @@ func NewFanGate(broker *Broker, log interface{ Warn(string, ...any) }) (*FanGate
 		return nil, fmt.Errorf("fanotify_init: %w", err)
 	}
 	g := &FanGate{
-		broker: broker,
-		fd:     fd,
-		log:    log,
+		broker:   broker,
+		fd:       fd,
+		log:      log,
+		pathMode: map[string]markMode{},
 	}
 	g.marked.Store([]string{})
 	return g, nil
 }
 
-// Mark arms FAN_OPEN_PERM on the given absolute path. Returns nil
-// if marking succeeded. Failures are typically EPERM (missing
-// CAP_SYS_ADMIN) or ENOTDIR/ENOENT (path doesn't exist).
-func (g *FanGate) Mark(path string) error {
+// WithHoney attaches a HoneyFactory so honey-touched events carry
+// marker metadata in their alerts.
+func (g *FanGate) WithHoney(h *HoneyFactory) *FanGate { g.honey = h; return g }
+
+// WithAlertEmitter attaches a sink for decision alerts. May be nil.
+func (g *FanGate) WithAlertEmitter(e AlertEmitter) *FanGate { g.emit = e; return g }
+
+// Mark arms FAN_OPEN_PERM on the given absolute path as a sealed file
+// (broker.Decide gates each open).
+func (g *FanGate) Mark(path string) error { return g.markPath(path, modeSealed) }
+
+// MarkHoney arms FAN_OPEN_PERM on path as a honey decoy (every open
+// triggers an alert, but the open is allowed — attacker exfiltrates
+// the marked honey content and is detected later via the marker).
+func (g *FanGate) MarkHoney(path string) error { return g.markPath(path, modeHoney) }
+
+func (g *FanGate) markPath(path string, mode markMode) error {
 	g.fdMu.RLock()
 	fd := g.fd
 	g.fdMu.RUnlock()
@@ -119,14 +148,24 @@ func (g *FanGate) Mark(path string) error {
 	if err := unix.FanotifyMark(fd, unix.FAN_MARK_ADD, mask, unix.AT_FDCWD, path); err != nil {
 		return fmt.Errorf("fanotify_mark %s: %w", path, err)
 	}
+	g.pathModeMu.Lock()
+	g.pathMode[path] = mode
+	g.pathModeMu.Unlock()
 	g.appendMarked(path)
 	return nil
 }
 
-// MarkSealedFilesIn walks dir recursively and Marks every file
-// whose name ends in ".sealed" — the canonical credbroker
-// extension. Returns count successfully marked + list of errors.
+// MarkHoneyFilesIn walks dir recursively and marks every *.honey file.
+func (g *FanGate) MarkHoneyFilesIn(dir string) (int, []error) {
+	return g.markFilesWithSuffix(dir, ".honey", modeHoney)
+}
+
+// MarkSealedFilesIn walks dir recursively and Marks every *.sealed file.
 func (g *FanGate) MarkSealedFilesIn(dir string) (int, []error) {
+	return g.markFilesWithSuffix(dir, ".sealed", modeSealed)
+}
+
+func (g *FanGate) markFilesWithSuffix(dir, suffix string, mode markMode) (int, []error) {
 	var errs []error
 	count := 0
 	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
@@ -134,10 +173,10 @@ func (g *FanGate) MarkSealedFilesIn(dir string) (int, []error) {
 			errs = append(errs, fmt.Errorf("%s: %w", p, err))
 			return nil
 		}
-		if d.IsDir() || !strings.HasSuffix(p, ".sealed") {
+		if d.IsDir() || !strings.HasSuffix(p, suffix) {
 			return nil
 		}
-		if err := g.Mark(p); err != nil {
+		if err := g.markPath(p, mode); err != nil {
 			errs = append(errs, err)
 			return nil
 		}
@@ -281,17 +320,12 @@ func (g *FanGate) processEvent(fanFD, eventFD int, pid uint32, mask uint64) {
 	g.stats.eventsRx.Add(1)
 	defer unix.Close(eventFD)
 
-	// Only handle perm events.
 	if mask&unix.FAN_OPEN_PERM == 0 {
 		return
 	}
 
-	// Resolve the path being opened by reading /proc/self/fd/<fd>.
 	path, _ := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", eventFD))
-
-	// Build lineage from /proc/<pid>.
 	lineage := buildLineage(pid)
-
 	req := Request{
 		SealedPath: path,
 		PID:        pid,
@@ -300,32 +334,91 @@ func (g *FanGate) processEvent(fanFD, eventFD int, pid uint32, mask uint64) {
 		Reason:     "fanotify perm event",
 	}
 
-	// We need to actually read the sealed file to call Decide.
-	// Read the bytes via the kernel-provided fd (which is the
-	// opened file, already permission-checked at VFS layer for us).
-	// In v1 we just call Broker.Decide with the SealedPath; Decide
-	// itself re-opens the file. This is a small efficiency loss
-	// but keeps the broker API clean.
-	sf, err := ReadSealed(path)
-	if err != nil {
-		// Read failed — let the open succeed so the caller gets
-		// the normal kernel error rather than a fangate-induced
-		// hang. Audit the event so operator sees the failure.
+	g.pathModeMu.RLock()
+	mode := g.pathMode[path]
+	g.pathModeMu.RUnlock()
+
+	switch mode {
+	case modeHoney:
+		// Decoy file. ALLOW the open (attacker reads honey content
+		// and walks off) but emit a HIGH-CONFIDENCE alert: a
+		// honey-only file has no legitimate reader by construction.
 		g.respond(fanFD, eventFD, true)
-		g.stats.errors.Add(1)
-		if g.log != nil {
-			g.log.Warn("fangate read sealed failed", "path", path, "err", err)
+		g.stats.allowed.Add(1)
+		g.emitAlert(AlertHoneyTouched, path, req, "honey decoy opened (no legitimate reader by construction)")
+	default: // modeSealed
+		// Read content directly from the kernel-provided event fd.
+		// CRITICAL: we MUST NOT re-open `path` here. fanotify
+		// suppresses self-generated events only on the listener's
+		// own OS thread; Go goroutines migrate across threads, so
+		// an os.ReadFile on a non-listener thread re-enters fanotify
+		// and deadlocks (listener thread waits for itself to respond).
+		sf, err := readSealedFromFD(eventFD)
+		if err != nil {
+			// Read failed — let the open succeed so the caller gets
+			// the normal kernel error, but loud-warn.
+			g.respond(fanFD, eventFD, true)
+			g.stats.errors.Add(1)
+			if g.log != nil {
+				g.log.Warn("fangate read sealed failed", "path", path, "err", err)
+			}
+			return
 		}
+		res := g.broker.Decide(sf, req)
+		allow := res.Outcome == OutcomeAllow || res.Outcome == OutcomeHoney
+		g.respond(fanFD, eventFD, allow)
+		if allow {
+			g.stats.allowed.Add(1)
+		} else {
+			g.stats.denied.Add(1)
+			g.emitAlert(AlertSealedDenied, path, req, res.Reason)
+		}
+	}
+}
+
+// emitAlert sends a credbroker alert to the registered emitter, if any.
+// No-op when emit is nil — keeps fangate usable in tests without
+// requiring an alert bus.
+func (g *FanGate) emitAlert(kind AlertKind, sealedPath string, req Request, reason string) {
+	if g.emit == nil {
 		return
 	}
-	res := g.broker.Decide(sf, req)
-	allow := res.Outcome == OutcomeAllow || res.Outcome == OutcomeHoney
-	g.respond(fanFD, eventFD, allow)
-	if allow {
-		g.stats.allowed.Add(1)
-	} else {
-		g.stats.denied.Add(1)
+	a := BrokerAlert{
+		Kind:       kind,
+		SealedPath: sealedPath,
+		PID:        req.PID,
+		Lineage:    req.Lineage,
+		Reason:     reason,
+		At:         req.Now,
 	}
+	g.emit.Emit(a)
+}
+
+// readSealedFromFD reads bytes from the kernel-provided event fd and
+// parses them as a sealed file. Avoids re-opening the path (which
+// would deadlock — see modeSealed comment in processEvent).
+func readSealedFromFD(fd int) (*SealedFile, error) {
+	// Sealed files are tiny (header + base64 ciphertext); 16 KiB is
+	// generous.
+	var buf [16 * 1024]byte
+	total := 0
+	for {
+		n, err := unix.Pread(fd, buf[total:], int64(total))
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			return nil, err
+		}
+		if n == 0 {
+			break
+		}
+		total += n
+		if total >= len(buf) {
+			break
+		}
+	}
+	return ParseSealed(buf[:total])
 }
 
 // respond writes a fanotify_response (FD + ALLOW/DENY) back.

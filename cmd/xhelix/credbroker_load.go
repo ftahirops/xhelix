@@ -49,6 +49,21 @@ func loadCredBroker(log *slog.Logger) *credbroker.Broker {
 			"default_deny", contract.DefaultDeny)
 	}
 	b.WithContract(contract)
+
+	// Layer-2 contracts: /etc/xhelix/contracts.d/*.yaml. Each file is
+	// a per-app declared access policy (binary + allowed sealed
+	// paths + optional SHA pin + parent shape + rate cap). Missing
+	// dir is silently OK. Per-file parse errors are logged loudly
+	// but don't block boot.
+	appSet, errs := credbroker.LoadAppContractsDir("/etc/xhelix/contracts.d")
+	for _, e := range errs {
+		log.Warn("credbroker app-contract load error", "err", e)
+	}
+	if n := len(appSet.Contracts()); n > 0 {
+		log.Info("credbroker Layer-2 app contracts loaded", "count", n)
+	}
+	b.WithAppContracts(appSet)
+
 	return b
 }
 
@@ -56,7 +71,12 @@ func loadCredBroker(log *slog.Logger) *credbroker.Broker {
 // gate on Linux. Walks /var/lib/xhelix/sealed/ (and any operator-
 // configured roots) to find .sealed files and FAN_MARK them with
 // FAN_OPEN_PERM. From that point on every open(2) of a sealed file
-// suspends until the broker's Decide returns.
+// suspends until the broker's Decide returns. Honey decoys (.honey)
+// are also marked and every open emits a high-confidence alert.
+//
+// emit (may be nil) is the daemon's alert publisher. When non-nil
+// the fangate routes every deny / honey-touch into model.Alert so
+// the rule engine, sinks, and pkg/takeover scorer all observe it.
 //
 // Failure modes (all logged + degrade gracefully — the rest of
 // xhelix keeps working):
@@ -64,34 +84,37 @@ func loadCredBroker(log *slog.Logger) *credbroker.Broker {
 //   - non-Linux: returns "linux only" error
 //   - no .sealed files present yet: count=0 (operator seals
 //     credentials later via `xhelixctl credbroker seal`)
-func startFanGate(ctx context.Context, log *slog.Logger, broker *credbroker.Broker) {
+func startFanGate(ctx context.Context, log *slog.Logger, broker *credbroker.Broker, emit func(a interface{})) {
 	gate, err := credbroker.NewFanGate(broker, log)
 	if err != nil {
 		log.Warn("credbroker fangate disabled (init failed)", "err", err)
 		return
 	}
-	// Walk the seal roots and mark every existing .sealed file.
+	if emit != nil {
+		em := &credBrokerAlertEmitter{emit: castEmit(emit)}
+		gate.WithAlertEmitter(em)
+	}
 	sealRoots := []string{
 		"/var/lib/xhelix/sealed",
 		"/root/.aws", "/root/.gcp", "/root/.kube", "/root/.docker",
 		"/root/.config/gh", "/root/.config/gcloud", "/root/.config/op",
+		"/etc/xhelix/sealed",
 	}
-	total := 0
+	totalSealed := 0
+	totalHoney := 0
 	for _, root := range sealRoots {
-		n, errs := gate.MarkSealedFilesIn(root)
-		total += n
-		for _, e := range errs {
-			// Most "errors" here are "no such directory" which is
-			// fine — operator hasn't seeded that location.
-			_ = e
-		}
+		n, _ := gate.MarkSealedFilesIn(root)
+		totalSealed += n
+		h, _ := gate.MarkHoneyFilesIn(root)
+		totalHoney += h
 	}
 	if err := gate.Start(ctx); err != nil {
 		log.Warn("credbroker fangate start failed", "err", err)
 		return
 	}
 	log.Info("credbroker fangate started",
-		"sealed_files_marked", total,
+		"sealed_files_marked", totalSealed,
+		"honey_files_marked", totalHoney,
 		"seal_roots", sealRoots)
 }
 

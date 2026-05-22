@@ -47,6 +47,8 @@ remote-attestation checks. Use --force to acknowledge this.`,
 	cmd.AddCommand(newCredbrokerUnsealCmd())
 	cmd.AddCommand(newCredbrokerStatusCmd())
 	cmd.AddCommand(newCredbrokerHistoryCmd())
+	cmd.AddCommand(newCredbrokerContractCmd())
+	cmd.AddCommand(newCredbrokerDecoyCmd())
 	return cmd
 }
 

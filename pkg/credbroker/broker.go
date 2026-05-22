@@ -19,8 +19,9 @@ import (
 // decision logic incrementally without re-touching the on-disk
 // format.
 type Broker struct {
-	sealer   Sealer
-	contract *Contract
+	sealer       Sealer
+	contract     *Contract       // Layer-1: image-regex × class (defaults)
+	appContracts *AppContractSet // Layer-2: path-anchored per-app
 
 	mu    sync.RWMutex
 	audit []AuditRecord // ring buffer; xhelixctl credbroker history reads from this
@@ -41,11 +42,26 @@ func NewBroker(sealer Sealer, cap int) *Broker {
 	}
 }
 
-// WithContract sets the policy contract. Returns broker for chaining.
+// WithContract sets the Layer-1 (image-regex × class) policy contract.
+// Returns broker for chaining.
 func (b *Broker) WithContract(c *Contract) *Broker {
 	b.contract = c
 	return b
 }
+
+// WithAppContracts sets the Layer-2 (path-anchored per-app) contract
+// set. When a sealed-file path is claimed by any AppContract,
+// authorisation is exclusive: only matching AppContracts can authorise
+// access; Layer-1 image-regex fallback is bypassed for that path.
+// This is what makes "developer ships their contract with the app"
+// work — once declared, only the declared callers can open the file.
+func (b *Broker) WithAppContracts(s *AppContractSet) *Broker {
+	b.appContracts = s
+	return b
+}
+
+// AppContracts returns the loaded Layer-2 set (may be nil).
+func (b *Broker) AppContracts() *AppContractSet { return b.appContracts }
 
 // Seal encrypts plaintext under sealer, embeds meta, returns the
 // SealedFile ready for Write. The caller chooses where to write it
@@ -110,6 +126,34 @@ func (b *Broker) Decide(sf *SealedFile, req Request) Result {
 		rec.Comm = req.Lineage[0].Comm
 		rec.Image = req.Lineage[0].Image
 		rec.UID = req.Lineage[0].UID
+	}
+
+	// Layer-2 (per-app, path-anchored) takes precedence when any
+	// AppContract claims this sealed path. Authorisation is then
+	// exclusive — Layer-1 image-regex fallback is bypassed.
+	if b.appContracts != nil && b.appContracts.HasContractFor(req.SealedPath) {
+		m2 := b.appContracts.Match(req.Lineage, req.SealedPath, req.Now)
+		if m2.Matched {
+			pt, err := b.Unseal(sf)
+			if err != nil {
+				rec.Outcome = OutcomeDeny
+				rec.Reason = fmt.Sprintf("unseal failed: %v", err)
+				b.recordAudit(rec)
+				return Result{Outcome: OutcomeDeny, Audit: rec, Reason: rec.Reason}
+			}
+			rec.Outcome = OutcomeAllow
+			rec.Reason = m2.Reason
+			b.recordAudit(rec)
+			return Result{Outcome: OutcomeAllow, Plaintext: pt, Reason: rec.Reason, Audit: rec}
+		}
+		// Path is claimed by Layer-2 contracts but caller doesn't
+		// satisfy any. DENY — this is the universal-rock-solid
+		// guarantee: the credential's contract said "only these
+		// callers" and this caller isn't one.
+		rec.Outcome = OutcomeDeny
+		rec.Reason = "Layer-2: " + m2.Reason
+		b.recordAudit(rec)
+		return Result{Outcome: OutcomeDeny, Audit: rec, Reason: rec.Reason}
 	}
 
 	// No contract loaded: legacy fall-through (allow + audit).

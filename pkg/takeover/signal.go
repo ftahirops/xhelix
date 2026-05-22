@@ -123,6 +123,22 @@ const (
 	// from `task_chmod_executable`: classic dropper pattern
 	// (download → chmod +x → exec).
 	SignalChmodExec SignalKind = "chmod_exec"
+
+	// --- P-USG.2b Universal Secret Gate broker signals ---
+
+	// SignalCredBrokerDeny — credbroker fangate refused an unauthentic
+	// open of a sealed credential file. Tier-1 deterministic: by
+	// construction no legitimate caller hits this unless their Layer-2
+	// contract is wrong (which is operator-visible). Single signal
+	// crosses Suspended.
+	SignalCredBrokerDeny SignalKind = "credbroker_deny"
+
+	// SignalCredBrokerHoneyTouch — a credbroker honey decoy file
+	// (peer to a sealed credential, world-readable, contains marker)
+	// was opened. Honey files have zero legitimate readers by design;
+	// any touch is adversarial-by-construction. Highest-confidence
+	// signal in the system.
+	SignalCredBrokerHoneyTouch SignalKind = "credbroker_honey_touch"
 )
 
 // AllKinds enumerates every defined SignalKind. Useful for
@@ -141,6 +157,8 @@ func AllKinds() []SignalKind {
 		SignalIdentityMismatch,
 		// P-PS.21 borrows
 		SignalBase64Decode, SignalRecursiveDelete, SignalChmodExec,
+		// P-USG.2b
+		SignalCredBrokerDeny, SignalCredBrokerHoneyTouch,
 	}
 }
 
@@ -222,5 +240,11 @@ func DefaultWeights() Weights {
 		// Tier-2 — noise on real systems; needs stacking.
 		SignalForbiddenSyscall: 50,
 		SignalForbiddenConnect: 60,
+
+		// P-USG.2b Universal Secret Gate — Tier-1 deterministic.
+		// Single signal crosses 75 (Suspended); honey-touch alone
+		// crosses 90 (Isolated) because zero-legitimate-readers.
+		SignalCredBrokerDeny:       80,
+		SignalCredBrokerHoneyTouch: 95,
 	}
 }

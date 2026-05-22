@@ -68,6 +68,28 @@ type Config struct {
 	// (Named ForensicIngest, not Forensic, because the existing
 	// Forensic field above is the /proc snapshot subsystem.)
 	ForensicIngest ForensicIngestConfig `yaml:"forensic_ingest"`
+
+	// Egress — Mode 1 (observe + classify) per
+	// docs/EGRESS_C2_DISARM_AND_BINARY_INTEGRITY_2026-05-22.md §1.2.
+	// Default off. Operator opts in by setting `egress.observe: true`.
+	// Zero enforcement at this milestone — pure data layer that
+	// classifies every outbound connect and records per-lineage
+	// counters for the takeover scorer + operator CLI.
+	Egress EgressConfig `yaml:"egress"`
+}
+
+// EgressConfig controls the Mode-1 egress observer.
+type EgressConfig struct {
+	// Observe enables the destclass + per-lineage observer. Default
+	// false — explicit opt-in.
+	Observe bool `yaml:"observe"`
+	// SampleTTL bounds retention of the per-lineage forensic sample.
+	// Aggregate counters survive prune; only the recent-observation
+	// slice is age-capped. Default 10m.
+	SampleTTL time.Duration `yaml:"sample_ttl"`
+	// MinFleetSeen — destinations seen by ≥ this many fleet hosts
+	// graduate from "unknown" to "fleet_baseline". Default 3.
+	MinFleetSeen int `yaml:"min_fleet_seen"`
 }
 
 // ForensicIngestConfig controls the directory tailer that consumes

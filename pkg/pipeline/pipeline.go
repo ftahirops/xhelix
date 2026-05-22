@@ -38,8 +38,11 @@ import (
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/contescape"
 	"github.com/xhelix/xhelix/pkg/correlator"
+	"github.com/xhelix/xhelix/pkg/appident"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
+	"github.com/xhelix/xhelix/pkg/egressmon"
 	"github.com/xhelix/xhelix/pkg/imagecache"
+	"github.com/xhelix/xhelix/pkg/vhostcorr"
 	"github.com/xhelix/xhelix/pkg/intel"
 	"github.com/xhelix/xhelix/pkg/lolbin"
 	"github.com/xhelix/xhelix/pkg/ml"
@@ -109,6 +112,24 @@ type Pipeline struct {
 	// Nil-safe.
 	FileReadBurst *burstdet.Counter
 	SpawnBurst    *burstdet.Counter
+
+	// EgressObserver (P-EGRESS.M1) classifies outbound connects and
+	// records per-lineage destination counters. Nil-safe; when the
+	// `egress.observe` config flag is false the daemon doesn't
+	// construct one. When non-nil, Handle() calls Observe on every
+	// outbound connect event and stamps the resulting class onto
+	// event.Tags["dest_class"] so sinks + rules can see it.
+	EgressObserver *egressmon.Observer
+
+	// AppIdent identifies app names from event signals (cgroup, exe,
+	// argv). Nil-safe; identification is skipped when nil. Stamps
+	// event.Tags["app_id"] for downstream analytics + grouping.
+	AppIdent *appident.Identifier
+
+	// VhostCorr correlates inbound HTTP requests with subsequent
+	// outbound connects so analytics can attribute outbound bytes
+	// to the originating virtual host. Nil-safe.
+	VhostCorr *vhostcorr.Correlator
 
 	// Emit is the alert-bus sink. Required if any rule, detector,
 	// or threat-intel branch can fire. Pipeline never holds an
@@ -550,6 +571,104 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 						Reason: fmt.Sprintf("Known malicious IP (%s): %s", tag, ipStr),
 						Mode:   model.ModeDetect,
 					})
+				}
+			}
+		}
+	}
+
+	// Vhost correlation (P-EGRESS.M1.vhost) — when a worker receives
+	// an inbound HTTPS request, note the Host header so subsequent
+	// outbound connects from the same pid can be attributed.
+	if p.VhostCorr != nil && ev.PID != 0 {
+		if host := ev.Tags["http_host"]; host != "" {
+			p.VhostCorr.Note(ev.PID, host)
+		}
+	}
+
+	// App identification (P-EGRESS.M1.app) — derive a sticky AppID
+	// for this lineage and stamp ev.Tags["app_id"]. Nil-safe.
+	// Done before the egress observer block so the observer sees the
+	// app via SetAppID.
+	if p.AppIdent != nil && (ev.PID != 0 || ev.CGroupID != 0) {
+		sig := appident.Signals{
+			LineageID:  uint64(ev.CGroupID),
+			CgroupPath: ev.Container, // ev.Container holds cgroup path on Linux events
+			ExePath:    ev.Image,
+			ArgvJoined: ev.Tags["argv"],
+		}
+		if sig.LineageID == 0 {
+			sig.LineageID = uint64(ev.PID)
+		}
+		a := p.AppIdent.Identify(sig)
+		if !a.Empty() {
+			if ev.Tags == nil {
+				ev.Tags = map[string]string{}
+			}
+			ev.Tags["app_id"] = a.String()
+			if a.Kind != "" {
+				ev.Tags["app_kind"] = string(a.Kind)
+			}
+			if p.EgressObserver != nil {
+				lid := egressmon.LineageID(ev.CGroupID)
+				if lid == 0 {
+					lid = egressmon.LineageID(ev.PID)
+				}
+				p.EgressObserver.SetAppID(lid, a.String(), string(a.Kind))
+			}
+		}
+	}
+
+	// Egress observer (P-EGRESS.M1) — classify every outbound connect
+	// and stamp the result on event tags; tally bytes on outbound
+	// sendmsg events. Mode-1 is pure data: no enforcement.
+	// Nil-safe; observer is non-nil only when `egress.observe: true`.
+	if p.EgressObserver != nil {
+		dst := ev.Tags["dst_ip"]
+		if dst != "" {
+			ip := net.ParseIP(dst)
+			if ip != nil {
+				port := uint16(0)
+				if pp := ev.Tags["dst_port"]; pp != "" {
+					var n int
+					_, _ = fmt.Sscanf(pp, "%d", &n)
+					port = uint16(n)
+				}
+				lid := egressmon.LineageID(ev.CGroupID)
+				if lid == 0 {
+					lid = egressmon.LineageID(ev.PID)
+				}
+				sni := ev.Tags["sni"]
+				if sni == "" {
+					sni = ev.Tags["http_host"]
+				}
+				// Inbound vhost attribution: if a recent HTTPS request
+				// noted a Host header for this pid, stamp it onto the
+				// outbound event so analytics can roll up by vhost.
+				if p.VhostCorr != nil {
+					if vh, ok := p.VhostCorr.Lookup(ev.PID); ok {
+						if ev.Tags == nil {
+							ev.Tags = map[string]string{}
+						}
+						ev.Tags["inbound_vhost"] = vh
+					}
+				}
+				// Branch on event kind: connect vs sendmsg-out bytes.
+				switch {
+				case ev.Tags["outbound"] == "true":
+					d := p.EgressObserver.Observe(lid, ip, sni, port)
+					if ev.Tags == nil {
+						ev.Tags = map[string]string{}
+					}
+					ev.Tags["dest_class"] = string(d.Class)
+					if d.Source != "" {
+						ev.Tags["dest_class_source"] = d.Source
+					}
+				case ev.Tags["kind"] == "net_bytes" && ev.Tags["dir"] == "out":
+					if bs := ev.Tags["bytes"]; bs != "" {
+						var n uint64
+						_, _ = fmt.Sscanf(bs, "%d", &n)
+						p.EgressObserver.ObserveBytes(lid, ip, sni, port, n)
+					}
 				}
 			}
 		}
