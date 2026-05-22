@@ -66,26 +66,67 @@ type Rule struct {
 // written. Useful for logging without blocking the kernel.
 type EventCallback func(path string, pid int, decision Decision, reason string)
 
+// IntegrityMode is how the guard treats an integrity-baseline mismatch.
+type IntegrityMode int
+
+const (
+	// IntegrityOff disables the baseline check entirely. Default —
+	// preserves pre-B3 behaviour.
+	IntegrityOff IntegrityMode = iota
+	// IntegrityDetect logs mismatches but still allows the execve.
+	// Used during baseline calibration so the operator can see what
+	// would have been denied without breaking production.
+	IntegrityDetect
+	// IntegrityEnforce denies execve on baseline mismatch unless the
+	// writer was authenticated as a package-manager upgrade.
+	IntegrityEnforce
+)
+
+// IntegrityVerifier is the contract pkg/integrity satisfies. Kept as
+// an interface so execguard doesn't import pkg/integrity directly
+// (cleaner, easier to stub in tests).
+type IntegrityVerifier interface {
+	// Verify is called after the rule engine has decided Allow.
+	// Inputs: the absolute path being execved + the executing PID.
+	// Returns (allow, reason). When allow is false, the guard treats
+	// the result per IntegrityMode (detect = log; enforce = deny).
+	Verify(path string, pid uint32) (allow bool, reason string)
+}
+
 // Guard is the public API.
 type Guard struct {
 	mu      sync.RWMutex
 	rules   []Rule
 	cb      EventCallback
 
+	verifier IntegrityVerifier
+	intMode  IntegrityMode
+
 	fd      int
 	cancel  context.CancelFunc
 	running atomic.Bool
 
 	stats struct {
-		seen   atomic.Uint64
-		denied atomic.Uint64
-		errors atomic.Uint64
+		seen          atomic.Uint64
+		denied        atomic.Uint64
+		errors        atomic.Uint64
+		integrityHits atomic.Uint64
 	}
 }
 
 // New returns an unstarted guard. Call SetRules then Start.
 func New(cb EventCallback) *Guard {
 	return &Guard{cb: cb, fd: -1}
+}
+
+// SetIntegrity wires a baseline verifier into the guard. Pass mode =
+// IntegrityOff (the default) to disable. Setting verifier=nil also
+// disables regardless of mode.
+func (g *Guard) SetIntegrity(v IntegrityVerifier, mode IntegrityMode) {
+	g.mu.Lock()
+	g.verifier = v
+	g.intMode = mode
+	g.mu.Unlock()
 }
 
 // SetRules atomically replaces the rule set.
@@ -154,16 +195,18 @@ func (g *Guard) Stop() error {
 
 // Stats reports counters for the dashboard.
 type Stats struct {
-	Seen   uint64
-	Denied uint64
-	Errors uint64
+	Seen          uint64
+	Denied        uint64
+	Errors        uint64
+	IntegrityHits uint64
 }
 
 func (g *Guard) Stats() Stats {
 	return Stats{
-		Seen:   g.stats.seen.Load(),
-		Denied: g.stats.denied.Load(),
-		Errors: g.stats.errors.Load(),
+		Seen:          g.stats.seen.Load(),
+		Denied:        g.stats.denied.Load(),
+		Errors:        g.stats.errors.Load(),
+		IntegrityHits: g.stats.integrityHits.Load(),
 	}
 }
 
@@ -241,6 +284,26 @@ func (g *Guard) handle(buf []byte) {
 		}
 
 		decision, reason := g.evaluate(path)
+		// B3 (integrity check) runs AFTER the path-based rules. Only
+		// consulted when rules said Allow — explicit denies still
+		// short-circuit. Allows can be overridden by integrity in
+		// IntegrityEnforce mode.
+		if decision == Allow {
+			g.mu.RLock()
+			v := g.verifier
+			mode := g.intMode
+			g.mu.RUnlock()
+			if v != nil && mode != IntegrityOff && path != "" {
+				ok, intReason := v.Verify(path, uint32(pid))
+				if !ok {
+					g.stats.integrityHits.Add(1)
+					reason = intReason
+					if mode == IntegrityEnforce {
+						decision = Deny
+					}
+				}
+			}
+		}
 		if mask&unix.FAN_OPEN_EXEC_PERM != 0 {
 			g.respond(eventFD, decision)
 		}

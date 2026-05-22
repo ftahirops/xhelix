@@ -45,6 +45,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/forensic"
 	"github.com/xhelix/xhelix/pkg/idlehint"
 	"github.com/xhelix/xhelix/pkg/imagecache"
+	"github.com/xhelix/xhelix/pkg/integrity"
 	"github.com/xhelix/xhelix/pkg/intel"
 	"github.com/xhelix/xhelix/pkg/kintegrity"
 	"github.com/xhelix/xhelix/pkg/localapi"
@@ -408,6 +409,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Exec-deny guard — fanotify FAN_OPEN_EXEC_PERM to prevent execve
 	// of deny-listed binaries before they ever run. Independent of the
 	// alert pipeline; runs continuously.
+	//
+	// Integrity verifier vars declared at this scope so the LocalAPI
+	// handlers registered later in runDaemon can capture them.
+	var integrityVerifier *integrity.Verifier
+	var integrityBaseline *integrity.Baseline
 	var execGuard *execguard.Guard
 	if cfg.ExecGuard.Enabled {
 		execGuard = execguard.New(func(path string, pid int, d execguard.Decision, reason string) {
@@ -424,6 +430,62 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		if len(mounts) == 0 {
 			mounts = []string{"/"}
 		}
+		// B3 — wire integrity verifier into the exec guard.
+		// Constructed only when cfg.Integrity.Enabled. The verifier
+		// itself is exposed via LocalAPI handlers below.
+		if cfg.Integrity.Enabled {
+			dbPath := cfg.Integrity.BaselineDB
+			if dbPath == "" {
+				dbPath = filepath.Join(cfg.Agent.StateDir, "integrity-baseline.db")
+			}
+			b, err := integrity.Open(dbPath)
+			if err != nil {
+				log.Warn("integrity baseline open failed (B3 disabled)", "err", err)
+			} else {
+				integrityBaseline = b
+				tester := integrity.NewTester()
+				v := integrity.NewVerifier(b, tester, log)
+				if !cfg.Integrity.AcceptTOFU {
+					v.AcceptTOFU = false
+				}
+				integrityVerifier = v
+				mode := execguard.IntegrityDetect
+				switch cfg.Integrity.Mode {
+				case "enforce":
+					mode = execguard.IntegrityEnforce
+				case "off":
+					mode = execguard.IntegrityOff
+				}
+				execGuard.SetIntegrity(v, mode)
+				cfgAudit.Witness("integrity.enabled", "IntegrityVerifier")
+				cfgAudit.Witness("integrity.mode", "IntegrityVerifier")
+				cfgAudit.Witness("integrity.baseline_db", "IntegrityVerifier")
+				cfgAudit.Witness("integrity.accept_tofu", "IntegrityVerifier")
+				log.Info("integrity verifier enabled (B3)",
+					"mode", cfg.Integrity.Mode, "db", dbPath, "accept_tofu", v.AcceptTOFU)
+				// Background: if baseline is empty, kick a build.
+				go func() {
+					n, _ := b.Count()
+					if n > 0 {
+						log.Info("integrity baseline non-empty, skipping initial walk", "rows", n)
+						return
+					}
+					log.Info("integrity baseline empty — walking critical paths in background")
+					pr, err := integrity.Build(ctx, b, integrity.WalkOptions{
+						Paths: cfg.Integrity.Paths, Log: log,
+					})
+					if err != nil {
+						log.Warn("integrity baseline build returned error", "err", err)
+					}
+					log.Info("integrity baseline build done",
+						"files_hashed", pr.FilesHashed, "skipped", pr.FilesSkipped,
+						"bytes_mb", pr.BytesHashed/(1024*1024))
+				}()
+			}
+		}
+		_ = integrityVerifier
+		_ = integrityBaseline
+
 		if err := execGuard.Start(ctx, mounts); err != nil {
 			log.Warn("execguard start failed (continuing without exec-deny)", "err", err)
 			execGuard = nil
@@ -1273,6 +1335,96 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			})
 		}
 		return map[string]any{"records": out}, nil
+	})
+	apiSrv.RegisterHandler("integrity.status", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if integrityVerifier == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		total, _ := integrityBaseline.Count()
+		per, _ := integrityBaseline.PerSource()
+		perOut := map[string]int{}
+		for k, v := range per {
+			perOut[string(k)] = v
+		}
+		s := integrityVerifier.Stats()
+		dbPath := cfg.Integrity.BaselineDB
+		if dbPath == "" {
+			dbPath = filepath.Join(cfg.Agent.StateDir, "integrity-baseline.db")
+		}
+		return map[string]any{
+			"enabled":     true,
+			"mode":        cfg.Integrity.Mode,
+			"baseline_db": dbPath,
+			"total_rows":  total,
+			"per_source":  perOut,
+			"verifier": map[string]uint64{
+				"baseline_matched": s.BaselineMatched,
+				"hash_mismatched":  s.HashMismatched,
+				"tofu_accepted":    s.TOFUAccepted,
+				"upgrade_recovers": s.UpgradeRecovers,
+				"errors":           s.Errors,
+			},
+		}, nil
+	})
+	apiSrv.RegisterHandler("integrity.verify", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if integrityBaseline == nil {
+			return nil, fmt.Errorf("integrity verifier not enabled")
+		}
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		row, found, err := integrityBaseline.Lookup(req.Path)
+		if err != nil {
+			return nil, err
+		}
+		hash, _, _, hErr := integrity.HashFile(req.Path, integrity.DefaultMaxFileSize)
+		if hErr != nil {
+			return nil, hErr
+		}
+		out := map[string]any{
+			"match":           found && row.SHA256 == hash,
+			"baseline_sha256": row.SHA256,
+			"current_sha256":  hash,
+			"source":          string(row.Source),
+			"package":         row.Package,
+		}
+		if !found {
+			out["match"] = false
+			out["reason"] = "not in baseline"
+		} else if row.SHA256 != hash {
+			out["reason"] = "SHA-256 mismatch"
+		}
+		return out, nil
+	})
+	apiSrv.RegisterHandler("integrity.refresh_recent", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if integrityVerifier == nil {
+			return map[string]any{"refreshed": 0}, nil
+		}
+		integrityVerifier.InvalidateCache()
+		// Touch the critical paths — the Verify path will re-hash anything
+		// modified. We don't bulk-rehash; lazy refresh is correct.
+		return map[string]any{"refreshed": 0, "note": "cache invalidated; next execve re-hashes per path"}, nil
+	})
+	apiSrv.RegisterHandler("integrity.rebuild", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if integrityBaseline == nil {
+			return nil, fmt.Errorf("integrity verifier not enabled")
+		}
+		pr, err := integrity.Build(ctx, integrityBaseline, integrity.WalkOptions{
+			Paths: cfg.Integrity.Paths, Log: log,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if integrityVerifier != nil {
+			integrityVerifier.InvalidateCache()
+		}
+		return map[string]any{
+			"files_hashed": pr.FilesHashed,
+			"bytes_hashed": pr.BytesHashed,
+		}, nil
 	})
 	apiSrv.RegisterHandler("egress.block", func(_ context.Context, raw json.RawMessage) (any, error) {
 		if banner == nil {

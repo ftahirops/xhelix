@@ -69,6 +69,11 @@ type Config struct {
 	// Forensic field above is the /proc snapshot subsystem.)
 	ForensicIngest ForensicIngestConfig `yaml:"forensic_ingest"`
 
+	// Integrity — binary integrity baseline + verifier (B1+B2+B3).
+	// Default off; operator opts in. See
+	// docs/EGRESS_C2_DISARM_AND_BINARY_INTEGRITY_2026-05-22.md.
+	Integrity IntegrityConfig `yaml:"integrity"`
+
 	// Egress — Mode 1 (observe + classify) per
 	// docs/EGRESS_C2_DISARM_AND_BINARY_INTEGRITY_2026-05-22.md §1.2.
 	// Default off. Operator opts in by setting `egress.observe: true`.
@@ -76,6 +81,25 @@ type Config struct {
 	// classifies every outbound connect and records per-lineage
 	// counters for the takeover scorer + operator CLI.
 	Egress EgressConfig `yaml:"egress"`
+}
+
+// IntegrityConfig controls the B1+B2+B3 binary integrity subsystem.
+type IntegrityConfig struct {
+	// Enabled is the master toggle. Default false — operator opts in
+	// (the first boot builds a baseline, which takes ~30s on a normal
+	// host but is observable load).
+	Enabled bool `yaml:"enabled"`
+	// Mode: "off" / "detect" / "enforce". Default "detect" — log
+	// mismatches but don't deny execve. Operator promotes to
+	// "enforce" once they're satisfied with detect-mode signal.
+	Mode string `yaml:"mode"`
+	// BaselineDB is the SQLite path. Default /var/lib/xhelix/integrity-baseline.db.
+	BaselineDB string `yaml:"baseline_db"`
+	// AcceptTOFU controls TOFU policy for first-seen paths. Default
+	// true (record and allow). False = deny anything not in baseline.
+	AcceptTOFU bool `yaml:"accept_tofu"`
+	// Paths overrides the built-in critical-path list. Empty = default.
+	Paths []string `yaml:"paths"`
 }
 
 // EgressConfig controls the Mode-1 egress observer.

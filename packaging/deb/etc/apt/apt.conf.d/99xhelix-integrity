@@ -1,0 +1,15 @@
+// xhelix integrity baseline refresh on dpkg transactions.
+//
+// After every apt-get / dpkg upgrade or install, kick the daemon to
+// re-hash the affected packages and refresh the baseline. This is the
+// B2 → B1 feedback loop: when a legit package-manager transaction
+// changes a binary, the baseline learns the new SHA so B3 (execve
+// SHA check) doesn't fire false positives on the very next exec.
+//
+// Failure of this hook does NOT block the dpkg transaction — xhelix
+// is best-effort. The daemon's B2 authentic-upgrade tester will catch
+// the legit writer at execve time anyway.
+
+DPkg::Post-Invoke {
+  "if [ -x /usr/local/bin/xhelixctl ]; then /usr/local/bin/xhelixctl integrity refresh-recent --quiet 2>/dev/null || true; fi";
+};
