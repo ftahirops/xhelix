@@ -185,7 +185,11 @@ func renderSparklineFromPoints(ip string, pts []struct {
 	if len(pts) > 0 {
 		first := time.Unix(pts[0].BucketTs, 0).UTC().Format("15:04")
 		last := time.Unix(pts[len(pts)-1].BucketTs, 0).UTC().Format("15:04")
-		ticks := first + strings.Repeat(" ", cols-len(first)-len(last)+5) + last
+		pad := cols - len(first) - len(last)
+		if pad < 1 {
+			pad = 1
+		}
+		ticks := first + strings.Repeat(" ", pad) + last
 		fmt.Printf("       %s\n\n", ticks)
 	}
 	// Totals.

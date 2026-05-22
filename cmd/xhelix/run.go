@@ -430,62 +430,6 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		if len(mounts) == 0 {
 			mounts = []string{"/"}
 		}
-		// B3 — wire integrity verifier into the exec guard.
-		// Constructed only when cfg.Integrity.Enabled. The verifier
-		// itself is exposed via LocalAPI handlers below.
-		if cfg.Integrity.Enabled {
-			dbPath := cfg.Integrity.BaselineDB
-			if dbPath == "" {
-				dbPath = filepath.Join(cfg.Agent.StateDir, "integrity-baseline.db")
-			}
-			b, err := integrity.Open(dbPath)
-			if err != nil {
-				log.Warn("integrity baseline open failed (B3 disabled)", "err", err)
-			} else {
-				integrityBaseline = b
-				tester := integrity.NewTester()
-				v := integrity.NewVerifier(b, tester, log)
-				if !cfg.Integrity.AcceptTOFU {
-					v.AcceptTOFU = false
-				}
-				integrityVerifier = v
-				mode := execguard.IntegrityDetect
-				switch cfg.Integrity.Mode {
-				case "enforce":
-					mode = execguard.IntegrityEnforce
-				case "off":
-					mode = execguard.IntegrityOff
-				}
-				execGuard.SetIntegrity(v, mode)
-				cfgAudit.Witness("integrity.enabled", "IntegrityVerifier")
-				cfgAudit.Witness("integrity.mode", "IntegrityVerifier")
-				cfgAudit.Witness("integrity.baseline_db", "IntegrityVerifier")
-				cfgAudit.Witness("integrity.accept_tofu", "IntegrityVerifier")
-				log.Info("integrity verifier enabled (B3)",
-					"mode", cfg.Integrity.Mode, "db", dbPath, "accept_tofu", v.AcceptTOFU)
-				// Background: if baseline is empty, kick a build.
-				go func() {
-					n, _ := b.Count()
-					if n > 0 {
-						log.Info("integrity baseline non-empty, skipping initial walk", "rows", n)
-						return
-					}
-					log.Info("integrity baseline empty — walking critical paths in background")
-					pr, err := integrity.Build(ctx, b, integrity.WalkOptions{
-						Paths: cfg.Integrity.Paths, Log: log,
-					})
-					if err != nil {
-						log.Warn("integrity baseline build returned error", "err", err)
-					}
-					log.Info("integrity baseline build done",
-						"files_hashed", pr.FilesHashed, "skipped", pr.FilesSkipped,
-						"bytes_mb", pr.BytesHashed/(1024*1024))
-				}()
-			}
-		}
-		_ = integrityVerifier
-		_ = integrityBaseline
-
 		if err := execGuard.Start(ctx, mounts); err != nil {
 			log.Warn("execguard start failed (continuing without exec-deny)", "err", err)
 			execGuard = nil
@@ -493,6 +437,67 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			log.Info("execguard enabled", "rules", len(rules), "mounts", mounts)
 		}
 	}
+
+	// B1+B2+B3 — integrity baseline + verifier. Independent of
+	// execguard: the baseline + Verifier exists whenever
+	// cfg.Integrity.Enabled, even with execguard off. The execve
+	// hook (B3) only activates when execguard is ALSO on.
+	if cfg.Integrity.Enabled {
+		dbPath := cfg.Integrity.BaselineDB
+		if dbPath == "" {
+			dbPath = filepath.Join(cfg.Agent.StateDir, "integrity-baseline.db")
+		}
+		b, err := integrity.Open(dbPath)
+		if err != nil {
+			log.Warn("integrity baseline open failed (B3 disabled)", "err", err)
+		} else {
+			integrityBaseline = b
+			tester := integrity.NewTester()
+			v := integrity.NewVerifier(b, tester, log)
+			if !cfg.Integrity.AcceptTOFU {
+				v.AcceptTOFU = false
+			}
+			integrityVerifier = v
+			mode := execguard.IntegrityDetect
+			switch cfg.Integrity.Mode {
+			case "enforce":
+				mode = execguard.IntegrityEnforce
+			case "off":
+				mode = execguard.IntegrityOff
+			}
+			if execGuard != nil {
+				execGuard.SetIntegrity(v, mode)
+			}
+			cfgAudit.Witness("integrity.enabled", "IntegrityVerifier")
+			cfgAudit.Witness("integrity.mode", "IntegrityVerifier")
+			cfgAudit.Witness("integrity.baseline_db", "IntegrityVerifier")
+			cfgAudit.Witness("integrity.accept_tofu", "IntegrityVerifier")
+			log.Info("integrity verifier enabled (B1+B2+B3 substrate)",
+				"mode", cfg.Integrity.Mode, "db", dbPath,
+				"accept_tofu", v.AcceptTOFU,
+				"execguard_hook", execGuard != nil)
+			// Background: if baseline is empty, kick a build.
+			go func() {
+				n, _ := b.Count()
+				if n > 0 {
+					log.Info("integrity baseline non-empty, skipping initial walk", "rows", n)
+					return
+				}
+				log.Info("integrity baseline empty — walking critical paths in background")
+				pr, err := integrity.Build(ctx, b, integrity.WalkOptions{
+					Paths: cfg.Integrity.Paths, Log: log,
+				})
+				if err != nil {
+					log.Warn("integrity baseline build returned error", "err", err)
+				}
+				log.Info("integrity baseline build done",
+					"files_hashed", pr.FilesHashed, "skipped", pr.FilesSkipped,
+					"bytes_mb", pr.BytesHashed/(1024*1024))
+			}()
+		}
+	}
+	_ = integrityVerifier
+	_ = integrityBaseline
 
 	// v0.0.9: elite-tier detectors. Each is a standalone goroutine
 	// that emits synthetic Alerts back through `emit` when its model
