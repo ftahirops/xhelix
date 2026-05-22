@@ -65,24 +65,43 @@ type Finding struct {
 
 // Scanner snapshots /proc on every Tick and diffs against the prior
 // snapshot. The first Tick produces a baseline with no findings.
+//
+// Grace period semantics: a PID that didn't exist in the prior tick
+// is normally skipped to suppress process-startup JIT noise. Once
+// the PID has been observed for at least Grace duration, that
+// suppression lifts — any new anon-exec region appearing AFTER the
+// PID started but before its first "established" tick will still
+// fire. Set Grace = 0 to disable (every new PID fires immediately).
 type Scanner struct {
 	allow procmem.Allowlister
+	grace time.Duration
 
-	mu   sync.Mutex
-	prev map[uint32]map[uint64]Region // pid → addr → Region
+	mu        sync.Mutex
+	prev      map[uint32]map[uint64]Region // pid → addr → Region
+	firstSeen map[uint32]time.Time         // pid → when first observed
 
 	stats struct {
-		ticks       atomic.Uint64
-		newRegions  atomic.Uint64
-		allowlisted atomic.Uint64
+		ticks         atomic.Uint64
+		newRegions    atomic.Uint64
+		allowlisted   atomic.Uint64
+		newPidSkipped atomic.Uint64
 	}
 }
 
-// New constructs a Scanner.
+// New constructs a Scanner with the default grace period (30s).
 func New(allow procmem.Allowlister) *Scanner {
+	return NewWithGrace(allow, 30*time.Second)
+}
+
+// NewWithGrace constructs a Scanner with a custom grace period.
+// Grace = 0 disables the new-PID suppression (every appearance fires
+// immediately — useful for tight testing, noisy in production).
+func NewWithGrace(allow procmem.Allowlister, grace time.Duration) *Scanner {
 	return &Scanner{
-		allow: allow,
-		prev:  map[uint32]map[uint64]Region{},
+		allow:     allow,
+		grace:     grace,
+		prev:      map[uint32]map[uint64]Region{},
+		firstSeen: map[uint32]time.Time{},
 	}
 }
 
@@ -91,6 +110,7 @@ func New(allow procmem.Allowlister) *Scanner {
 func (s *Scanner) Tick() []Finding {
 	s.stats.ticks.Add(1)
 	now := s.snapshot()
+	tickAt := time.Now()
 	var findings []Finding
 
 	s.mu.Lock()
@@ -99,25 +119,44 @@ func (s *Scanner) Tick() []Finding {
 	if len(s.prev) == 0 {
 		// Baseline — no prior snapshot to diff against.
 		s.prev = now
+		for pid := range now {
+			s.firstSeen[pid] = tickAt
+		}
 		return nil
 	}
 
 	for pid, regions := range now {
 		priorRegions, hadPid := s.prev[pid]
-		if !hadPid {
-			// New process. Don't fire on every region — that's
-			// just "process started, has some JIT/lazy pages."
-			// procmem catches the thread-outside-module case on
-			// new processes; here we only care about NEW regions
-			// in EXISTING processes.
-			continue
-		}
 		comm := readComm(pid)
 		image := readExe(pid)
-		// JIT allowlist: full skip on this process.
+		// JIT allowlist: full skip on this process regardless of
+		// new/old.
 		if s.allow != nil && s.allow.MatchAny(image, comm) {
 			s.stats.allowlisted.Add(uint64(len(regions)))
 			continue
+		}
+		if !hadPid {
+			// New PID. Two sub-cases:
+			//   - We've never recorded a first-seen → record now,
+			//     skip this tick (let JIT noise settle).
+			//   - PID has been observed for at least grace, but was
+			//     missing from prev (transient kernel race or grace
+			//     expired between observations) → all regions count
+			//     as new. This is what catches the synthetic-test
+			//     case where a PID was spawned, RWX-mmap'd, and the
+			//     tick boundary fell inside its lifetime.
+			seen, ok := s.firstSeen[pid]
+			if !ok {
+				s.firstSeen[pid] = tickAt
+				s.stats.newPidSkipped.Add(1)
+				continue
+			}
+			if s.grace > 0 && tickAt.Sub(seen) < s.grace {
+				s.stats.newPidSkipped.Add(1)
+				continue
+			}
+			// Fall through: treat all regions as new for this PID.
+			priorRegions = nil
 		}
 		for addr, r := range regions {
 			if _, existed := priorRegions[addr]; existed {
@@ -132,8 +171,14 @@ func (s *Scanner) Tick() []Finding {
 			})
 		}
 	}
-	// Rotate snapshots.
+	// Rotate snapshots and prune firstSeen for PIDs no longer
+	// present (process exited).
 	s.prev = now
+	for pid := range s.firstSeen {
+		if _, alive := now[pid]; !alive {
+			delete(s.firstSeen, pid)
+		}
+	}
 	return findings
 }
 

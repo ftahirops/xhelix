@@ -172,11 +172,8 @@ func (b *linuxBackend) loadELF(parent context.Context, path string) error {
 			lnk, err = link.Tracepoint("syscalls", "sys_enter_bind", prog, nil)
 		case sec == "tp/syscalls/sys_enter_mprotect":
 			lnk, err = link.Tracepoint("syscalls", "sys_enter_mprotect", prog, nil)
-		// case sec == "tp/syscalls/sys_enter_openat":
-		// 	lnk, err = link.Tracepoint("syscalls", "sys_enter_openat", prog, nil)
-		// — re-enable when the procscrape BPF program is rewritten
-		// in a verifier-safe form (see sensors/ebpf/progs/all.bpf.c
-		// for the failed attempts and the path forward).
+		case sec == "tp/syscalls/sys_enter_openat":
+			lnk, err = link.Tracepoint("syscalls", "sys_enter_openat", prog, nil)
 		case sec == "kprobe/security_kernel_module_from_file":
 			lnk, err = link.Kprobe("security_kernel_module_from_file", prog, nil)
 		case sec == "kprobe/__x64_sys_finit_module":

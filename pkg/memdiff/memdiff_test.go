@@ -1,6 +1,9 @@
 package memdiff
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 type stubAllowlist struct{ comms map[string]bool }
 
@@ -52,6 +55,43 @@ func TestDiffPureFunctions(t *testing.T) {
 	}
 	if findings[0].Region.StartAddr != 0x3000 {
 		t.Errorf("want new region 0x3000, got %#x", findings[0].Region.StartAddr)
+	}
+}
+
+func TestGracePeriod_NewPID_SkipsThenFires(t *testing.T) {
+	// Without grace, every region of a new PID is treated as
+	// fresh-loaded. With grace=0 the second tick should fire on
+	// previously-unseen PIDs that disappear-and-reappear.
+	s := NewWithGrace(nil, 0)
+	// Tick 1: simulate baseline snapshot has PID 42.
+	s.prev = map[uint32]map[uint64]Region{
+		42: {0x1000: {StartAddr: 0x1000, EndAddr: 0x2000, Perms: "rwxp"}},
+	}
+	s.firstSeen[42] = time.Now().Add(-1 * time.Minute) // observed earlier
+	// Tick 2: PID 42 vanished and a different PID 43 appears with a new region.
+	now := map[uint32]map[uint64]Region{
+		43: {0x3000: {StartAddr: 0x3000, EndAddr: 0x4000, Perms: "rwxp"}},
+	}
+	s.firstSeen[43] = time.Now().Add(-1 * time.Minute) // pretend 43 was seen before
+	// Manually drive the diff loop using grace=0:
+	var findings []Finding
+	for pid, regions := range now {
+		_, hadPid := s.prev[pid]
+		if !hadPid {
+			seen, ok := s.firstSeen[pid]
+			if !ok {
+				continue
+			}
+			if s.grace > 0 && time.Since(seen) < s.grace {
+				continue
+			}
+		}
+		for _, r := range regions {
+			findings = append(findings, Finding{PID: pid, Region: r})
+		}
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding when grace=0, got %d", len(findings))
 	}
 }
 

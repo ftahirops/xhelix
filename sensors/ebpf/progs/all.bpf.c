@@ -190,6 +190,21 @@ struct {
     __type(value, __u8);
 } xh_drop_set SEC(".maps");
 
+/* Per-CPU scratch buffer for the procscrape openat program. The
+   verifier on 6.8 rejects 256-byte stack arrays after a variable-
+   length probe_read; a per-CPU array entry is heap-allocated and
+   tracked separately, sidestepping the frame-pointer bounds check
+   that broke the two earlier attempts in commit b9f936d. */
+struct xh_path_scratch {
+    char path[XH_PATH_MAX];
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct xh_path_scratch);
+} xh_procscrape_scratch SEC(".maps");
+
 // ---------------------------------------------------------------- helpers
 
 static __always_inline int xh_is_self(void) {
@@ -605,22 +620,93 @@ int kp_do_mount(struct pt_regs *ctx) {
      args[2] = int flags
      args[3] = umode_t mode
 */
-// NOTE: the XH_EV_PROC_SCRAPE / tp_sys_enter_openat_procscrape
-// program is intentionally absent. Two earlier implementations
-// failed the 6.8 verifier:
-//
-//   1. 256-byte stack-allocated path + probe_read_user_str:
-//      "value -2147483648 makes fp pointer be out of bounds"
-//   2. Read directly into the ringbuf event + variable-index
-//      tail-byte compare:
-//      "R1 unbounded memory access, make sure to bounds check"
-//
-// The userspace sensors/procscrape package + ruleset/core/
-// procscrape.yaml stay in place as no-ops; once the kernel-side
-// program is rewritten in a verifier-safe form (likely using a
-// per-CPU map-backed scratch buffer instead of stack/ringbuf
-// direct read, plus a bpf_strncmp-style fixed-length compare),
-// it can be added back here without changing the userspace surface.
+/* tp_sys_enter_openat_procscrape — third attempt, verifier-safe.
+ *
+ * Strategy:
+ *   1. Stage the path into a per-CPU scratch map for the event
+ *      payload later (no stack 256-byte array, no fp-bounds issue).
+ *   2. Use a small 16-byte stack buffer + bpf_probe_read_user with
+ *      a variable USERSPACE source. The verifier doesn't track
+ *      userspace pointer arithmetic, so (uname + n - 8) is fine
+ *      as a source. The destination is fixed-size + fixed-indexed.
+ *   3. Compare the staged 16-byte tail against credential basenames
+ *      with literal byte indexing.
+ */
+SEC("tp/syscalls/sys_enter_openat")
+int tp_sys_enter_openat_procscrape(struct trace_event_raw_sys_enter *ctx) {
+    if (xh_is_self()) return 0;
+
+    const char *uname = (const char *)ctx->args[1];
+    if (!uname) return 0;
+
+    /* Quick prefix sniff: read first 6 bytes from userspace into a
+       fixed stack buffer. No variable indexing. */
+    char head[8] = {0};
+    if (bpf_probe_read_user(head, 6, uname) < 0) return 0;
+    if (head[0] != '/' || head[1] != 'p' || head[2] != 'r' ||
+        head[3] != 'o' || head[4] != 'c' || head[5] != '/') {
+        return 0;
+    }
+
+    /* Walk to NUL to find path length. Userspace strlen via
+       bpf_probe_read_user_str into the scratch map. */
+    __u32 zero = 0;
+    struct xh_path_scratch *sc = bpf_map_lookup_elem(&xh_procscrape_scratch, &zero);
+    if (!sc) return 0;
+    int n = bpf_probe_read_user_str(sc->path, sizeof(sc->path), uname);
+    if (n <= 6) return 0;
+
+    /* Stage the last 8 bytes (max suffix len is "/environ" = 8)
+       into a fixed stack buffer. The SOURCE is uname + (n - 9),
+       which the verifier doesn't track for user pointers. The
+       DEST is a fixed-size buffer with fixed indexing.
+       n includes the trailing NUL, so n-9 is the offset of the
+       first byte of an 8-char suffix (path[n-9..n-2]). */
+    char tail[16] = {0};
+    int tail_off = n - 9;
+    if (tail_off < 0) tail_off = 0;
+    /* Use probe_read_user with the explicit user pointer + offset.
+       cast to long first to satisfy the BPF type system. */
+    bpf_probe_read_user(tail, 8, (const void *)((__u64)uname + (__u64)tail_off));
+
+    __u32 kind = 0;
+    /* "/environ" 8 chars. Check tail[0..7]. */
+    if (tail[0] == '/' && tail[1] == 'e' && tail[2] == 'n' && tail[3] == 'v' &&
+        tail[4] == 'i' && tail[5] == 'r' && tail[6] == 'o' && tail[7] == 'n') {
+        kind = XH_PROC_SCRAPE_ENVIRON;
+    }
+    /* "/maps" 5 chars: it's at tail[3..7] when path ends in /maps
+       and n >= 5. Check that the bytes before are not part of a
+       different suffix. */
+    else if (n >= 5 &&
+             tail[3] == '/' && tail[4] == 'm' && tail[5] == 'a' &&
+             tail[6] == 'p' && tail[7] == 's') {
+        kind = XH_PROC_SCRAPE_MAPS;
+    }
+    /* "/auxv" 5 chars: tail[3..7]. */
+    else if (n >= 5 &&
+             tail[3] == '/' && tail[4] == 'a' && tail[5] == 'u' &&
+             tail[6] == 'x' && tail[7] == 'v') {
+        kind = XH_PROC_SCRAPE_AUXV;
+    }
+    /* "/mem" 4 chars: tail[4..7]. */
+    else if (n >= 4 &&
+             tail[4] == '/' && tail[5] == 'm' && tail[6] == 'e' && tail[7] == 'm') {
+        kind = XH_PROC_SCRAPE_MEM;
+    }
+    if (!kind) return 0;
+
+    struct xh_proc_scrape_evt *e = bpf_ringbuf_reserve(&xh_events, sizeof(*e), 0);
+    if (!e) return 0;
+    xh_fill_hdr(&e->hdr, XH_EV_PROC_SCRAPE);
+    e->target_kind = kind;
+    e->_pad = 0;
+    /* Copy the staged path from the scratch map into the event. */
+    __builtin_memset(e->path, 0, sizeof(e->path));
+    bpf_probe_read_kernel_str(e->path, sizeof(e->path), sc->path);
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
 
 SEC("tp/syscalls/sys_enter_mprotect")
 int tp_sys_enter_mprotect(struct trace_event_raw_sys_enter *ctx) {
