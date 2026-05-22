@@ -81,6 +81,64 @@ func (h *HotStore) Prune(ctx context.Context, cutoffNs int64) (int64, error) {
 	return res.RowsAffected()
 }
 
+// RecentByPID returns events for a given pid, newest first, up to
+// limit rows. Used by the TUI history view.
+func (h *HotStore) RecentByPID(ctx context.Context, pid uint32, limit int) ([]model.Event, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, ts, sensor, severity, pid, comm, image, rule, tags
+		FROM events WHERE pid = ? ORDER BY ts DESC LIMIT ?`, pid, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Event
+	for rows.Next() {
+		var e model.Event
+		var idS, sev, tagsS string
+		var nsTs int64
+		if err := rows.Scan(&idS, &nsTs, &e.Sensor, &sev, &e.PID, &e.Comm, &e.Image, &e.Rule, &tagsS); err != nil {
+			return out, err
+		}
+		_ = json.Unmarshal([]byte(tagsS), &e.Tags)
+		_ = idS
+		_ = sev
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// RecentBySensor returns events for a given sensor name, newest first.
+// Used by the TUI DNS view (sensor="dnsresolver" or similar).
+func (h *HotStore) RecentBySensor(ctx context.Context, sensor string, limit int) ([]model.Event, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, ts, sensor, severity, pid, comm, image, rule, tags
+		FROM events WHERE sensor = ? ORDER BY ts DESC LIMIT ?`, sensor, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Event
+	for rows.Next() {
+		var e model.Event
+		var idS, sev, tagsS string
+		var nsTs int64
+		if err := rows.Scan(&idS, &nsTs, &e.Sensor, &sev, &e.PID, &e.Comm, &e.Image, &e.Rule, &tagsS); err != nil {
+			return out, err
+		}
+		_ = json.Unmarshal([]byte(tagsS), &e.Tags)
+		_ = idS
+		_ = sev
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // FileSize returns the on-disk size of the SQLite database file in
 // bytes. Returns 0 with no error for the :memory: backend.
 func (h *HotStore) FileSize() (int64, error) {

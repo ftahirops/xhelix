@@ -212,6 +212,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 
 	// Alert sinks
 	sinks := buildSinks(cfg.Alerts.Sinks, log)
+	// Always-on ring buffer for the TUI Alerts view. Independent of
+	// operator-configured sinks; holds last 1024 alerts in memory.
+	alertRing := alert.NewRingSink(1024)
+	sinks = append(sinks, alertRing)
 	// Soak tracker — single instance shared between the bus sink
 	// (advances Track on every alert), the web UI, and the
 	// LocalAPI handler that xhelixctl queries. Persisted to disk
@@ -1456,6 +1460,263 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			"files_hashed": pr.FilesHashed,
 			"bytes_hashed": pr.BytesHashed,
 		}, nil
+	})
+	apiSrv.RegisterHandler("tui.alerts_recent", func(_ context.Context, raw json.RawMessage) (any, error) {
+		var req struct {
+			Limit       int    `json:"limit"`
+			MinSeverity string `json:"min_severity"`
+			RuleFilter  string `json:"rule_filter"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		if req.Limit <= 0 {
+			req.Limit = 100
+		}
+		snap := alertRing.Snapshot()
+		// Newest first.
+		out := make([]map[string]any, 0, len(snap))
+		for i := len(snap) - 1; i >= 0 && len(out) < req.Limit; i-- {
+			a := snap[i]
+			if req.RuleFilter != "" && !strings.Contains(a.RuleID, req.RuleFilter) {
+				continue
+			}
+			out = append(out, map[string]any{
+				"time":     a.Event.Time.Unix(),
+				"severity": a.Event.Severity.String(),
+				"rule_id":  a.RuleID,
+				"reason":   a.Reason,
+				"sensor":   a.Event.Sensor,
+				"pid":      a.Event.PID,
+				"comm":     a.Event.Comm,
+				"image":    a.Event.Image,
+				"tags":     compactTags(a.Event.Tags),
+				"class":    a.Class,
+				"action":   a.Action,
+			})
+		}
+		return map[string]any{"alerts": out, "total": len(snap)}, nil
+	})
+	apiSrv.RegisterHandler("tui.alert_detail", func(_ context.Context, raw json.RawMessage) (any, error) {
+		var req struct {
+			Index int `json:"index"` // index from snapshot (newest=0)
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		snap := alertRing.Snapshot()
+		if len(snap) == 0 {
+			return nil, fmt.Errorf("ring empty")
+		}
+		idx := len(snap) - 1 - req.Index
+		if idx < 0 || idx >= len(snap) {
+			return nil, fmt.Errorf("index out of range")
+		}
+		a := snap[idx]
+		// Causal chain from ProcTree.
+		chain := make([]map[string]any, 0, len(a.Event.ProcTree))
+		for _, n := range a.Event.ProcTree {
+			chain = append(chain, map[string]any{
+				"pid":   n.PID,
+				"uid":   n.UID,
+				"comm":  n.Comm,
+				"image": n.Image,
+				"argv":  n.Argv,
+			})
+		}
+		return map[string]any{
+			"time":     a.Event.Time.Unix(),
+			"severity": a.Event.Severity.String(),
+			"rule_id":  a.RuleID,
+			"reason":   a.Reason,
+			"sensor":   a.Event.Sensor,
+			"pid":      a.Event.PID,
+			"comm":     a.Event.Comm,
+			"image":    a.Event.Image,
+			"all_tags": a.Event.Tags,
+			"chain":    chain,
+			"action":   a.Action,
+			"class":    a.Class,
+		}, nil
+	})
+	apiSrv.RegisterHandler("tui.lineage_detail", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if egressObs == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		var req struct {
+			Lineage uint64 `json:"lineage"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		snaps := egressObs.Snapshot(egressmon.LineageID(req.Lineage))
+		if len(snaps) == 0 {
+			return map[string]any{"enabled": true, "found": false}, nil
+		}
+		s := snaps[0]
+		byClass := map[string]int{}
+		for k, v := range s.ByClass {
+			byClass[string(k)] = v
+		}
+		bytesByClass := map[string]uint64{}
+		for k, v := range s.BytesOutByClass {
+			bytesByClass[string(k)] = v
+		}
+		// Top destinations by bytes_out for this lineage.
+		type kv struct {
+			Key   string `json:"dest"`
+			Bytes uint64 `json:"bytes_out"`
+		}
+		dests := make([]kv, 0, len(s.BytesOutByDest))
+		for k, v := range s.BytesOutByDest {
+			dests = append(dests, kv{Key: k, Bytes: v})
+		}
+		// Sort top-15.
+		for i := 0; i < len(dests); i++ {
+			for j := i + 1; j < len(dests); j++ {
+				if dests[j].Bytes > dests[i].Bytes {
+					dests[i], dests[j] = dests[j], dests[i]
+				}
+			}
+		}
+		if len(dests) > 15 {
+			dests = dests[:15]
+		}
+		sample := make([]map[string]any, 0, len(s.RecentSample))
+		for _, o := range s.RecentSample {
+			sample = append(sample, map[string]any{
+				"at":    o.At.Unix(),
+				"ip":    o.IP.String(),
+				"sni":   o.SNI,
+				"port":  o.Port,
+				"class": string(o.Class),
+			})
+		}
+		return map[string]any{
+			"enabled":          true,
+			"found":            true,
+			"lineage":          req.Lineage,
+			"app_id":           s.AppID,
+			"app_kind":         s.AppKind,
+			"total_connects":   s.TotalConnects,
+			"total_bytes_out":  s.TotalBytesOut,
+			"by_class":         byClass,
+			"bytes_out_by_class": bytesByClass,
+			"top_dests":        dests,
+			"unique_dests":     s.UniqueDests,
+			"unique_unknown":   s.UniqueUnknown,
+			"first_unknown_at": s.FirstUnknownAt.Unix(),
+			"first_intel_bad":  s.FirstIntelBadAt.Unix(),
+			"last_connect":     s.LastConnect.Unix(),
+			"recent_sample":    sample,
+		}, nil
+	})
+	apiSrv.RegisterHandler("tui.dest_detail", func(_ context.Context, raw json.RawMessage) (any, error) {
+		var req struct {
+			IP    string `json:"ip"`
+			Hours int    `json:"hours"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.Hours <= 0 {
+			req.Hours = 24
+		}
+		ip := net.ParseIP(req.IP)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid ip")
+		}
+		out := map[string]any{"ip": req.IP}
+		// Timeseries (in/out) — from ipTS.
+		if ipTS != nil {
+			until := time.Now()
+			since := until.Add(-time.Duration(req.Hours) * time.Hour)
+			points, _ := ipTS.Series(ip, since, until)
+			pts := make([]map[string]any, 0, len(points))
+			for _, p := range points {
+				pts = append(pts, map[string]any{
+					"bucket_ts": p.BucketTs.Unix(),
+					"bytes_out": p.BytesOut,
+					"bytes_in":  p.BytesIn,
+				})
+			}
+			out["points"] = pts
+		}
+		// Talkers — which lineages have this IP in their stats.
+		var talkers []map[string]any
+		if egressObs != nil {
+			for _, s := range egressObs.Snapshot(0) {
+				if b, ok := s.BytesOutByDest[req.IP]; ok {
+					talkers = append(talkers, map[string]any{
+						"lineage":   uint64(s.LineageID),
+						"app_id":    s.AppID,
+						"bytes_out": b,
+					})
+				}
+			}
+		}
+		out["talkers"] = talkers
+		// Intel verdict pending — intel manager lives inside dispatch.
+		// Re-wired in next iteration; for now omit.
+		out["intel_bad"] = false
+		return out, nil
+	})
+	apiSrv.RegisterHandler("tui.dns_recent", func(_ context.Context, raw json.RawMessage) (any, error) {
+		var req struct {
+			Limit int `json:"limit"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		if req.Limit <= 0 {
+			req.Limit = 100
+		}
+		evs, err := hot.RecentBySensor(context.Background(), "dnsresolver", req.Limit)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]map[string]any, 0, len(evs))
+		for _, e := range evs {
+			out = append(out, map[string]any{
+				"time":    e.Time.Unix(),
+				"pid":     e.PID,
+				"comm":    e.Comm,
+				"qname":   e.Tags["qname"],
+				"qtype":   e.Tags["qtype"],
+				"answers": e.Tags["dns_answers"],
+			})
+		}
+		return map[string]any{"queries": out}, nil
+	})
+	apiSrv.RegisterHandler("tui.history_by_pid", func(_ context.Context, raw json.RawMessage) (any, error) {
+		var req struct {
+			PID   uint32 `json:"pid"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if req.Limit <= 0 {
+			req.Limit = 200
+		}
+		evs, err := hot.RecentByPID(context.Background(), req.PID, req.Limit)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]map[string]any, 0, len(evs))
+		for _, e := range evs {
+			tagsCompact := map[string]string{}
+			for _, k := range []string{"dst_ip", "dst_port", "sni", "http_host", "argv", "kind", "outbound", "dir", "bytes", "qname", "dns_answers", "dest_class"} {
+				if v := e.Tags[k]; v != "" {
+					tagsCompact[k] = v
+				}
+			}
+			out = append(out, map[string]any{
+				"time":   e.Time.Unix(),
+				"sensor": e.Sensor,
+				"rule":   e.Rule,
+				"comm":   e.Comm,
+				"image":  e.Image,
+				"tags":   tagsCompact,
+			})
+		}
+		return map[string]any{"events": out}, nil
 	})
 	apiSrv.RegisterHandler("egress.ip_timeseries", func(_ context.Context, raw json.RawMessage) (any, error) {
 		var req struct {

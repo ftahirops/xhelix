@@ -129,6 +129,18 @@ type integrityRow struct {
 
 // ─── Model ─────────────────────────────────────────────────────────
 
+// alertRow is one row in the Alerts table.
+type alertRow struct {
+	Time     time.Time
+	Severity string
+	RuleID   string
+	Reason   string
+	PID      uint32
+	Comm     string
+	Image    string
+	Tags     map[string]string
+}
+
 // Model implements tea.Model.
 type Model struct {
 	sock string
@@ -142,13 +154,28 @@ type Model struct {
 	lastErr  string
 	help     bool
 
+	// Drilldown overlay state: when non-nil, render takes over the
+	// screen and shows detail for the selected row.
+	drilldown *drilldownState
+
 	apps      []appRow
 	lineages  []lineageRow
 	dests     []destRow
+	alerts    []alertRow
 	integrity integrityRow
 
 	// Connect on first refresh; reused across ticks.
 	client *localapi.Client
+}
+
+// drilldownState captures the kind + selection of the open detail
+// overlay. `data` is filled in by the async fetch.
+type drilldownState struct {
+	kind   string // "lineage" | "dest" | "alert" | "app"
+	key    string // lineage id (decimal) / IP / alert index / app name
+	loaded bool
+	data   map[string]any
+	err    string
 }
 
 // New constructs an initialised Model.
@@ -164,8 +191,17 @@ type dataMsg struct {
 	apps      []appRow
 	lineages  []lineageRow
 	dests     []destRow
+	alerts    []alertRow
 	integrity integrityRow
 	err       string
+}
+
+// drilldownMsg carries the loaded detail payload.
+type drilldownMsg struct {
+	kind string
+	key  string
+	data map[string]any
+	err  string
 }
 
 const refreshInterval = time.Second
@@ -242,6 +278,33 @@ func (m Model) refreshCmd() tea.Cmd {
 			msg.dests = append(msg.dests, destRow{IP: r.IP, BytesOut: r.BytesOut, BytesIn: r.BytesIn})
 		}
 
+		// Alerts view
+		var alertsResp struct {
+			Alerts []struct {
+				Time     int64             `json:"time"`
+				Severity string            `json:"severity"`
+				RuleID   string            `json:"rule_id"`
+				Reason   string            `json:"reason"`
+				PID      uint32            `json:"pid"`
+				Comm     string            `json:"comm"`
+				Image    string            `json:"image"`
+				Tags     map[string]string `json:"tags"`
+			} `json:"alerts"`
+		}
+		_ = c.Call("tui.alerts_recent", map[string]any{"limit": 200}, &alertsResp)
+		for _, a := range alertsResp.Alerts {
+			msg.alerts = append(msg.alerts, alertRow{
+				Time:     time.Unix(a.Time, 0).UTC(),
+				Severity: a.Severity,
+				RuleID:   a.RuleID,
+				Reason:   a.Reason,
+				PID:      a.PID,
+				Comm:     a.Comm,
+				Image:    a.Image,
+				Tags:     a.Tags,
+			})
+		}
+
 		// Integrity view
 		var iResp struct {
 			Enabled      bool   `json:"enabled"`
@@ -286,7 +349,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "esc", "ctrl+c":
+		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "tab":
 			i := 0
@@ -344,6 +407,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "5":
 			m.view = viewIntegrity
 			return m, nil
+		case "enter":
+			return m, m.openDrilldown()
+		case "esc":
+			if m.drilldown != nil {
+				m.drilldown = nil
+				return m, nil
+			}
+			return m, tea.Quit
 		}
 	case tickMsg:
 		m.tickN++
@@ -362,18 +433,110 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.dests) > 0 {
 			m.dests = msg.dests
 		}
+		if len(msg.alerts) > 0 {
+			m.alerts = msg.alerts
+		}
 		if msg.integrity.Mode != "" {
 			m.integrity = msg.integrity
+		}
+		return m, nil
+	case drilldownMsg:
+		if m.drilldown != nil && m.drilldown.kind == msg.kind && m.drilldown.key == msg.key {
+			m.drilldown.loaded = true
+			m.drilldown.data = msg.data
+			m.drilldown.err = msg.err
 		}
 		return m, nil
 	}
 	return m, nil
 }
 
+// openDrilldown opens the detail overlay for the currently-selected row.
+func (m *Model) openDrilldown() tea.Cmd {
+	switch m.view {
+	case viewLineages:
+		if m.cursor >= 0 && m.cursor < len(m.lineages) {
+			l := m.lineages[m.cursor]
+			m.drilldown = &drilldownState{kind: "lineage", key: fmt.Sprintf("%d", l.Lineage)}
+			return m.fetchLineageDetail(l.Lineage)
+		}
+	case viewDests:
+		if m.cursor >= 0 && m.cursor < len(m.dests) {
+			d := m.dests[m.cursor]
+			m.drilldown = &drilldownState{kind: "dest", key: d.IP}
+			return m.fetchDestDetail(d.IP)
+		}
+	case viewAlerts:
+		if m.cursor >= 0 && m.cursor < len(m.alerts) {
+			m.drilldown = &drilldownState{kind: "alert", key: fmt.Sprintf("%d", m.cursor)}
+			return m.fetchAlertDetail(m.cursor)
+		}
+	case viewApps:
+		if m.cursor >= 0 && m.cursor < len(m.apps) {
+			a := m.apps[m.cursor]
+			m.drilldown = &drilldownState{kind: "app", key: a.App, loaded: true,
+				data: map[string]any{"app": a.App, "connects": a.Connects, "bytes_out": a.BytesOut,
+					"unique": a.Unique, "unknown": a.Unknown}}
+		}
+	}
+	return nil
+}
+
+func (m Model) fetchLineageDetail(lid uint64) tea.Cmd {
+	sock := m.sock
+	return func() tea.Msg {
+		c, err := localapi.Dial(sock)
+		if err != nil {
+			return drilldownMsg{kind: "lineage", key: fmt.Sprintf("%d", lid), err: err.Error()}
+		}
+		defer c.Close()
+		var resp map[string]any
+		if err := c.Call("tui.lineage_detail", map[string]any{"lineage": lid}, &resp); err != nil {
+			return drilldownMsg{kind: "lineage", key: fmt.Sprintf("%d", lid), err: err.Error()}
+		}
+		return drilldownMsg{kind: "lineage", key: fmt.Sprintf("%d", lid), data: resp}
+	}
+}
+
+func (m Model) fetchDestDetail(ip string) tea.Cmd {
+	sock := m.sock
+	return func() tea.Msg {
+		c, err := localapi.Dial(sock)
+		if err != nil {
+			return drilldownMsg{kind: "dest", key: ip, err: err.Error()}
+		}
+		defer c.Close()
+		var resp map[string]any
+		if err := c.Call("tui.dest_detail", map[string]any{"ip": ip, "hours": 24}, &resp); err != nil {
+			return drilldownMsg{kind: "dest", key: ip, err: err.Error()}
+		}
+		return drilldownMsg{kind: "dest", key: ip, data: resp}
+	}
+}
+
+func (m Model) fetchAlertDetail(idx int) tea.Cmd {
+	sock := m.sock
+	return func() tea.Msg {
+		c, err := localapi.Dial(sock)
+		if err != nil {
+			return drilldownMsg{kind: "alert", key: fmt.Sprintf("%d", idx), err: err.Error()}
+		}
+		defer c.Close()
+		var resp map[string]any
+		if err := c.Call("tui.alert_detail", map[string]any{"index": idx}, &resp); err != nil {
+			return drilldownMsg{kind: "alert", key: fmt.Sprintf("%d", idx), err: err.Error()}
+		}
+		return drilldownMsg{kind: "alert", key: fmt.Sprintf("%d", idx), data: resp}
+	}
+}
+
 // View renders the screen.
 func (m Model) View() string {
 	if m.help {
 		return m.renderHelp()
+	}
+	if m.drilldown != nil {
+		return m.renderDrilldown()
 	}
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
@@ -395,6 +558,318 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	b.WriteString(m.renderFooter())
 	return b.String()
+}
+
+// renderDrilldown renders the detail overlay for whichever row the
+// user pressed Enter on. esc returns to the list.
+func (m Model) renderDrilldown() string {
+	d := m.drilldown
+	var b strings.Builder
+	header := fmt.Sprintf("xhelix top — %s detail — esc to return", d.kind)
+	pad := m.width - len(header) - 2
+	if pad < 1 {
+		pad = 1
+	}
+	b.WriteString(styleHeader.Render(header + strings.Repeat(" ", pad)))
+	b.WriteString("\n\n")
+	if d.err != "" {
+		b.WriteString(styleRed.Render("error: " + d.err))
+		return b.String()
+	}
+	if !d.loaded {
+		b.WriteString(styleDim.Render("loading…"))
+		return b.String()
+	}
+	switch d.kind {
+	case "lineage":
+		b.WriteString(m.renderLineageDetail(d.data))
+	case "dest":
+		b.WriteString(m.renderDestDetail(d.data))
+	case "alert":
+		b.WriteString(m.renderAlertDetail(d.data))
+	case "app":
+		b.WriteString(m.renderAppDetail(d.data))
+	}
+	return b.String()
+}
+
+func (m Model) renderLineageDetail(d map[string]any) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  lineage:         %v\n", d["lineage"])
+	fmt.Fprintf(&b, "  app:             %v  (kind=%v)\n", d["app_id"], d["app_kind"])
+	fmt.Fprintf(&b, "  total_connects:  %v\n", d["total_connects"])
+	fmt.Fprintf(&b, "  total_bytes_out: %v\n", humanBytesAny(d["total_bytes_out"]))
+	fmt.Fprintf(&b, "  unique_dests:    %v  unique_unknown: %v\n", d["unique_dests"], d["unique_unknown"])
+	if ts, ok := d["first_unknown_at"].(float64); ok && ts > 0 {
+		fmt.Fprintf(&b, "  first_unknown_at: %s\n", time.Unix(int64(ts), 0).UTC().Format(time.RFC3339))
+	}
+	if ts, ok := d["first_intel_bad"].(float64); ok && ts > 0 {
+		fmt.Fprintf(&b, "  first_intel_bad:  %s\n", styleRed.Render(time.Unix(int64(ts), 0).UTC().Format(time.RFC3339)))
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHeader.Render(" class breakdown "))
+	b.WriteString("\n")
+	if bc, ok := d["by_class"].(map[string]any); ok {
+		for k, v := range bc {
+			fmt.Fprintf(&b, "  %-15s %d\n", k, intOf(v))
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHeader.Render(" top destinations (bytes out) "))
+	b.WriteString("\n")
+	if dests, ok := d["top_dests"].([]any); ok {
+		for _, di := range dests {
+			row, _ := di.(map[string]any)
+			fmt.Fprintf(&b, "  %-30s %s\n", row["dest"], humanBytesAny(row["bytes_out"]))
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHeader.Render(" recent observations "))
+	b.WriteString("\n")
+	if sample, ok := d["recent_sample"].([]any); ok {
+		// Show last 25.
+		start := 0
+		if len(sample) > 25 {
+			start = len(sample) - 25
+		}
+		for _, s := range sample[start:] {
+			row, _ := s.(map[string]any)
+			ts := time.Unix(int64Of(row["at"]), 0).UTC().Format("15:04:05")
+			cls := fmt.Sprintf("%v", row["class"])
+			fmt.Fprintf(&b, "  %s  %-15s :%-5v %-10s %s\n",
+				ts, row["ip"], row["port"], cls, strOf(row["sni"]))
+		}
+	}
+	return b.String()
+}
+
+func (m Model) renderDestDetail(d map[string]any) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  ip:        %v\n", d["ip"])
+	if bad, ok := d["intel_bad"].(bool); ok && bad {
+		fmt.Fprintf(&b, "  intel:     %s\n", styleRed.Render("BAD (threat-intel hit)"))
+	} else {
+		fmt.Fprintf(&b, "  intel:     %s\n", styleDim.Render("clean (no threat-intel match)"))
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHeader.Render(" talkers (lineages that have sent bytes to this IP) "))
+	b.WriteString("\n")
+	if t, ok := d["talkers"].([]any); ok && len(t) > 0 {
+		for _, ti := range t {
+			row, _ := ti.(map[string]any)
+			app := strOf(row["app_id"])
+			if app == "" {
+				app = "(unidentified)"
+			}
+			fmt.Fprintf(&b, "  lineage=%v  app=%-30s  bytes_out=%s\n",
+				row["lineage"], app, humanBytesAny(row["bytes_out"]))
+		}
+	} else {
+		b.WriteString(styleDim.Render("  (no talkers recorded)"))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHeader.Render(" bytes-in/out timeline (1h) "))
+	b.WriteString("\n")
+	if pts, ok := d["points"].([]any); ok && len(pts) > 0 {
+		var maxV uint64
+		outs := make([]uint64, len(pts))
+		ins := make([]uint64, len(pts))
+		for i, p := range pts {
+			row, _ := p.(map[string]any)
+			outs[i] = uint64(int64Of(row["bytes_out"]))
+			ins[i] = uint64(int64Of(row["bytes_in"]))
+			if outs[i] > maxV {
+				maxV = outs[i]
+			}
+			if ins[i] > maxV {
+				maxV = ins[i]
+			}
+		}
+		fmt.Fprintf(&b, "  out  %s\n", sparkLine(outs, maxV))
+		fmt.Fprintf(&b, "  in   %s\n", sparkLine(ins, maxV))
+		fmt.Fprintf(&b, "       peak=%s   buckets=%d\n", humanBytes(maxV), len(pts))
+	} else {
+		b.WriteString(styleDim.Render("  (no timeseries data)"))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func (m Model) renderAlertDetail(d map[string]any) string {
+	var b strings.Builder
+	sev := strOf(d["severity"])
+	rule := strOf(d["rule_id"])
+	fmt.Fprintf(&b, "  %s  %s\n", colorSeverity(sev), styleHeader.Render(" "+rule+" "))
+	fmt.Fprintf(&b, "  time:     %s\n", time.Unix(int64Of(d["time"]), 0).UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "  sensor:   %v\n", d["sensor"])
+	fmt.Fprintf(&b, "  pid:      %v   comm:    %v\n", d["pid"], d["comm"])
+	fmt.Fprintf(&b, "  image:    %v\n", d["image"])
+	if act := strOf(d["action"]); act != "" {
+		fmt.Fprintf(&b, "  action:   %v\n", act)
+	}
+	fmt.Fprintf(&b, "\n  reason:\n    %s\n\n", strOf(d["reason"]))
+	if chain, ok := d["chain"].([]any); ok && len(chain) > 0 {
+		b.WriteString(styleHeader.Render(" causal chain (most-recent → root) "))
+		b.WriteString("\n")
+		for i, n := range chain {
+			row, _ := n.(map[string]any)
+			arrow := "└─"
+			if i == 0 {
+				arrow = "* "
+			}
+			argv := ""
+			if av, ok := row["argv"].([]any); ok && len(av) > 0 {
+				argv = "  argv=[" + joinAny(av) + "]"
+			}
+			fmt.Fprintf(&b, "  %s pid=%v uid=%v comm=%v image=%v%s\n",
+				arrow, row["pid"], row["uid"], row["comm"], row["image"], argv)
+		}
+		b.WriteString("\n")
+	}
+	if tags, ok := d["all_tags"].(map[string]any); ok && len(tags) > 0 {
+		b.WriteString(styleHeader.Render(" event tags "))
+		b.WriteString("\n")
+		keys := make([]string, 0, len(tags))
+		for k := range tags {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			v := fmt.Sprintf("%v", tags[k])
+			if len(v) > 200 {
+				v = v[:200] + "…"
+			}
+			fmt.Fprintf(&b, "  %-22s = %s\n", k, v)
+		}
+	}
+	return b.String()
+}
+
+func (m Model) renderAppDetail(d map[string]any) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  app:           %v\n", d["app"])
+	fmt.Fprintf(&b, "  connects:      %v\n", d["connects"])
+	fmt.Fprintf(&b, "  bytes_out:     %s\n", humanBytesAny(d["bytes_out"]))
+	fmt.Fprintf(&b, "  unique_dests:  %v\n", d["unique"])
+	fmt.Fprintf(&b, "  unique_unknown: %v\n", d["unknown"])
+	b.WriteString("\n")
+	b.WriteString(styleDim.Render("  (Tip: switch to view 2 (Lineages) and Enter on a row\n   that matches this app for full process + destination detail.)"))
+	return b.String()
+}
+
+func (m Model) renderAlerts() string {
+	if len(m.alerts) == 0 {
+		return styleDim.Render("(no alerts in ring — daemon may be quiet, or alerts predate this session)")
+	}
+	headers := []string{"TIME", "SEV", "RULE", "PID", "COMM", "REASON"}
+	rows := [][]string{}
+	for _, a := range m.alerts {
+		reason := a.Reason
+		if len(reason) > 60 {
+			reason = reason[:60] + "…"
+		}
+		rows = append(rows, []string{
+			a.Time.Format("15:04:05"),
+			colorSeverity(a.Severity),
+			a.RuleID,
+			fmt.Sprintf("%d", a.PID),
+			a.Comm,
+			reason,
+		})
+	}
+	return renderTable(headers, rows, m.cursor)
+}
+
+func colorSeverity(sev string) string {
+	switch sev {
+	case "critical":
+		return styleRed.Render("CRIT ")
+	case "high":
+		return styleRed.Render("HIGH ")
+	case "warn":
+		return styleYellow.Render("WARN ")
+	case "notice":
+		return styleDim.Render("notice")
+	}
+	return styleDim.Render(sev)
+}
+
+func sparkLine(vals []uint64, max uint64) string {
+	if max == 0 {
+		return strings.Repeat(" ", len(vals))
+	}
+	runes := []rune("▁▂▃▄▅▆▇█")
+	out := make([]rune, len(vals))
+	for i, v := range vals {
+		if v == 0 {
+			out[i] = ' '
+			continue
+		}
+		idx := int(float64(v) / float64(max) * float64(len(runes)-1))
+		if idx >= len(runes) {
+			idx = len(runes) - 1
+		}
+		out[i] = runes[idx]
+	}
+	return string(out)
+}
+
+func humanBytesAny(v any) string {
+	switch n := v.(type) {
+	case float64:
+		return humanBytes(uint64(n))
+	case int64:
+		return humanBytes(uint64(n))
+	case int:
+		return humanBytes(uint64(n))
+	case uint64:
+		return humanBytes(n)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func intOf(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	}
+	return 0
+}
+
+func int64Of(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	}
+	return 0
+}
+
+func strOf(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func joinAny(v []any) string {
+	parts := make([]string, 0, len(v))
+	for _, x := range v {
+		parts = append(parts, fmt.Sprintf("%v", x))
+	}
+	out := strings.Join(parts, " ")
+	if len(out) > 120 {
+		out = out[:120] + "…"
+	}
+	return out
 }
 
 func (m Model) renderHeader() string {
@@ -487,13 +962,7 @@ func (m Model) renderDests() string {
 	return renderTable(headers, rows, m.cursor)
 }
 
-func (m Model) renderAlerts() string {
-	// Alerts view: live tail not yet wired (needs LocalAPI alerts
-	// endpoint). Placeholder until task 27 lands the drilldown +
-	// recent-alerts panel.
-	return styleDim.Render("(alerts view stub — use `journalctl -u xhelix | grep critical` for now)") + "\n\n" +
-		styleDim.Render("This panel will surface live takeover-scored alerts in the next milestone.")
-}
+// (renderAlerts implementation lives in the drilldown section)
 
 func (m Model) renderIntegrity() string {
 	if m.integrity.Mode == "" {

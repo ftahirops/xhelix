@@ -125,6 +125,27 @@ func buildSinks(specs []config.SinkConfig, log *slog.Logger) []model.Sink {
 	return out
 }
 
+// compactTags returns a small subset of event tags that the TUI
+// alerts list needs. Keeps payload small per-row; full tags are
+// available via tui.alert_detail.
+func compactTags(tags map[string]string) map[string]string {
+	if tags == nil {
+		return nil
+	}
+	keep := []string{
+		"dst_ip", "dst_port", "src_ip", "sni", "http_host", "dest_class",
+		"app_id", "app_kind", "honey_marker", "sealed_path",
+		"argv", "qname", "dns_answers",
+	}
+	out := map[string]string{}
+	for _, k := range keep {
+		if v, ok := tags[k]; ok && v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // urlHost extracts the hostname from a URL for logging without
 // leaking the full path (which may contain a secret webhook token).
 func urlHost(u string) string {
