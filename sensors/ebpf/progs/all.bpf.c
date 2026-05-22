@@ -605,68 +605,22 @@ int kp_do_mount(struct pt_regs *ctx) {
      args[2] = int flags
      args[3] = umode_t mode
 */
-static __always_inline int xh_path_has_suffix(const char *p, int len,
-                                              const char *suf, int slen) {
-    if (len < slen) return 0;
-    /* Walk backwards a bounded amount — verifier needs the bound
-       to be a compile-time constant. */
-    #pragma unroll
-    for (int i = 0; i < 16; i++) {
-        if (i >= slen) return 1;
-        if (p[len - slen + i] != suf[i]) return 0;
-    }
-    return 1;
-}
-
-SEC("tp/syscalls/sys_enter_openat")
-int tp_sys_enter_openat_procscrape(struct trace_event_raw_sys_enter *ctx) {
-    if (xh_is_self()) return 0;
-
-    const char *uname = (const char *)ctx->args[1];
-    if (!uname) return 0;
-
-    char path[XH_PATH_MAX];
-    int n = bpf_probe_read_user_str(path, sizeof(path), uname);
-    if (n <= 6) return 0;  // "/proc/" is 6 bytes; need more
-    // Cheap prefix check: must start with "/proc/"
-    if (path[0] != '/' || path[1] != 'p' || path[2] != 'r' ||
-        path[3] != 'o' || path[4] != 'c' || path[5] != '/') return 0;
-
-    // n includes the NUL; compute the string length.
-    int plen = n - 1;
-    if (plen <= 0 || plen >= XH_PATH_MAX) return 0;
-
-    __u32 kind = 0;
-    if      (xh_path_has_suffix(path, plen, "/environ", 8))  kind = XH_PROC_SCRAPE_ENVIRON;
-    else if (xh_path_has_suffix(path, plen, "/maps",    5))  kind = XH_PROC_SCRAPE_MAPS;
-    else if (xh_path_has_suffix(path, plen, "/mem",     4))  kind = XH_PROC_SCRAPE_MEM;
-    else if (xh_path_has_suffix(path, plen, "/auxv",    5))  kind = XH_PROC_SCRAPE_AUXV;
-    else if (xh_path_has_suffix(path, plen, "/status",  7))  kind = XH_PROC_SCRAPE_STATUS;
-    else if (xh_path_has_suffix(path, plen, "/cmdline", 8))  kind = XH_PROC_SCRAPE_CMDLINE;
-    else return 0;
-
-    // Highest-value kinds only (drop status/cmdline noise unless
-    // operators opt-in later via a map flag). environ/maps/mem/auxv
-    // are the credential-bearing ones; status/cmdline are
-    // intelligence-gathering but extremely high-volume from monit/
-    // ps/htop, so we skip them at the kernel for now.
-    if (kind == XH_PROC_SCRAPE_STATUS || kind == XH_PROC_SCRAPE_CMDLINE) {
-        return 0;
-    }
-
-    struct xh_proc_scrape_evt *e = bpf_ringbuf_reserve(&xh_events, sizeof(*e), 0);
-    if (!e) return 0;
-    xh_fill_hdr(&e->hdr, XH_EV_PROC_SCRAPE);
-    e->target_kind = kind;
-    e->_pad = 0;
-    __builtin_memset(e->path, 0, sizeof(e->path));
-    // Copy the captured path; bpf_probe_read_user_str already
-    // NUL-terminated it, but we re-read into the event buffer for
-    // a fresh kernel-side string.
-    bpf_probe_read_user_str(e->path, sizeof(e->path), uname);
-    bpf_ringbuf_submit(e, 0);
-    return 0;
-}
+// NOTE: the XH_EV_PROC_SCRAPE / tp_sys_enter_openat_procscrape
+// program is intentionally absent. Two earlier implementations
+// failed the 6.8 verifier:
+//
+//   1. 256-byte stack-allocated path + probe_read_user_str:
+//      "value -2147483648 makes fp pointer be out of bounds"
+//   2. Read directly into the ringbuf event + variable-index
+//      tail-byte compare:
+//      "R1 unbounded memory access, make sure to bounds check"
+//
+// The userspace sensors/procscrape package + ruleset/core/
+// procscrape.yaml stay in place as no-ops; once the kernel-side
+// program is rewritten in a verifier-safe form (likely using a
+// per-CPU map-backed scratch buffer instead of stack/ringbuf
+// direct read, plus a bpf_strncmp-style fixed-length compare),
+// it can be added back here without changing the userspace surface.
 
 SEC("tp/syscalls/sys_enter_mprotect")
 int tp_sys_enter_mprotect(struct trace_event_raw_sys_enter *ctx) {
