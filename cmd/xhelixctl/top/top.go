@@ -70,6 +70,7 @@ const (
 	viewDests
 	viewAlerts
 	viewDNS
+	viewAPI
 	viewIntegrity
 )
 
@@ -85,13 +86,15 @@ func (v viewMode) Name() string {
 		return "Alerts"
 	case viewDNS:
 		return "DNS"
+	case viewAPI:
+		return "APIs"
 	case viewIntegrity:
 		return "Integrity"
 	}
 	return "?"
 }
 
-var allViews = []viewMode{viewApps, viewLineages, viewDests, viewAlerts, viewDNS, viewIntegrity}
+var allViews = []viewMode{viewApps, viewLineages, viewDests, viewAlerts, viewDNS, viewAPI, viewIntegrity}
 
 // ─── Per-view data ─────────────────────────────────────────────────
 
@@ -101,17 +104,22 @@ type appRow struct {
 	BytesOut    uint64
 	Unique      int
 	Unknown     int
-	Suspicion   int // 0=green, 1=yellow, 2=red
+	AlertCount  int    // recent alerts attributed to this app
+	HighestSev  string // "critical" | "high" | "warn" | ""
+	Suspicion   int    // 0=green, 1=yellow, 2=red
 }
 
 type lineageRow struct {
-	Lineage  uint64
-	App      string
-	Connects int
-	Unique   int
-	Unknown  int
-	IntelBad int
-	BytesOut uint64
+	Lineage    uint64
+	App        string
+	Connects   int
+	Unique     int
+	Unknown    int
+	IntelBad   int
+	BytesOut   uint64
+	AlertCount int
+	HighestSev string
+	IsShell    bool // app/exe name is a shell
 }
 
 type destRow struct {
@@ -140,6 +148,16 @@ type dnsRow struct {
 	QName   string
 	QType   string
 	Answers string
+}
+
+// apiRow is one row in the per-API table.
+type apiRow struct {
+	Host    string
+	Method  string
+	Path    string
+	Count   int
+	Pids    int
+	LastTs  time.Time
 }
 
 // alertRow is one row in the Alerts table.
@@ -171,11 +189,15 @@ type Model struct {
 	// screen and shows detail for the selected row.
 	drilldown *drilldownState
 
+	// Action prompt: when non-nil, render shows a confirm modal.
+	prompt *actionPrompt
+
 	apps       []appRow
 	lineages   []lineageRow
 	dests      []destRow
 	alerts     []alertRow
 	dnsQueries []dnsRow
+	apis       []apiRow
 	integrity  integrityRow
 
 	// Connect on first refresh; reused across ticks.
@@ -190,6 +212,16 @@ type drilldownState struct {
 	loaded bool
 	data   map[string]any
 	err    string
+}
+
+// actionPrompt captures the state of a pending destructive action
+// awaiting operator y/n confirmation.
+type actionPrompt struct {
+	action string // "block" | "deep-observe"
+	target string // IP
+	reason string
+	done   bool
+	result string // populated when the action completes
 }
 
 // New constructs an initialised Model.
@@ -207,6 +239,7 @@ type dataMsg struct {
 	dests      []destRow
 	alerts     []alertRow
 	dnsQueries []dnsRow
+	apis       []apiRow
 	integrity  integrityRow
 	err        string
 }
@@ -217,6 +250,14 @@ type drilldownMsg struct {
 	key  string
 	data map[string]any
 	err  string
+}
+
+// actionMsg carries the result of an action LocalAPI call.
+type actionMsg struct {
+	action string
+	target string
+	result string
+	err    string
 }
 
 const refreshInterval = time.Second
@@ -374,6 +415,61 @@ func (m Model) refreshCmd() tea.Cmd {
 		if errStr != "" && len(msg.lineages) == 0 {
 			msg.err = errStr
 		}
+
+		// API view
+		var apiResp struct {
+			Rows []struct {
+				Host   string `json:"host"`
+				Method string `json:"method"`
+				Path   string `json:"path"`
+				Count  int    `json:"count"`
+				Pids   int    `json:"pids"`
+				LastTs int64  `json:"last_ts"`
+			} `json:"rows"`
+		}
+		_ = c.Call("tui.api_recent", map[string]any{"limit": 200}, &apiResp)
+		for _, r := range apiResp.Rows {
+			msg.apis = append(msg.apis, apiRow{
+				Host: r.Host, Method: r.Method, Path: r.Path,
+				Count: r.Count, Pids: r.Pids,
+				LastTs: time.Unix(r.LastTs, 0).UTC(),
+			})
+		}
+
+		// Cross-signal correlation: count alerts per PID + collect
+		// severity. We use the alert ring we just fetched; PIDs map
+		// back to lineages via the observer snapshot.
+		alertsByPID := map[uint32]int{}
+		highestByPID := map[uint32]string{}
+		sevRank := func(s string) int {
+			switch s {
+			case "critical":
+				return 4
+			case "high":
+				return 3
+			case "warn":
+				return 2
+			case "notice":
+				return 1
+			}
+			return 0
+		}
+		for _, a := range msg.alerts {
+			alertsByPID[a.PID]++
+			if sevRank(a.Severity) > sevRank(highestByPID[a.PID]) {
+				highestByPID[a.PID] = a.Severity
+			}
+		}
+		// Stamp onto lineages (lineage id may be cgroup, not pid; we
+		// match on pid via the recent_sample but observer doesn't
+		// surface pid on the public snapshot, so use lineage id as a
+		// proxy when it equals pid — falls through cleanly otherwise).
+		for i := range msg.lineages {
+			if n, ok := alertsByPID[uint32(msg.lineages[i].Lineage)]; ok {
+				msg.lineages[i].AlertCount = n
+				msg.lineages[i].HighestSev = highestByPID[uint32(msg.lineages[i].Lineage)]
+			}
+		}
 		return msg
 	}
 }
@@ -446,16 +542,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = viewDNS
 			return m, nil
 		case "6":
+			m.view = viewAPI
+			return m, nil
+		case "7":
 			m.view = viewIntegrity
 			return m, nil
 		case "enter":
+			// In an action prompt, Enter is "yes" (alias of "y").
+			if m.prompt != nil && !m.prompt.done {
+				return m, m.confirmAction()
+			}
 			return m, m.openDrilldown()
 		case "esc":
+			if m.prompt != nil {
+				m.prompt = nil
+				return m, nil
+			}
 			if m.drilldown != nil {
 				m.drilldown = nil
 				return m, nil
 			}
 			return m, tea.Quit
+		case "b":
+			return m, m.startActionPrompt("block")
+		case "d":
+			return m, m.startActionPrompt("deep-observe")
+		case "y":
+			if m.prompt != nil && !m.prompt.done {
+				return m, m.confirmAction()
+			}
+		case "n":
+			if m.prompt != nil {
+				m.prompt = nil
+				return m, nil
+			}
 		}
 	case tickMsg:
 		m.tickN++
@@ -480,6 +600,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.dnsQueries) > 0 {
 			m.dnsQueries = msg.dnsQueries
 		}
+		if len(msg.apis) > 0 {
+			m.apis = msg.apis
+		}
 		if msg.integrity.Mode != "" {
 			m.integrity = msg.integrity
 		}
@@ -491,8 +614,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.drilldown.err = msg.err
 		}
 		return m, nil
+	case actionMsg:
+		if m.prompt != nil {
+			m.prompt.done = true
+			if msg.err != "" {
+				m.prompt.result = "FAILED: " + msg.err
+			} else {
+				m.prompt.result = msg.result
+			}
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+// startActionPrompt builds a confirm modal for an action on the
+// currently-selected row. Only valid on the Destinations view (where
+// the row's "key" is an IP address). For other views it's a no-op.
+func (m *Model) startActionPrompt(action string) tea.Cmd {
+	if m.view != viewDests || m.cursor < 0 || m.cursor >= len(m.dests) {
+		return nil
+	}
+	d := m.dests[m.cursor]
+	m.prompt = &actionPrompt{
+		action: action,
+		target: d.IP,
+		reason: "operator action via xhelixctl top",
+	}
+	return nil
+}
+
+// confirmAction fires the LocalAPI call for the pending action.
+func (m *Model) confirmAction() tea.Cmd {
+	if m.prompt == nil || m.prompt.done {
+		return nil
+	}
+	p := *m.prompt
+	sock := m.sock
+	return func() tea.Msg {
+		c, err := localapi.Dial(sock)
+		if err != nil {
+			return actionMsg{action: p.action, target: p.target, err: err.Error()}
+		}
+		defer c.Close()
+		var resp map[string]any
+		var rpc string
+		switch p.action {
+		case "block":
+			rpc = "egress.block"
+		case "deep-observe":
+			rpc = "egress.deep_observe"
+		default:
+			return actionMsg{action: p.action, target: p.target, err: "unknown action"}
+		}
+		req := map[string]any{"dest": p.target, "reason": p.reason}
+		if err := c.Call(rpc, req, &resp); err != nil {
+			return actionMsg{action: p.action, target: p.target, err: err.Error()}
+		}
+		return actionMsg{
+			action: p.action, target: p.target,
+			result: fmt.Sprintf("%s OK for %s", p.action, p.target),
+		}
+	}
 }
 
 // openDrilldown opens the detail overlay for the currently-selected row.
@@ -579,6 +762,10 @@ func (m Model) View() string {
 	if m.help {
 		return m.renderHelp()
 	}
+	if m.prompt != nil {
+		// Modal overlay — keep the underlying list visible but dim.
+		return m.renderPrompt()
+	}
 	if m.drilldown != nil {
 		return m.renderDrilldown()
 	}
@@ -598,6 +785,8 @@ func (m Model) View() string {
 		b.WriteString(m.renderAlerts())
 	case viewDNS:
 		b.WriteString(m.renderDNS())
+	case viewAPI:
+		b.WriteString(m.renderAPIs())
 	case viewIntegrity:
 		b.WriteString(m.renderIntegrity())
 	}
@@ -833,6 +1022,27 @@ func (m Model) renderAlerts() string {
 	return renderTable(headers, rows, m.cursor)
 }
 
+// renderAPIs renders the per-API breakdown — HTTP requests by
+// (host, method, path) extracted from SSL_read events.
+func (m Model) renderAPIs() string {
+	if len(m.apis) == 0 {
+		return styleDim.Render("(no HTTP requests observed via SSL — dpi/openssl uprobe may be quiet)")
+	}
+	headers := []string{"COUNT", "METHOD", "HOST", "PATH", "PIDS", "LAST"}
+	rows := [][]string{}
+	for _, a := range m.apis {
+		rows = append(rows, []string{
+			fmt.Sprintf("%d", a.Count),
+			a.Method,
+			a.Host,
+			a.Path,
+			fmt.Sprintf("%d", a.Pids),
+			a.LastTs.Format("15:04:05"),
+		})
+	}
+	return renderTable(headers, rows, m.cursor)
+}
+
 // renderDNS renders the live DNS query feed.
 func (m Model) renderDNS() string {
 	if len(m.dnsQueries) == 0 {
@@ -986,13 +1196,17 @@ func (m Model) renderApps() string {
 	if len(m.apps) == 0 {
 		return styleDim.Render("(no app data — rollup file empty or daemon not running)")
 	}
-	headers := []string{"  ", "APP", "CONNECTS", "BYTES_OUT", "UNIQUE", "UNKNOWN"}
+	headers := []string{"  ", "APP", "CONNECTS", "BYTES_OUT", "UNIQUE", "UNKNOWN", "SHELL"}
 	rows := [][]string{}
 	for _, a := range m.apps {
 		mark := dot(a.Suspicion)
+		shellBadge := ""
+		if isShellApp(a.App) {
+			shellBadge = styleRed.Render("⚠ SHELL")
+		}
 		rows = append(rows, []string{
 			mark, a.App, fmt.Sprintf("%d", a.Connects), humanBytes(a.BytesOut),
-			fmt.Sprintf("%d", a.Unique), fmt.Sprintf("%d", a.Unknown),
+			fmt.Sprintf("%d", a.Unique), fmt.Sprintf("%d", a.Unknown), shellBadge,
 		})
 	}
 	return renderTable(headers, rows, m.cursor)
@@ -1002,18 +1216,26 @@ func (m Model) renderLineages() string {
 	if len(m.lineages) == 0 {
 		return styleDim.Render("(no lineage data — egress.observe disabled?)")
 	}
-	headers := []string{"  ", "LINEAGE", "CONNECTS", "UNIQUE", "UNKNOWN", "INTEL_BAD"}
+	headers := []string{"  ", "LINEAGE", "CONNECTS", "UNIQUE", "UNKNOWN", "INTEL_BAD", "ALERTS"}
 	rows := [][]string{}
 	for _, l := range m.lineages {
 		sus := 0
-		if l.IntelBad > 0 || l.Unknown >= 10 {
+		if l.IntelBad > 0 || l.Unknown >= 10 || l.HighestSev == "critical" {
 			sus = 2
-		} else if l.Unknown >= 3 {
+		} else if l.Unknown >= 3 || l.AlertCount > 0 {
 			sus = 1
 		}
 		ib := fmt.Sprintf("%d", l.IntelBad)
 		if l.IntelBad > 0 {
 			ib = styleRed.Render("!" + ib)
+		}
+		alerts := fmt.Sprintf("%d", l.AlertCount)
+		if l.HighestSev == "critical" {
+			alerts = styleRed.Render(fmt.Sprintf("%d ⚠", l.AlertCount))
+		} else if l.HighestSev == "high" {
+			alerts = styleRed.Render(fmt.Sprintf("%d", l.AlertCount))
+		} else if l.HighestSev == "warn" {
+			alerts = styleYellow.Render(fmt.Sprintf("%d", l.AlertCount))
 		}
 		rows = append(rows, []string{
 			dot(sus),
@@ -1022,6 +1244,7 @@ func (m Model) renderLineages() string {
 			fmt.Sprintf("%d", l.Unique),
 			fmt.Sprintf("%d", l.Unknown),
 			ib,
+			alerts,
 		})
 	}
 	return renderTable(headers, rows, m.cursor)
@@ -1066,8 +1289,41 @@ func (m Model) renderIntegrity() string {
 }
 
 func (m Model) renderFooter() string {
-	keys := "  [tab] cycle  [1-5] view  [p] pause  [r] refresh  [↑↓] nav  [?] help  [q] quit"
+	keys := "  [tab] cycle  [1-6] view  [↑↓] nav  [enter] drill  [b] block  [d] deep-obs  [p] pause  [?] help  [q] quit"
 	return styleFooter.Render(keys)
+}
+
+// renderPrompt renders the confirm modal for a destructive action.
+func (m Model) renderPrompt() string {
+	p := m.prompt
+	var b strings.Builder
+	b.WriteString(styleHeader.Render(fmt.Sprintf(" confirm: %s ", p.action)))
+	b.WriteString("\n\n")
+	if p.done {
+		if strings.HasPrefix(p.result, "FAILED") {
+			b.WriteString(styleRed.Render("  " + p.result))
+		} else {
+			b.WriteString(styleGreen.Render("  " + p.result))
+		}
+		b.WriteString("\n\n")
+		b.WriteString(styleDim.Render("  press esc to dismiss"))
+		return b.String()
+	}
+	fmt.Fprintf(&b, "  action:  %s\n", p.action)
+	fmt.Fprintf(&b, "  target:  %s\n", p.target)
+	fmt.Fprintf(&b, "  reason:  %s\n", p.reason)
+	b.WriteString("\n")
+	switch p.action {
+	case "block":
+		b.WriteString(styleYellow.Render("  This will add the IP to the netban blocklist.\n"))
+		b.WriteString(styleYellow.Render("  Outbound to this IP will be dropped on this host.\n"))
+	case "deep-observe":
+		b.WriteString(styleDim.Render("  This will mark the destination for verbose per-flow recording.\n"))
+		b.WriteString(styleDim.Render("  No traffic is blocked.\n"))
+	}
+	b.WriteString("\n")
+	b.WriteString(styleHeader.Render(" [y / enter] confirm    [n / esc] cancel "))
+	return b.String()
 }
 
 func (m Model) renderHelp() string {
@@ -1079,7 +1335,12 @@ func (m Model) renderHelp() string {
 		"  p                  pause auto-refresh\n" +
 		"  r                  force refresh now\n" +
 		"  ?                  toggle this help\n" +
-		"  q / esc            quit\n\n" +
+		"  q / esc            quit (esc also closes drilldown / prompt)\n\n" +
+		"  Actions (Destinations view only):\n" +
+		"  b                  block destination IP via netban\n" +
+		"  d                  mark destination for deep-observe (verbose recording)\n" +
+		"  y / enter          confirm pending action\n" +
+		"  n / esc            cancel pending action\n\n" +
 		styleDim.Render("Refresh: 1s.  Source: LocalAPI on the running daemon.") + "\n\n" +
 		styleFooter.Render("press ? again to return")
 }

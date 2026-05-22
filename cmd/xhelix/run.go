@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -1683,6 +1684,89 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			}
 		}
 		return out, nil
+	})
+	apiSrv.RegisterHandler("tui.api_recent", func(_ context.Context, raw json.RawMessage) (any, error) {
+		// Per-API breakdown: scans HotStore SSL_read events that have
+		// http_request_line + http_host tags, aggregates by
+		// (host, method, path). Returns top-N rows by count.
+		var req struct {
+			Limit int    `json:"limit"`
+			Host  string `json:"host"` // optional filter
+		}
+		_ = json.Unmarshal(raw, &req)
+		if req.Limit <= 0 {
+			req.Limit = 200
+		}
+		// We scan recent events from any of the eBPF SSL sensors.
+		evs, err := hot.RecentBySensor(context.Background(), "ebpf", 5000)
+		if err != nil {
+			return nil, err
+		}
+		type key struct {
+			Host, Method, Path string
+		}
+		type val struct {
+			Count   int
+			LastTs  int64
+			PIDs    map[uint32]struct{}
+		}
+		agg := map[key]*val{}
+		for _, e := range evs {
+			line := e.Tags["http_request_line"]
+			host := e.Tags["http_host"]
+			if line == "" {
+				continue
+			}
+			// Parse "METHOD path HTTP/1.x"
+			fs := strings.Fields(line)
+			if len(fs) < 2 {
+				continue
+			}
+			method := fs[0]
+			path := fs[1]
+			// Truncate paths so query strings don't explode the cardinality.
+			if i := strings.IndexByte(path, '?'); i >= 0 {
+				path = path[:i] + "?…"
+			}
+			if len(path) > 80 {
+				path = path[:80] + "…"
+			}
+			if req.Host != "" && host != req.Host {
+				continue
+			}
+			k := key{Host: host, Method: method, Path: path}
+			v := agg[k]
+			if v == nil {
+				v = &val{PIDs: map[uint32]struct{}{}}
+				agg[k] = v
+			}
+			v.Count++
+			if t := e.Time.Unix(); t > v.LastTs {
+				v.LastTs = t
+			}
+			v.PIDs[e.PID] = struct{}{}
+		}
+		// Materialise + sort by count desc.
+		type row struct {
+			Host    string `json:"host"`
+			Method  string `json:"method"`
+			Path    string `json:"path"`
+			Count   int    `json:"count"`
+			Pids    int    `json:"pids"`
+			LastTs  int64  `json:"last_ts"`
+		}
+		rows := make([]row, 0, len(agg))
+		for k, v := range agg {
+			rows = append(rows, row{
+				Host: k.Host, Method: k.Method, Path: k.Path,
+				Count: v.Count, Pids: len(v.PIDs), LastTs: v.LastTs,
+			})
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Count > rows[j].Count })
+		if len(rows) > req.Limit {
+			rows = rows[:req.Limit]
+		}
+		return map[string]any{"rows": rows, "total_keys": len(agg)}, nil
 	})
 	apiSrv.RegisterHandler("tui.dns_recent", func(_ context.Context, raw json.RawMessage) (any, error) {
 		var req struct {
