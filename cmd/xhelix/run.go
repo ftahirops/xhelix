@@ -44,6 +44,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/execguard"
 	"github.com/xhelix/xhelix/pkg/forensic"
+	"github.com/xhelix/xhelix/pkg/geoip"
 	"github.com/xhelix/xhelix/pkg/idlehint"
 	"github.com/xhelix/xhelix/pkg/imagecache"
 	"github.com/xhelix/xhelix/pkg/integrity"
@@ -1344,6 +1345,23 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	dw.Start(ctx)
 	log.Info("diskwarden enabled", "cap_bytes", 4<<30, "retention_days", 30)
 
+	// GeoIP — best-effort country lookup. Loads operator CSV at
+	// /var/lib/xhelix/geoip/country.csv plus the built-in seed
+	// (RFC-1918, cloud-metadata, well-known anycast). Missing CSV =
+	// only seed entries, Lookup returns ZZ/false for unmapped IPs.
+	geoDB := geoip.NewInMemory()
+	geoCSV := filepath.Join(cfg.Agent.StateDir, "geoip", "country.csv")
+	entries := geoip.SeedEntries()
+	if csvEntries, err := geoip.LoadCSVFile(geoCSV); err != nil {
+		log.Warn("geoip CSV load failed", "path", geoCSV, "err", err)
+	} else {
+		entries = append(entries, csvEntries...)
+		if len(csvEntries) > 0 {
+			log.Info("geoip loaded", "csv_path", geoCSV, "csv_entries", len(csvEntries))
+		}
+	}
+	geoDB.Load(entries)
+
 	credBroker := loadCredBroker(log)
 	// Bridge the daemon's emit closure into the fangate so cred-broker
 	// denies / honey-touches land in the alert bus AND the takeover
@@ -1657,6 +1675,13 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		// Intel verdict pending — intel manager lives inside dispatch.
 		// Re-wired in next iteration; for now omit.
 		out["intel_bad"] = false
+		// GeoIP country lookup (best-effort, "" if no entry).
+		if res, ok := geoDB.Lookup(req.IP); ok {
+			out["country"] = res.Country
+			if res.ASNOrg != "" {
+				out["asn_org"] = res.ASNOrg
+			}
+		}
 		return out, nil
 	})
 	apiSrv.RegisterHandler("tui.dns_recent", func(_ context.Context, raw json.RawMessage) (any, error) {

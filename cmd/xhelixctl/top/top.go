@@ -69,6 +69,7 @@ const (
 	viewLineages
 	viewDests
 	viewAlerts
+	viewDNS
 	viewIntegrity
 )
 
@@ -82,13 +83,15 @@ func (v viewMode) Name() string {
 		return "Destinations"
 	case viewAlerts:
 		return "Alerts"
+	case viewDNS:
+		return "DNS"
 	case viewIntegrity:
 		return "Integrity"
 	}
 	return "?"
 }
 
-var allViews = []viewMode{viewApps, viewLineages, viewDests, viewAlerts, viewIntegrity}
+var allViews = []viewMode{viewApps, viewLineages, viewDests, viewAlerts, viewDNS, viewIntegrity}
 
 // ─── Per-view data ─────────────────────────────────────────────────
 
@@ -129,6 +132,16 @@ type integrityRow struct {
 
 // ─── Model ─────────────────────────────────────────────────────────
 
+// dnsRow is one row in the DNS table.
+type dnsRow struct {
+	Time    time.Time
+	PID     uint32
+	Comm    string
+	QName   string
+	QType   string
+	Answers string
+}
+
 // alertRow is one row in the Alerts table.
 type alertRow struct {
 	Time     time.Time
@@ -158,11 +171,12 @@ type Model struct {
 	// screen and shows detail for the selected row.
 	drilldown *drilldownState
 
-	apps      []appRow
-	lineages  []lineageRow
-	dests     []destRow
-	alerts    []alertRow
-	integrity integrityRow
+	apps       []appRow
+	lineages   []lineageRow
+	dests      []destRow
+	alerts     []alertRow
+	dnsQueries []dnsRow
+	integrity  integrityRow
 
 	// Connect on first refresh; reused across ticks.
 	client *localapi.Client
@@ -188,12 +202,13 @@ type tickMsg time.Time
 
 // dataMsg carries refreshed data for a view.
 type dataMsg struct {
-	apps      []appRow
-	lineages  []lineageRow
-	dests     []destRow
-	alerts    []alertRow
-	integrity integrityRow
-	err       string
+	apps       []appRow
+	lineages   []lineageRow
+	dests      []destRow
+	alerts     []alertRow
+	dnsQueries []dnsRow
+	integrity  integrityRow
+	err        string
 }
 
 // drilldownMsg carries the loaded detail payload.
@@ -305,6 +320,29 @@ func (m Model) refreshCmd() tea.Cmd {
 			})
 		}
 
+		// DNS view
+		var dnsResp struct {
+			Queries []struct {
+				Time    int64  `json:"time"`
+				PID     uint32 `json:"pid"`
+				Comm    string `json:"comm"`
+				QName   string `json:"qname"`
+				QType   string `json:"qtype"`
+				Answers string `json:"answers"`
+			} `json:"queries"`
+		}
+		_ = c.Call("tui.dns_recent", map[string]any{"limit": 200}, &dnsResp)
+		for _, q := range dnsResp.Queries {
+			msg.dnsQueries = append(msg.dnsQueries, dnsRow{
+				Time:    time.Unix(q.Time, 0).UTC(),
+				PID:     q.PID,
+				Comm:    q.Comm,
+				QName:   q.QName,
+				QType:   q.QType,
+				Answers: q.Answers,
+			})
+		}
+
 		// Integrity view
 		var iResp struct {
 			Enabled      bool   `json:"enabled"`
@@ -405,6 +443,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.view = viewAlerts
 			return m, nil
 		case "5":
+			m.view = viewDNS
+			return m, nil
+		case "6":
 			m.view = viewIntegrity
 			return m, nil
 		case "enter":
@@ -435,6 +476,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(msg.alerts) > 0 {
 			m.alerts = msg.alerts
+		}
+		if len(msg.dnsQueries) > 0 {
+			m.dnsQueries = msg.dnsQueries
 		}
 		if msg.integrity.Mode != "" {
 			m.integrity = msg.integrity
@@ -552,6 +596,8 @@ func (m Model) View() string {
 		b.WriteString(m.renderDests())
 	case viewAlerts:
 		b.WriteString(m.renderAlerts())
+	case viewDNS:
+		b.WriteString(m.renderDNS())
 	case viewIntegrity:
 		b.WriteString(m.renderIntegrity())
 	}
@@ -646,6 +692,12 @@ func (m Model) renderLineageDetail(d map[string]any) string {
 func (m Model) renderDestDetail(d map[string]any) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  ip:        %v\n", d["ip"])
+	if country := strOf(d["country"]); country != "" {
+		fmt.Fprintf(&b, "  country:   %s\n", country)
+	}
+	if org := strOf(d["asn_org"]); org != "" {
+		fmt.Fprintf(&b, "  asn_org:   %s\n", org)
+	}
 	if bad, ok := d["intel_bad"].(bool); ok && bad {
 		fmt.Fprintf(&b, "  intel:     %s\n", styleRed.Render("BAD (threat-intel hit)"))
 	} else {
@@ -776,6 +828,34 @@ func (m Model) renderAlerts() string {
 			fmt.Sprintf("%d", a.PID),
 			a.Comm,
 			reason,
+		})
+	}
+	return renderTable(headers, rows, m.cursor)
+}
+
+// renderDNS renders the live DNS query feed.
+func (m Model) renderDNS() string {
+	if len(m.dnsQueries) == 0 {
+		return styleDim.Render("(no DNS queries observed — dnsresolver sensor may be disabled,\n or daemon has been quiet)")
+	}
+	headers := []string{"TIME", "PID", "COMM", "QTYPE", "QNAME", "ANSWERS"}
+	rows := [][]string{}
+	for _, q := range m.dnsQueries {
+		ans := q.Answers
+		if len(ans) > 40 {
+			ans = ans[:40] + "…"
+		}
+		qname := q.QName
+		if len(qname) > 50 {
+			qname = qname[:50] + "…"
+		}
+		rows = append(rows, []string{
+			q.Time.Format("15:04:05"),
+			fmt.Sprintf("%d", q.PID),
+			q.Comm,
+			q.QType,
+			qname,
+			ans,
 		})
 	}
 	return renderTable(headers, rows, m.cursor)
@@ -993,7 +1073,7 @@ func (m Model) renderFooter() string {
 func (m Model) renderHelp() string {
 	return styleHeader.Render("xhelix top — help") + "\n\n" +
 		"  tab / shift-tab    cycle views\n" +
-		"  1 2 3 4 5          jump to view (Apps / Lineages / Destinations / Alerts / Integrity)\n" +
+		"  1 2 3 4 5 6        jump to view (Apps / Lineages / Destinations / Alerts / DNS / Integrity)\n" +
 		"  ↑ ↓ / j k          move cursor\n" +
 		"  g                  jump to top\n" +
 		"  p                  pause auto-refresh\n" +
