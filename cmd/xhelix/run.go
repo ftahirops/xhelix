@@ -37,6 +37,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/protectsvcapi"
 	"github.com/xhelix/xhelix/pkg/appident"
 	"github.com/xhelix/xhelix/pkg/destclass"
+	"github.com/xhelix/xhelix/pkg/diskwarden"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
 	"github.com/xhelix/xhelix/pkg/egressmon"
 	"github.com/xhelix/xhelix/pkg/vhostcorr"
@@ -1329,6 +1330,15 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			}
 		}
 	}()
+
+	// Disk warden — bounded retention. Default 4 GiB cap, 30d retention.
+	// Always-on; cheap. Addresses the JSONL rollup unbounded-growth
+	// risk from the perf review.
+	dw := diskwarden.New(diskwarden.Config{
+		StateDir: cfg.Agent.StateDir, LogDir: cfg.Agent.LogDir, Log: log,
+	})
+	dw.Start(ctx)
+	log.Info("diskwarden enabled", "cap_bytes", 4<<30, "retention_days", 30)
 
 	credBroker := loadCredBroker(log)
 	// Bridge the daemon's emit closure into the fangate so cred-broker

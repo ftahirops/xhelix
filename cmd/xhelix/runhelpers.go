@@ -104,6 +104,17 @@ func buildSinks(specs []config.SinkConfig, log *slog.Logger) []model.Sink {
 			log.Info("file sink configured", "path", s.Path,
 				"rotate_mb", s.RotateSizeMB, "keep", s.Keep)
 			out = append(out, fs)
+		case "webhook", "slack", "teams":
+			// 'webhook' is the generic kind; 'slack' / 'teams' are
+			// operator-friendly aliases. The WebhookSink itself
+			// auto-detects the format from the URL host.
+			if s.URL == "" {
+				log.Warn("webhook sink missing url; skipping", "kind", s.Kind)
+				continue
+			}
+			h, _ := os.Hostname()
+			out = append(out, alert.NewWebhookSink(s.URL, h))
+			log.Info("webhook sink configured", "kind", s.Kind, "url_host", urlHost(s.URL))
 		default:
 			log.Warn("unknown sink kind", "kind", s.Kind)
 		}
@@ -112,6 +123,21 @@ func buildSinks(specs []config.SinkConfig, log *slog.Logger) []model.Sink {
 		out = append(out, alert.NewStdoutSink())
 	}
 	return out
+}
+
+// urlHost extracts the hostname from a URL for logging without
+// leaking the full path (which may contain a secret webhook token).
+func urlHost(u string) string {
+	// quick parse — don't import net/url just for this
+	i := strings.Index(u, "://")
+	if i < 0 {
+		return u
+	}
+	rest := u[i+3:]
+	if j := strings.IndexAny(rest, "/?"); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
 }
 
 // hostnameOrEmpty returns the result of os.Hostname or "" on error.
