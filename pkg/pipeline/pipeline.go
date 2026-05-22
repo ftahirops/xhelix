@@ -57,6 +57,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/store"
 	"github.com/xhelix/xhelix/pkg/webshellguard"
 	"github.com/xhelix/xhelix/pkg/yara"
+	"github.com/xhelix/xhelix/pkg/snicheck"
 	"github.com/xhelix/xhelix/sensors/dnsresolver"
 	"github.com/xhelix/xhelix/sensors/procscrape"
 	"github.com/xhelix/xhelix/sensors/netids"
@@ -148,6 +149,12 @@ type Pipeline struct {
 	// non-nil, Handle() invokes Enrich() on every proc_scrape
 	// event so rules can branch on cred_proc_scrape.
 	ProcScrape *procscrape.Sensor
+
+	// SNICheck flags outbound TLS connections that lack an SNI
+	// extension. Pipeline calls Note() on every outbound connect
+	// to a TLS port; the detector evaluates ~800ms later by
+	// inspecting connstate for an attached SNI.
+	SNICheck *snicheck.Detector
 }
 
 // Handle processes one event end-to-end. The full per-event chain:
@@ -380,6 +387,21 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 
 	if p.ConnTable != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_connect" {
 		feedConnstate(p.ConnTable, p.CGroupClassifier, ev)
+		// snicheck: queue a deferred SNI check for this outbound
+		// connect. The detector itself filters by port + allowlist.
+		if p.SNICheck != nil {
+			if dst := ev.Tags["dst_ip"]; dst != "" {
+				if ip := net.ParseIP(dst); ip != nil {
+					port := uint16(0)
+					if pp := ev.Tags["dst_port"]; pp != "" {
+						var n int
+						_, _ = fmt.Sscanf(pp, "%d", &n)
+						port = uint16(n)
+					}
+					p.SNICheck.Note(ev.PID, ev.Comm, ev.Image, ev.UID, ip, port)
+				}
+			}
+		}
 	}
 	if p.ConnTable != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_bytes" {
 		feedConnstateBytes(p.ConnTable, ev)

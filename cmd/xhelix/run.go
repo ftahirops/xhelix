@@ -30,6 +30,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/config"
 	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/connstate"
+	"github.com/xhelix/xhelix/pkg/snicheck"
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/daemon/forensicingest"
 	"github.com/xhelix/xhelix/pkg/daemon/wire"
@@ -994,6 +995,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// and pkg/cgroupclass.
 	cgroupClassifier := cgroupclass.New(0)
 	connTable := connstate.New(0)
+
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
@@ -2130,6 +2132,24 @@ func runDaemon(parent context.Context, cfgPath string) error {
 
 	hostname, _ := os.Hostname()
 
+	// SNI-required-for-TLS detector (P-SNI). Watches outbound
+	// connects to TLS ports; flags any whose ClientHello carried no
+	// SNI extension after EvalDelay. snicheck.Note() is called from
+	// the pipeline on every net_connect event; evaluation runs in
+	// a background ticker goroutine.
+	var sniCheck *snicheck.Detector
+	if cfg.SNICheck.Enabled {
+		sniCheck = snicheck.New(connTable, events, snicheck.Config{
+			Host:             hostname,
+			EvalDelay:        cfg.SNICheck.EvalDelay,
+			TLSPorts:         cfg.SNICheck.TLSPorts,
+			AllowCIDRs:       cfg.SNICheck.AllowCIDRs,
+			AllowReaderComms: cfg.SNICheck.AllowReaderComms,
+		})
+		sniCheck.Start(ctx)
+		log.Info("snicheck detector configured", "eval_delay", "800ms")
+	}
+
 	// Build sensor list
 	var activeSensors []sensors.Sensor
 
@@ -2411,7 +2431,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		appIdentifier,
 		vhostCorrelator,
 		ipTS,
-		procScrapeSensor)
+		procScrapeSensor,
+		sniCheck)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -2523,6 +2544,7 @@ func dispatch(
 	vhostCorrelator *vhostcorr.Correlator,
 	ipTS *egressmon.IPTimeSeries,
 	procScrapeSensor *procscrapesensor.Sensor,
+	sniCheck *snicheck.Detector,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -2649,6 +2671,7 @@ func dispatch(
 		VhostCorr:        vhostCorrelator,
 		IPTimeSeries:     ipTS,
 		ProcScrape:       procScrapeSensor,
+		SNICheck:         sniCheck,
 	}
 	p.Run(ctx, events)
 }

@@ -1,0 +1,65 @@
+# SNI-required-for-TLS rules (P-SNI).
+#
+# Outbound TLS connections that fail to present an SNI extension are
+# almost always C2 or backdoor traffic to a hardcoded IP. Legitimate
+# web traffic to virtual-hosted services always sets SNI; bare-IP
+# TLS is a rare exception (NTP-over-TLS, custom internal services).
+#
+# The detector lives in pkg/snicheck and emits sensor="snicheck"
+# events with kind=tls_no_sni after a ~800ms grace period for the
+# ClientHello to be parsed by sensors/dpi.
+---
+id: tls_no_sni
+desc: Outbound TLS connection did not include an SNI extension
+severity: warn
+mitre: [T1071.001, T1573]
+match: |
+  event.sensor == "snicheck" &&
+  event.tags["kind"] == "tls_no_sni"
+tags: [c2, exfiltration, network]
+remediation: |
+  Bare-IP / no-SNI TLS is the canonical hardcoded-IP C2 pattern.
+  Triage the reader (event.comm / event.image) and the destination
+  IP. Legitimate cases:
+    - NTP-over-TLS to a known time-server pool
+    - Internal services with no DNS name
+    - Some package managers in air-gapped configs
+  All of the above should be added to snicheck.allow_cidrs or
+  snicheck.allow_reader_comms in xhelix.yaml.
+
+  Adversarial cases: malware talking to a hardcoded IP (skipping
+  DNS to avoid public-resolver logging), in-memory implants that
+  never resolve a domain. These should be netbanned.
+test_id: SNI-01
+---
+id: tls_no_sni_from_webserver
+desc: A web server lineage made a bare-IP / no-SNI TLS connection
+severity: high
+mitre: [T1071.001, T1190]
+match: |
+  event.sensor == "snicheck" &&
+  event.tags["kind"] == "tls_no_sni" &&
+  event.comm in ["php-fpm", "nginx", "apache2", "httpd", "caddy", "haproxy", "lighttpd"]
+tags: [c2, post_exploitation, web]
+remediation: |
+  Web-server lineages have ZERO legitimate reasons to do bare-IP
+  TLS. This is post-RCE C2 / exfil to a hardcoded attacker host.
+  Quarantine the lineage and netban the destination.
+test_id: SNI-02
+---
+id: tls_no_sni_from_tmp
+desc: A binary running from /tmp made a bare-IP / no-SNI TLS connection
+severity: critical
+mitre: [T1071.001, T1059]
+match: |
+  event.sensor == "snicheck" &&
+  event.tags["kind"] == "tls_no_sni" &&
+  (event.image.startsWith("/tmp/") ||
+   event.image.startsWith("/var/tmp/") ||
+   event.image.startsWith("/dev/shm/"))
+tags: [c2, dropper, post_exploitation]
+remediation: |
+  Near-certain malware. /tmp-resident binary speaking TLS to a
+  hardcoded IP is the textbook dropper-to-C2 shape. Kill the
+  lineage; netban the destination; preserve the binary for IR.
+test_id: SNI-03

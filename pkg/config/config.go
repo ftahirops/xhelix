@@ -39,6 +39,7 @@ type Config struct {
 	UI          UIConfig          `yaml:"ui"`
 	Webhook     WebhookConfig     `yaml:"webhook"`
 	Credbroker  CredbrokerConfig  `yaml:"credbroker"`
+	SNICheck    SNICheckConfig    `yaml:"snicheck"`
 
 	// v0.0.7: detect → snapshot → memscan → block → lockout → contain.
 	Forensic       ForensicConfig       `yaml:"forensic"`
@@ -238,6 +239,27 @@ type PlaintextGateConfig struct {
 	ExtraReaderImages []string `yaml:"extra_reader_images"`
 	// ExtraReaderImageGlobs appends to DefaultPlaintextReaderImageGlobs().
 	ExtraReaderImageGlobs []string `yaml:"extra_reader_image_globs"`
+}
+
+// SNICheckConfig governs the SNI-required-for-TLS detector.
+//
+// Default: enabled in detect mode. Every outbound TLS connect that
+// doesn't carry an SNI extension (after ~EvalDelay) produces a
+// tls_no_sni alert. Allowlisted readers (systemd-resolved, apt,
+// chronyd, etc.) are silenced.
+type SNICheckConfig struct {
+	// Enabled controls whether the detector runs at all.
+	Enabled bool `yaml:"enabled"`
+	// EvalDelay (e.g. "800ms") is the wait between connect and
+	// SNI check. Zero = default (800ms).
+	EvalDelay time.Duration `yaml:"eval_delay"`
+	// TLSPorts overrides the default {443, 8443, 853, 993, 995} set.
+	TLSPorts []uint16 `yaml:"tls_ports"`
+	// AllowCIDRs exempts destination subnets known to legitimately
+	// use bare-IP TLS (NTP, time servers, intentional IMDS allow).
+	AllowCIDRs []string `yaml:"allow_cidrs"`
+	// AllowReaderComms appends to the baked-in default set.
+	AllowReaderComms []string `yaml:"allow_reader_comms"`
 }
 
 // SensorsConfig toggles each sensor plane.
@@ -653,6 +675,9 @@ func Default() Config {
 				Enabled:       true,
 				AllowlistFile: "/etc/xhelix/procscrape-allowlist.conf",
 			},
+		},
+		SNICheck: SNICheckConfig{
+			Enabled: true,
 		},
 		Alerts: AlertsConfig{
 			Sinks: []SinkConfig{
