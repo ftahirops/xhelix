@@ -18,70 +18,78 @@
 # treatment.
 
 class_1:  # Hard invariants — auto-deny candidates
-  # System-file integrity. These targets never have a legitimate
-  # writer outside the system-tool allowlist baked into the rules.
-  - tamper_passwd
-  - tamper_shadow
-  - ld_so_preload_modified
-  - ld_so_conf_modified
-  - ssh_key_added_root
-  - pam_module_drop
-  - boot_artifact_modified
-  - kernel_module_dropped
-  - kernel_module_load
-  - package_diff_critical_binary
-  # Cron / persistence — high-confidence indicators when triggered
-  # by web-uid or with malware shape.
-  - cron_web_user_added
-  - cron_malware_shape
-  - user_crontab_modified
-  - rc_local_modified
-  - ssh_login_hook_dropped
-  # Process-level hard invariants. Web worker should NEVER do these.
-  - web_server_spawns_shell
-  - web_user_runs_db_client
-  - uid0_no_transition
-  - shell_with_socket_fd
-  - ssh_tunnel_listener
-  # Container escape — never legitimate.
+  # Recalibrated 2026-05-22 after live attack-sim on plesk.douxl.com
+  # showed Imunify-notifier legitimately drops cron files and Plesk
+  # tooling legitimately writes /etc/passwd via non-allowlisted
+  # paths. Rules with demonstrated legitimate triggers on a Plesk
+  # host were demoted to Class 2. Class 1 now contains ONLY rules
+  # that are adversarial-by-construction or have no legitimate
+  # trigger we've ever observed.
+  #
+  # Loader hooks ────────────────────────────────────────────────
+  - ld_so_preload_modified         # classic rootkit, package-managed gated
+  - pam_module_drop                # backdoor PAM module
+  # Kernel surface ──────────────────────────────────────────────
+  - kernel_module_dropped          # package-managed gated
+  - boot_artifact_modified         # /boot tamper outside package
+  - kernel_module_load             # ebpf event (separate from FIM)
+  - kallsyms_changed
+  - modules_changed
+  - syscall_address_drift
+  # Process-level hard invariants ───────────────────────────────
+  - shell_with_socket_fd           # reverse-shell signature
+  - ssh_tunnel_listener            # SSH -R/-L/-D
+  - web_user_runs_db_client        # nginx/php-fpm spawning mysql
+  # Container escape ────────────────────────────────────────────
   - mount_host_root_into_container
   - container_escape_attempt
-  # Decoy / canary touch — adversarial by construction.
+  # Decoy / canary — adversarial by construction ────────────────
   - decoy_file_opened
   - decoy_service_connect
   - decoy_canary_token_used
   - decoy_dns_resolved
-  # Self-defence — xhelix's own binary tamper.
+  # High-confidence cron variants ───────────────────────────────
+  - cron_web_user_added            # web uid writing cron — near-certain RCE
+  - cron_malware_shape             # content classifier: pipe-to-sh, b64, /tmp script
+  # Self-defence — xhelix binary tamper ─────────────────────────
   - tamper.binary_mtime
   - tamper.binary_inode
   - tamper.binary_missing
   - tamper.pidfile
   - tamper.auditd_dead
-  # Kernel-integrity.
-  - kallsyms_changed
-  - modules_changed
-  - syscall_address_drift
+  # Package-diff vs known-critical binaries — gated by manifest.
+  - package_diff_critical_binary
 
 class_2:  # Strong exploit signals — freeze candidates
-  # Memory-execution primitives.
+  # Demoted from Class 1 after live FP observation:
+  - user_crontab_modified          # Imunify drops cron files legitimately
+  - rc_local_modified              # legacy init touched by some installers
+  - ssh_login_hook_dropped         # operators set up .ssh/rc legitimately
+  - ld_so_conf_modified            # package installs (e.g. /etc/ld.so.conf.d/*)
+  - tamper_passwd                  # has system-tool allowlist but Plesk uses
+  - tamper_shadow                  # non-listed tools (psa-related)
+  - ssh_key_added_root             # ops legitimately add keys
+  - web_server_spawns_shell        # Plesk + certbot hooks spawn shells
+  - uid0_no_transition             # systemd-run --uid 0, sudo edge cases
+  # Memory-execution primitives ─────────────────────────────────
   - mem_mprotect_rwx
   - mem_canary_fail
   - mem_lkrg_violation
   - memfd_run_pattern
   - deleted_binary_running
   - thread_outside_module
-  # Process-injection / debug abuse.
+  # Process-injection / debug abuse ─────────────────────────────
   - ptrace_sensitive_target
   - tamper.ptrace
-  # Dropper / unknown-binary patterns.
+  # Dropper / unknown-binary patterns ───────────────────────────
   - binary_runs_from_tmp
   - download_then_run
   - first_seen_image_exec
-  # Auth bursts.
+  # Auth bursts ─────────────────────────────────────────────────
   - ssh_brute_then_success
-  # bpf abuse.
+  # bpf abuse ───────────────────────────────────────────────────
   - bpf_syscall_unexpected
-  # File integrity that crosses a hard line but is rarer than class_1.
+  # File integrity that crosses a hard line ─────────────────────
   - shell_rc_modified
   - profile_d_dropped
   - webroot_bootstrap_modified

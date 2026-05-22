@@ -1167,6 +1167,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// LocalAPI. The seal/unseal/migration path stays on
 	// xhelixctl-side for operator workflows.
 	credBroker := loadCredBroker(log)
+	startFanGate(ctx, log, credBroker)
 	apiSrv.RegisterHandler("credbroker.history", func(_ context.Context, _ json.RawMessage) (any, error) {
 		hist := credBroker.History()
 		out := make([]map[string]any, 0, len(hist))
