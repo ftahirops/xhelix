@@ -23,6 +23,14 @@ const (
 	// exfiltrated and is now USING the honey credential. Fires once
 	// per (marker, observation source).
 	AlertHoneyMarkerSeen AlertKind = "credbroker_honey_marker_in_flight"
+
+	// AlertPlaintextRead: a watched plaintext credential file
+	// (~/.aws/credentials, ~/.npmrc, .env, etc.) was opened. Unlike
+	// AlertSealedDenied this fires for EVERY read because the file
+	// hasn't been converted to sealed form; the reader's identity +
+	// lineage is the signal. In detect mode the open is allowed; in
+	// enforce mode it can be denied based on a reader allowlist.
+	AlertPlaintextRead AlertKind = "credbroker_plaintext_read"
 )
 
 // BrokerAlert is the structured payload emitted on each significant

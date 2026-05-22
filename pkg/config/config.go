@@ -38,6 +38,7 @@ type Config struct {
 	Session     SessionConfig     `yaml:"session"`
 	UI          UIConfig          `yaml:"ui"`
 	Webhook     WebhookConfig     `yaml:"webhook"`
+	Credbroker  CredbrokerConfig  `yaml:"credbroker"`
 
 	// v0.0.7: detect → snapshot → memscan → block → lockout → contain.
 	Forensic       ForensicConfig       `yaml:"forensic"`
@@ -205,6 +206,38 @@ type RulesetConfig struct {
 	Bundled        string `yaml:"bundled"` // core|falco|none
 	CustomDir      string `yaml:"custom_dir"`
 	ReloadOnChange bool   `yaml:"reload_on_change"`
+}
+
+// CredbrokerConfig holds credbroker-side knobs. Sealed/honey behavior
+// lives inside the broker itself; this struct adds the plaintext
+// credential gate (P-PLAINTEXT) which has its own
+// detect-vs-enforce switch.
+type CredbrokerConfig struct {
+	Plaintext PlaintextGateConfig `yaml:"plaintext"`
+}
+
+// PlaintextGateConfig governs the plaintext credential gate.
+//
+// Default behavior (detect-only): every open of a watched plaintext
+// credential file emits an alert with the full reader lineage. The
+// open is allowed.
+//
+// Enforce mode: opens by readers not in ExtraReaderComms /
+// ExtraReaderImages (plus the baked-in defaults) are DENIED at
+// FAN_OPEN_PERM time. Self-reads (UID-matching the file owner) are
+// always allowed.
+type PlaintextGateConfig struct {
+	// Enforce flips kernel-side denial on. False = detect-only.
+	Enforce bool `yaml:"enforce"`
+	// ExtraPaths appends to DefaultPlaintextPaths(). Useful when
+	// the host has site-specific credential locations.
+	ExtraPaths []string `yaml:"extra_paths"`
+	// ExtraReaderComms appends to DefaultPlaintextReaderComms().
+	ExtraReaderComms []string `yaml:"extra_reader_comms"`
+	// ExtraReaderImages appends to DefaultPlaintextReaderImages().
+	ExtraReaderImages []string `yaml:"extra_reader_images"`
+	// ExtraReaderImageGlobs appends to DefaultPlaintextReaderImageGlobs().
+	ExtraReaderImageGlobs []string `yaml:"extra_reader_image_globs"`
 }
 
 // SensorsConfig toggles each sensor plane.

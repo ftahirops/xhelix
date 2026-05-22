@@ -1,9 +1,15 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/xhelix/xhelix/pkg/credbroker"
 	"github.com/xhelix/xhelix/pkg/model"
 )
+
+// joinWithSpaces concatenates parts with a single space between each.
+// Used to build lineage_chain tag values like "bash → sshd → root".
+func joinWithSpaces(parts []string) string { return strings.Join(parts, " ") }
 
 // castEmit unwraps the daemon's emit closure (declared as
 // func(model.Alert) in run.go) through an `any` boundary. Used so
@@ -43,7 +49,21 @@ func (e *credBrokerAlertEmitter) Emit(a credbroker.BrokerAlert) {
 		ev.Tags["parent_comm"] = a.Lineage[1].Comm
 		ev.Tags["parent_image"] = a.Lineage[1].Image
 	}
+	// Walk the full ancestor chain so triage sees "this credential
+	// was read by chrome → bash → sshd → root@1.2.3.4" not just
+	// the immediate reader.
+	if len(a.Lineage) > 0 {
+		var chain []string
+		for i, n := range a.Lineage {
+			if i > 0 {
+				chain = append(chain, "→")
+			}
+			chain = append(chain, n.Comm)
+		}
+		ev.Tags["lineage_chain"] = joinWithSpaces(chain)
+	}
 	ruleID := string(a.Kind)
+	severity := model.SeverityCritical
 	switch a.Kind {
 	case credbroker.AlertSealedDenied:
 		ruleID = "credbroker.unauthentic_open"
@@ -51,6 +71,15 @@ func (e *credBrokerAlertEmitter) Emit(a credbroker.BrokerAlert) {
 		ruleID = "credbroker.honey_touched"
 	case credbroker.AlertHoneyMarkerSeen:
 		ruleID = "credbroker.honey_marker_in_flight"
+	case credbroker.AlertPlaintextRead:
+		ruleID = "credbroker.plaintext_read"
+		// Plaintext-read alerts are warn rather than critical by
+		// default — they fire on every legit aws-cli call too, so
+		// the takeover scorer needs to weight them lower than the
+		// sealed-denied / honey-touched alerts which are by
+		// construction adversarial.
+		severity = model.SeverityWarn
+		ev.Severity = severity
 	}
 	e.emit(model.Alert{
 		Event:  ev,

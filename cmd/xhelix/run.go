@@ -1368,7 +1368,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Bridge the daemon's emit closure into the fangate so cred-broker
 	// denies / honey-touches land in the alert bus AND the takeover
 	// planner (via plannerWiring.OnAlert which is wrapped inside emit).
-	startFanGate(ctx, log, credBroker, func(a interface{}) {
+	startFanGate(ctx, log, credBroker, cfg.Credbroker.Plaintext, func(a interface{}) {
 		if ma, ok := a.(model.Alert); ok && emit != nil {
 			emit(ma)
 		}

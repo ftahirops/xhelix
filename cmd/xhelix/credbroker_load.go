@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/xhelix/xhelix/pkg/config"
 	"github.com/xhelix/xhelix/pkg/credbroker"
 )
 
@@ -84,7 +85,7 @@ func loadCredBroker(log *slog.Logger) *credbroker.Broker {
 //   - non-Linux: returns "linux only" error
 //   - no .sealed files present yet: count=0 (operator seals
 //     credentials later via `xhelixctl credbroker seal`)
-func startFanGate(ctx context.Context, log *slog.Logger, broker *credbroker.Broker, emit func(a interface{})) {
+func startFanGate(ctx context.Context, log *slog.Logger, broker *credbroker.Broker, ptCfg config.PlaintextGateConfig, emit func(a interface{})) {
 	gate, err := credbroker.NewFanGate(broker, log)
 	if err != nil {
 		log.Warn("credbroker fangate disabled (init failed)", "err", err)
@@ -108,6 +109,30 @@ func startFanGate(ctx context.Context, log *slog.Logger, broker *credbroker.Brok
 		h, _ := gate.MarkHoneyFilesIn(root)
 		totalHoney += h
 	}
+
+	// Plaintext credential gate (P-PLAINTEXT). Defaults to
+	// detect-only — every open of a watched plaintext credential
+	// file produces an AlertPlaintextRead with the full reader
+	// lineage. Operator flips to enforce mode via
+	// credbroker.plaintext.enforce: true in xhelix.yaml; then
+	// non-allowlisted readers are denied at FAN_OPEN_PERM time.
+	plaintextPaths := append(credbroker.DefaultPlaintextPaths(), ptCfg.ExtraPaths...)
+	totalPlaintext, plaintextErrs := gate.MarkPlaintextPaths(plaintextPaths)
+	if len(plaintextErrs) > 0 {
+		// Per-path errors are expected (file doesn't exist on this
+		// host); only loud-warn if EVERY path failed.
+		if totalPlaintext == 0 {
+			log.Warn("credbroker plaintext gate: no paths marked",
+				"first_err", plaintextErrs[0])
+		}
+	}
+	gate.SetPlaintextAllowlist(
+		append(credbroker.DefaultPlaintextReaderComms(), ptCfg.ExtraReaderComms...),
+		append(credbroker.DefaultPlaintextReaderImages(), ptCfg.ExtraReaderImages...),
+		append(credbroker.DefaultPlaintextReaderImageGlobs(), ptCfg.ExtraReaderImageGlobs...),
+	)
+	gate.SetPlaintextEnforce(ptCfg.Enforce)
+
 	if err := gate.Start(ctx); err != nil {
 		log.Warn("credbroker fangate start failed", "err", err)
 		return
@@ -115,6 +140,8 @@ func startFanGate(ctx context.Context, log *slog.Logger, broker *credbroker.Brok
 	log.Info("credbroker fangate started",
 		"sealed_files_marked", totalSealed,
 		"honey_files_marked", totalHoney,
+		"plaintext_files_marked", totalPlaintext,
+		"plaintext_enforce", gate.PlaintextEnforce(),
 		"seal_roots", sealRoots)
 }
 

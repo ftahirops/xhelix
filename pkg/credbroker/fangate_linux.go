@@ -61,8 +61,9 @@ import (
 type markMode uint8
 
 const (
-	modeSealed markMode = iota // .sealed: broker.Decide → ALLOW or DENY
-	modeHoney                  // .honey: always ALLOW, emit "honey touched" alert
+	modeSealed    markMode = iota // .sealed: broker.Decide → ALLOW or DENY
+	modeHoney                     // .honey: always ALLOW, emit "honey touched" alert
+	modePlaintext                 // plaintext cred file (~/.aws/credentials etc): ALLOW + alert with lineage; enforce mode denies non-allowlisted readers
 )
 
 // FanGate is the fanotify-backed permission gate.
@@ -95,6 +96,15 @@ type FanGate struct {
 	cancel  context.CancelFunc
 	running atomic.Bool
 	log     interface{ Warn(string, ...any) }
+
+	// Plaintext-mode policy. Default is detect-only (enforce=false).
+	// When enforce is on, opens by readers not in the allowlist are
+	// denied at FAN_OPEN_PERM time.
+	plaintextEnforce  atomic.Bool
+	plaintextAllowMu  sync.RWMutex
+	plaintextComms    map[string]struct{} // exact comm match (16-char)
+	plaintextImages   map[string]struct{} // exact image-path match
+	plaintextImageGlb []string            // image-path glob match
 }
 
 // NewFanGate wires fanotify with FAN_CLASS_CONTENT (the class that
@@ -128,6 +138,55 @@ func (g *FanGate) WithHoney(h *HoneyFactory) *FanGate { g.honey = h; return g }
 // WithAlertEmitter attaches a sink for decision alerts. May be nil.
 func (g *FanGate) WithAlertEmitter(e AlertEmitter) *FanGate { g.emit = e; return g }
 
+// SetPlaintextEnforce switches plaintext-mode opens between
+// detect-only (false, default) and deny-non-allowlisted (true).
+func (g *FanGate) SetPlaintextEnforce(on bool) { g.plaintextEnforce.Store(on) }
+
+// PlaintextEnforce reports the current plaintext enforce setting.
+func (g *FanGate) PlaintextEnforce() bool { return g.plaintextEnforce.Load() }
+
+// SetPlaintextAllowlist replaces the plaintext-reader allowlist.
+// comms = exact comm-name matches (16-char kernel-truncated).
+// images = exact absolute-image-path matches.
+// imageGlobs = filepath.Match-style globs against the image path.
+// Self-reads (where the reader's UID owns the file) are always
+// allowed — that's the legitimate consumer reading its own creds.
+func (g *FanGate) SetPlaintextAllowlist(comms, images, imageGlobs []string) {
+	g.plaintextAllowMu.Lock()
+	defer g.plaintextAllowMu.Unlock()
+	g.plaintextComms = make(map[string]struct{}, len(comms))
+	for _, c := range comms {
+		g.plaintextComms[c] = struct{}{}
+	}
+	g.plaintextImages = make(map[string]struct{}, len(images))
+	for _, i := range images {
+		g.plaintextImages[i] = struct{}{}
+	}
+	g.plaintextImageGlb = append([]string(nil), imageGlobs...)
+}
+
+// plaintextReaderAllowed evaluates the allowlist for a request.
+func (g *FanGate) plaintextReaderAllowed(req Request) bool {
+	if len(req.Lineage) == 0 {
+		return false // fail-closed when we can't identify the reader
+	}
+	reader := req.Lineage[0]
+	g.plaintextAllowMu.RLock()
+	defer g.plaintextAllowMu.RUnlock()
+	if _, ok := g.plaintextComms[reader.Comm]; ok {
+		return true
+	}
+	if _, ok := g.plaintextImages[reader.Image]; ok {
+		return true
+	}
+	for _, glob := range g.plaintextImageGlb {
+		if ok, _ := filepath.Match(glob, reader.Image); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // Mark arms FAN_OPEN_PERM on the given absolute path as a sealed file
 // (broker.Decide gates each open).
 func (g *FanGate) Mark(path string) error { return g.markPath(path, modeSealed) }
@@ -136,6 +195,49 @@ func (g *FanGate) Mark(path string) error { return g.markPath(path, modeSealed) 
 // triggers an alert, but the open is allowed — attacker exfiltrates
 // the marked honey content and is detected later via the marker).
 func (g *FanGate) MarkHoney(path string) error { return g.markPath(path, modeHoney) }
+
+// MarkPlaintext arms FAN_OPEN_PERM on a known-plaintext credential
+// file (e.g. ~/.aws/credentials, ~/.npmrc, .env). Every open emits a
+// high-confidence alert with the full reader lineage. In detect mode
+// (default) the open is allowed; in enforce mode it can be denied
+// based on the broker's PlaintextReaderAllowlist.
+//
+// The point is "we can say WHO read this credential and from what
+// lineage", which is the foundation for everything else: triage,
+// session attribution, lineage-tainting, post-incident scope.
+func (g *FanGate) MarkPlaintext(path string) error { return g.markPath(path, modePlaintext) }
+
+// MarkPlaintextPaths arms every existing path in the list. Globs are
+// expanded via filepath.Glob. Returns the count of paths successfully
+// marked plus a slice of per-path errors. Missing files are silently
+// skipped (not all hosts have all credential files).
+func (g *FanGate) MarkPlaintextPaths(paths []string) (int, []error) {
+	var errs []error
+	count := 0
+	for _, p := range paths {
+		expanded, err := filepath.Glob(p)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("glob %s: %w", p, err))
+			continue
+		}
+		if len(expanded) == 0 {
+			// Non-glob literal that doesn't exist — skip silently.
+			if !strings.ContainsAny(p, "*?[") {
+				if _, statErr := os.Stat(p); statErr == nil {
+					expanded = []string{p}
+				}
+			}
+		}
+		for _, abs := range expanded {
+			if err := g.MarkPlaintext(abs); err != nil {
+				errs = append(errs, fmt.Errorf("mark %s: %w", abs, err))
+				continue
+			}
+			count++
+		}
+	}
+	return count, errs
+}
 
 func (g *FanGate) markPath(path string, mode markMode) error {
 	g.fdMu.RLock()
@@ -346,6 +448,38 @@ func (g *FanGate) processEvent(fanFD, eventFD int, pid uint32, mask uint64) {
 		g.respond(fanFD, eventFD, true)
 		g.stats.allowed.Add(1)
 		g.emitAlert(AlertHoneyTouched, path, req, "honey decoy opened (no legitimate reader by construction)")
+	case modePlaintext:
+		// Plaintext credential file. Detect mode (default): ALLOW
+		// the read; emit alert ONLY when the reader is non-
+		// allowlisted (otherwise sshd reading host keys + aws-cli
+		// reading .aws/credentials would drown the bus).
+		//
+		// Enforce mode: PlaintextEnforce is true, the immediate
+		// reader's comm/image is checked against PlaintextAllowlist;
+		// non-matches get DENIED at the kernel.
+		allowlisted := g.plaintextReaderAllowed(req)
+		allow := true
+		denyReason := ""
+		if g.plaintextEnforce.Load() && !allowlisted {
+			allow = false
+			denyReason = "reader not in PlaintextAllowlist"
+		}
+		g.respond(fanFD, eventFD, allow)
+		if allow {
+			g.stats.allowed.Add(1)
+		} else {
+			g.stats.denied.Add(1)
+		}
+		// Allowlisted reader in detect mode = silent allow. Anything
+		// else lights up the alert bus with the full reader lineage
+		// so triage can see WHO opened the credential.
+		if !allowlisted || !allow {
+			reason := "plaintext credential opened by non-allowlisted reader"
+			if denyReason != "" {
+				reason = denyReason
+			}
+			g.emitAlert(AlertPlaintextRead, path, req, reason)
+		}
 	default: // modeSealed
 		// Read content directly from the kernel-provided event fd.
 		// CRITICAL: we MUST NOT re-open `path` here. fanotify
