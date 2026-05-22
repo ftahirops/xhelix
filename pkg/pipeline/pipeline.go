@@ -113,6 +113,11 @@ type Pipeline struct {
 	FileReadBurst *burstdet.Counter
 	SpawnBurst    *burstdet.Counter
 
+	// IPTimeSeries persists per-IP bytes-in/out time-buckets for
+	// the graph view. Nil-safe — operator may run egress observer
+	// without timeseries persistence to save disk.
+	IPTimeSeries *egressmon.IPTimeSeries
+
 	// EgressObserver (P-EGRESS.M1) classifies outbound connects and
 	// records per-lineage destination counters. Nil-safe; when the
 	// `egress.observe` config flag is false the daemon doesn't
@@ -697,6 +702,17 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 						var n uint64
 						_, _ = fmt.Sscanf(bs, "%d", &n)
 						p.EgressObserver.ObserveBytes(lid, ip, sni, port, n)
+						if p.IPTimeSeries != nil {
+							p.IPTimeSeries.RecordOut(ip, n, ev.Time)
+						}
+					}
+				case ev.Tags["kind"] == "net_bytes" && ev.Tags["dir"] == "in":
+					if bs := ev.Tags["bytes"]; bs != "" {
+						var n uint64
+						_, _ = fmt.Sscanf(bs, "%d", &n)
+						if p.IPTimeSeries != nil {
+							p.IPTimeSeries.RecordIn(ip, n, ev.Time)
+						}
 					}
 				}
 			}

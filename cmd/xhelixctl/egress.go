@@ -99,14 +99,19 @@ func newEgressObserveCmd() *cobra.Command {
 				return resp.Lineages[i].TotalConnects > resp.Lineages[j].TotalConnects
 			})
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "LINEAGE\tCONNECTS\tUNIQUE\tUNKNOWN\tINTEL_BAD\tCLOUD\tCDN\tREG\tOS_UPD\tPRIV\tLAST_CONNECT")
+			fmt.Fprintln(tw, " \tLINEAGE\tCONNECTS\tUNIQUE\tUNKNOWN\tINTEL_BAD\tCLOUD\tCDN\tREG\tOS_UPD\tPRIV\tLAST_CONNECT")
 			for _, lg := range resp.Lineages {
 				bad := lg.ByClass["intel_bad"]
+				// We don't have the AppID on the observe-snapshot
+				// response yet — heuristic uses lineage info only.
+				// (Analytics has AppID; observe shows raw lineages.)
+				sus := LineageSuspicion("", lg.UniqueUnknown, bad)
 				badStr := fmt.Sprintf("%d", bad)
 				if bad > 0 {
-					badStr = "!" + badStr // visual flag
+					badStr = colorize(fmt.Sprintf("!%d", bad), ansiRed)
 				}
-				fmt.Fprintf(tw, "%d\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\n",
+				fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%d\t%s\n",
+					sus.Tag(),
 					lg.Lineage, lg.TotalConnects, lg.UniqueDests, lg.UniqueUnknown,
 					badStr,
 					lg.ByClass["cloud_provider"], lg.ByClass["cdn"],

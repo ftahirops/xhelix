@@ -131,9 +131,11 @@ func printGroupBy(latest map[egressmon.LineageID]egressmon.RollupRecord, key fun
 		rows = rows[:top]
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "APP\tCONNECTS\tBYTES_OUT\tUNIQUE\tUNKNOWN")
+	fmt.Fprintln(tw, " \tAPP\tCONNECTS\tBYTES_OUT\tUNIQUE\tUNKNOWN")
 	for _, r := range rows {
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%d\n", r.Key, r.Connects, humanBytes(r.Bytes), r.Unique, r.Unknown)
+		sus := LineageSuspicion(r.Key, r.Unknown, 0)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%d\t%d\n",
+			sus.Tag(), r.Key, r.Connects, humanBytes(r.Bytes), r.Unique, r.Unknown)
 	}
 	tw.Flush()
 }

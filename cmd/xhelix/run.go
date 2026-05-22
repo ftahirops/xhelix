@@ -1237,6 +1237,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// capture it. Pipeline picks it up later via Pipeline.EgressObserver.
 	// Pure data layer: classifies every outbound connect; no enforcement.
 	var egressObs *egressmon.Observer
+	var ipTS *egressmon.IPTimeSeries
 	if cfg.Egress.Observe {
 		sampleTTL := cfg.Egress.SampleTTL
 		if sampleTTL == 0 {
@@ -1265,6 +1266,21 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			})
 			log.Info("destclass CIDR feed sync enabled (24h cadence, AWS + Cloudflare)")
 		}
+		// Per-IP time-series store (graphs + retention). Independent
+		// of the per-lineage observer; persists every IP we see bytes
+		// for, bucketed by 5 minutes, retained 30 days.
+		tsDB := filepath.Join(cfg.Agent.StateDir, "ip-timeseries.db")
+		if ts, err := egressmon.NewIPTimeSeries(egressmon.IPTimeSeriesConfig{
+			DBPath: tsDB, BucketSize: 5 * time.Minute, RetentionDays: 30,
+		}); err == nil {
+			ipTS = ts
+			ts.StartFlushLoop(ctx)
+			log.Info("egress ip-timeseries enabled",
+				"db", tsDB, "bucket", "5m", "retention_days", 30)
+		} else {
+			log.Warn("egress ip-timeseries init failed (continuing without graphs)", "err", err)
+		}
+
 		// Daily rollup writer — periodic snapshot to
 		// /var/lib/xhelix/egress-analytics/YYYY-MM-DD.jsonl.
 		rollupHost, _ := os.Hostname()
@@ -1425,6 +1441,66 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			"files_hashed": pr.FilesHashed,
 			"bytes_hashed": pr.BytesHashed,
 		}, nil
+	})
+	apiSrv.RegisterHandler("egress.ip_timeseries", func(_ context.Context, raw json.RawMessage) (any, error) {
+		var req struct {
+			IP    string `json:"ip"`
+			Hours int    `json:"hours"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, err
+		}
+		if ipTS == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		if req.Hours <= 0 {
+			req.Hours = 24
+		}
+		ip := net.ParseIP(req.IP)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid ip %q", req.IP)
+		}
+		until := time.Now()
+		since := until.Add(-time.Duration(req.Hours) * time.Hour)
+		points, err := ipTS.Series(ip, since, until)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]map[string]any, 0, len(points))
+		for _, p := range points {
+			out = append(out, map[string]any{
+				"bucket_ts": p.BucketTs.Unix(),
+				"bytes_out": p.BytesOut,
+				"bytes_in":  p.BytesIn,
+			})
+		}
+		return map[string]any{"enabled": true, "ip": req.IP, "points": out}, nil
+	})
+	apiSrv.RegisterHandler("egress.top_ips", func(_ context.Context, raw json.RawMessage) (any, error) {
+		if ipTS == nil {
+			return map[string]any{"enabled": false}, nil
+		}
+		var req struct {
+			Hours int `json:"hours"`
+			Top   int `json:"top"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		if req.Hours <= 0 {
+			req.Hours = 24
+		}
+		until := time.Now()
+		since := until.Add(-time.Duration(req.Hours) * time.Hour)
+		top, err := ipTS.TopIPs(since, until, req.Top)
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]map[string]any, 0, len(top))
+		for _, s := range top {
+			rows = append(rows, map[string]any{
+				"ip": s.IP, "bytes_out": s.BytesOut, "bytes_in": s.BytesIn,
+			})
+		}
+		return map[string]any{"enabled": true, "top": rows}, nil
 	})
 	apiSrv.RegisterHandler("egress.block", func(_ context.Context, raw json.RawMessage) (any, error) {
 		if banner == nil {
@@ -1923,7 +1999,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.Catalog,
 		egressObs,
 		appIdentifier,
-		vhostCorrelator)
+		vhostCorrelator,
+		ipTS)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -2033,6 +2110,7 @@ func dispatch(
 	egressObs *egressmon.Observer,
 	appIdentifier *appident.Identifier,
 	vhostCorrelator *vhostcorr.Correlator,
+	ipTS *egressmon.IPTimeSeries,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -2157,6 +2235,7 @@ func dispatch(
 		EgressObserver:   egressObs,
 		AppIdent:         appIdentifier,
 		VhostCorr:        vhostCorrelator,
+		IPTimeSeries:     ipTS,
 	}
 	p.Run(ctx, events)
 }
