@@ -365,7 +365,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				return webhookSink.Send(c, a)
 			},
 			Logger:      log,
-			MonitorMode: cfg.Response.MonitorMode,
+			MonitorMode:  cfg.Response.MonitorMode,
+			EnforceRules: cfg.Response.EnforceRules,
 		})
 		_ = respEngine.Start(ctx)
 		log.Info("response engine enabled",

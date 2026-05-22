@@ -318,6 +318,24 @@ type ResponseConfig struct {
 	// want to see what xhelix would have done without it actually
 	// SIGSTOPping production processes. Default false (enforce).
 	MonitorMode bool `yaml:"monitor_mode"`
+
+	// EnforceRules is an operator-supplied list of rule IDs that
+	// bypass MonitorMode and execute their full destructive action
+	// mask on fire. The intended use is graduating individual
+	// Class-1 hard-invariant rules out of monitor mode after
+	// operators have verified the rule has zero FPs on this
+	// specific host class.
+	//
+	// Empty = no rules promoted (every rule still respects
+	// MonitorMode). Promotion is a per-rule operator decision
+	// done via `xhelixctl rules promote <rule_id>`.
+	//
+	// Safety: even promoted rules still respect the autobaseline
+	// gates (baseline_observing strips destructive actions; only
+	// when autobaseline is sealed AND lineage hits baseline_known
+	// is the rule's destructive mask stripped). The promotion
+	// only bypasses the GLOBAL MonitorMode flag.
+	EnforceRules []string `yaml:"enforce_rules"`
 }
 
 // NetbanConfig configures the IP banning subsystem.

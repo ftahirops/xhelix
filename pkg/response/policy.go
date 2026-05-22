@@ -240,6 +240,11 @@ type Engine struct {
 	// monitor mode. See ERRORS.md entry "memfd self-DoS".
 	monitorMode bool
 
+	// enforceRules: rules in this set bypass monitorMode. Built
+	// from cfg.EnforceRules at construction; lookup is a hash hit
+	// on the hot path (OnAlert), so this is a map not a slice.
+	enforceRules map[string]struct{}
+
 	mu      sync.RWMutex
 	running atomic.Bool
 	stopCh  chan struct{}
@@ -320,6 +325,14 @@ type Config struct {
 	// dispatch. Set this from cfg.Response.MonitorMode (yaml:
 	// "monitor_mode: true") for learning-mode deployments.
 	MonitorMode bool
+
+	// EnforceRules is the operator-blessed list of rule IDs that
+	// bypass MonitorMode. When MonitorMode is true and a rule
+	// fires whose ID is in this set, the engine SKIPS the
+	// monitor-mode strip and lets the full destructive action
+	// mask execute. Use only after verifying the rule has zero
+	// FPs on this host class.
+	EnforceRules []string
 }
 
 // New builds a response engine.
@@ -333,7 +346,8 @@ func New(cfg Config) *Engine {
 	e := &Engine{
 		policy:      cfg.Policy,
 		log:         cfg.Logger,
-		monitorMode: cfg.MonitorMode,
+		monitorMode:  cfg.MonitorMode,
+		enforceRules: ruleSet(cfg.EnforceRules),
 		netBan:      cfg.NetBanner,
 		hostBanner:  cfg.HostBanner,
 		remediator:  cfg.Remediator,
@@ -366,12 +380,18 @@ func (e *Engine) OnAlert(a model.Alert) {
 	}
 
 	if e.monitorMode {
-		// Monitor (observe-only) — strip every destructive action.
-		// The alert still flows to log + webhook so operators can
-		// watch the policy that WOULD have fired.
-		mask &= ActionLog | ActionWebhook
-		if mask == 0 {
-			mask = ActionLog
+		// Per-rule enforce override: rules in e.enforceRules
+		// bypass the strip and execute their full mask. Use this
+		// to graduate individual rules out of monitor mode after
+		// per-host calibration.
+		if _, promoted := e.enforceRules[a.RuleID]; !promoted {
+			// Monitor (observe-only) — strip every destructive action.
+			// The alert still flows to log + webhook so operators can
+			// watch the policy that WOULD have fired.
+			mask &= ActionLog | ActionWebhook
+			if mask == 0 {
+				mask = ActionLog
+			}
 		}
 	}
 
@@ -746,4 +766,21 @@ func describeMask(mask Action) string {
 		parts = append(parts, "webhook")
 	}
 	return strings.Join(parts, ", ")
+}
+
+// ruleSet builds a hash-set of rule IDs from a slice (cheap
+// O(1) lookups on the hot path). Empty/duplicate entries are
+// silently dropped — config robustness.
+func ruleSet(ids []string) map[string]struct{} {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			out[id] = struct{}{}
+		}
+	}
+	return out
 }

@@ -45,6 +45,113 @@ so CI catches bad CEL before deploy.`,
 	cmd.AddCommand(lint)
 	cmd.AddCommand(newRulesSoakCmd())
 	cmd.AddCommand(newRulesFPCmd())
+	cmd.AddCommand(newRulesPromoteCmd())
+	return cmd
+}
+
+// newRulesPromoteCmd prints the YAML snippet an operator must paste
+// into /etc/xhelix/xhelix.yaml to promote a rule out of monitor mode.
+// We don't auto-edit the daemon's config — config changes are the
+// operator's responsibility, not a tool's. The command checks the
+// rule actually exists and shows its FP record so the operator
+// makes an informed decision.
+//
+// Workflow:
+//   1. xhelixctl rules fp  ← inspect current Class 1 FP rates
+//   2. xhelixctl rules soak  ← inspect per-rule clean-day counter
+//   3. xhelixctl rules promote ld_so_preload_modified
+//        → prints YAML to add to config, with safety warnings
+//   4. operator adds the line to /etc/xhelix/xhelix.yaml
+//   5. systemctl restart xhelix
+//   6. on next fire, the promoted rule executes its full action
+//      mask instead of being stripped to log+webhook
+func newRulesPromoteCmd() *cobra.Command {
+	var sock string
+	cmd := &cobra.Command{
+		Use:   "promote <rule_id>",
+		Short: "Print config snippet to promote a rule out of monitor mode",
+		Long: `Promotion is the operator-driven step that graduates a
+SPECIFIC rule from monitor-only into full enforce. Use only after:
+  - xhelixctl rules fp shows Class 1 within target
+  - xhelixctl rules soak shows the rule has fired enough to know
+    its FP shape on YOUR workload (recommend ≥7 days)
+  - You understand the rule's full action mask (run with no args
+    to see Default policy in pkg/response/policy.go)
+
+This command does NOT edit the daemon config. It prints the YAML
+snippet you paste into /etc/xhelix/xhelix.yaml under response.enforce_rules,
+then restart the daemon.
+
+DESTRUCTIVE: promoted rules can SIGSTOP, NetBan, LockUser, etc.
+once they fire. Verify the rule's behaviour on YOUR host before
+promotion. There is no undo other than reverting the config.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ruleID := args[0]
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			// Query soak for this rule.
+			var soakResp struct {
+				MinCleanDays uint `json:"min_clean_days"`
+				Records      []struct {
+					RuleID               string `json:"rule_id"`
+					Class                int    `json:"class"`
+					FireCount            uint64 `json:"fire_count"`
+					FPCount              uint64 `json:"fp_count"`
+					ConsecutiveCleanDays uint   `json:"consecutive_clean_days"`
+				} `json:"records"`
+			}
+			_ = c.Call("rules.soak", struct{}{}, &soakResp)
+			var match *struct {
+				RuleID               string `json:"rule_id"`
+				Class                int    `json:"class"`
+				FireCount            uint64 `json:"fire_count"`
+				FPCount              uint64 `json:"fp_count"`
+				ConsecutiveCleanDays uint   `json:"consecutive_clean_days"`
+			}
+			for i := range soakResp.Records {
+				if soakResp.Records[i].RuleID == ruleID {
+					match = &soakResp.Records[i]
+					break
+				}
+			}
+			fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════════════════")
+			fmt.Fprintln(os.Stderr, "  PROMOTION PREFLIGHT for rule:", ruleID)
+			fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════════════════")
+			if match == nil {
+				fmt.Fprintln(os.Stderr, "  WARNING: rule has never fired on this host.")
+				fmt.Fprintln(os.Stderr, "  Promoting an unfired rule means you cannot verify its")
+				fmt.Fprintln(os.Stderr, "  FP shape on your workload. Strongly consider waiting")
+				fmt.Fprintln(os.Stderr, "  until it has fired at least once.")
+			} else {
+				fmt.Fprintf(os.Stderr, "  Class:            %d\n", match.Class)
+				fmt.Fprintf(os.Stderr, "  Fires (lifetime): %d\n", match.FireCount)
+				fmt.Fprintf(os.Stderr, "  FP marks:         %d\n", match.FPCount)
+				fmt.Fprintf(os.Stderr, "  Clean days:       %d (min for promotion: %d)\n",
+					match.ConsecutiveCleanDays, soakResp.MinCleanDays)
+				if match.Class != 1 {
+					fmt.Fprintf(os.Stderr, "\n  WARNING: rule is Class %d, not Class 1.\n", match.Class)
+					fmt.Fprintln(os.Stderr, "  Promoting non-Class-1 rules has higher FP risk; re-evaluate.")
+				}
+				if match.FPCount > 0 {
+					fmt.Fprintf(os.Stderr, "\n  REFUSING: rule has %d FP marks. Resolve those first.\n", match.FPCount)
+					return fmt.Errorf("rule has FP history; not safe to promote")
+				}
+			}
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Paste this into /etc/xhelix/xhelix.yaml under response:")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Printf("response:\n  enforce_rules:\n    - %s\n", ruleID)
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Then: systemctl restart xhelix")
+			fmt.Fprintln(os.Stderr, "Audit promoted rules with: grep 'enforce_rules' /etc/xhelix/xhelix.yaml")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", defaultSock, "path to xhelix LocalAPI socket")
 	return cmd
 }
 
