@@ -37,6 +37,7 @@ func main() {
 	root.AddCommand(newCredbrokerCmd())
 	root.AddCommand(newEgressCmd())
 	root.AddCommand(newIntegrityCmd())
+	root.AddCommand(newTopCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
