@@ -91,15 +91,30 @@ func TestClassifyCloudBySuffix(t *testing.T) {
 
 func TestClassifyByCIDRWithoutSNI(t *testing.T) {
 	c := New()
-	// Hetzner range from builtin
+	// Hetzner range from builtin (prod host's own block)
 	d := c.Classify(net.ParseIP("65.108.246.67"), "", 443)
 	if d.Class != ClassCloudProvider {
 		t.Errorf("hetzner IP should be cloud_provider; got %s", d.Class)
 	}
-	// Cloudflare range
+	// Cloudflare IPv4
 	d = c.Classify(net.ParseIP("104.16.0.1"), "", 443)
 	if d.Class != ClassCDN {
-		t.Errorf("cloudflare IP should be cdn; got %s", d.Class)
+		t.Errorf("cloudflare IPv4 should be cdn; got %s", d.Class)
+	}
+	// Cloudflare IPv6 — the gap observed in prod
+	d = c.Classify(net.ParseIP("2606:4700:3033::6815:51a4"), "", 443)
+	if d.Class != ClassCDN {
+		t.Errorf("cloudflare IPv6 should be cdn; got %s (reason: %s)", d.Class, d.Reason)
+	}
+	// AWS us-west-2 EC2 (observed in prod as unknown)
+	d = c.Classify(net.ParseIP("52.25.121.154"), "", 443)
+	if d.Class != ClassCloudProvider {
+		t.Errorf("AWS us-west-2 IP should be cloud_provider; got %s", d.Class)
+	}
+	// AWS IPv6
+	d = c.Classify(net.ParseIP("2600:1f00::1"), "", 443)
+	if d.Class != ClassCloudProvider {
+		t.Errorf("AWS IPv6 should be cloud_provider; got %s", d.Class)
 	}
 }
 

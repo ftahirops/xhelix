@@ -14,6 +14,24 @@ import (
 // All previously package-local to main; moved here because Handle
 // is the only caller.
 
+// lookupSNIFromConnstate returns the SNI recorded for any active flow
+// on (pid, dst_ip, dst_port). Empty string if not yet known (TLS
+// Hello hasn't been parsed) or if connstate / dpi isn't active.
+func lookupSNIFromConnstate(tab *connstate.Table, pid uint32, dstIP string, dstPort uint16) string {
+	if tab == nil || pid == 0 {
+		return ""
+	}
+	for _, c := range tab.SnapshotByPID(pid) {
+		if c.SNI == "" {
+			continue
+		}
+		if c.Tuple.DstAddr.String() == dstIP && c.Tuple.DstPort == dstPort {
+			return c.SNI
+		}
+	}
+	return ""
+}
+
 // splitCSV is a forgiving comma-and-space splitter used for the
 // dns_answers tag emitted by sensors/netids. Empty input returns nil.
 func splitCSV(s string) []string {

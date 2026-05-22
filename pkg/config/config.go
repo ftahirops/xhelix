@@ -90,6 +90,11 @@ type EgressConfig struct {
 	// MinFleetSeen — destinations seen by ≥ this many fleet hosts
 	// graduate from "unknown" to "fleet_baseline". Default 3.
 	MinFleetSeen int `yaml:"min_fleet_seen"`
+	// CIDRFeedSync — if true, pull AWS / Cloudflare CIDRs from their
+	// authoritative endpoints every 24h. Reduces "unknown" rate
+	// significantly. Default false — requires outbound HTTPS from
+	// the daemon (some ops postures forbid that).
+	CIDRFeedSync bool `yaml:"cidr_feed_sync"`
 }
 
 // ForensicIngestConfig controls the directory tailer that consumes

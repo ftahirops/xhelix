@@ -86,10 +86,11 @@ type shard struct {
 }
 
 type lineageState struct {
-	stats    PerLineageStats
-	uniques  map[string]struct{} // "ip|sni" set for UniqueDests
-	unknown  map[string]struct{} // subset of uniques in class Unknown
-	destClass map[string]destclass.Class // "ip|sni" → class (for byte attribution)
+	stats     PerLineageStats
+	uniques   map[string]struct{}        // IP set for UniqueDests
+	unknown   map[string]struct{}        // subset of uniques in class Unknown
+	destClass map[string]destclass.Class // IP → best-known class
+	destSNI   map[string]string          // IP → last-seen SNI (for display)
 }
 
 // New constructs an Observer.
@@ -152,18 +153,35 @@ func (o *Observer) Observe(lid LineageID, ip net.IP, sni string, port uint16) de
 	st := getOrCreateState(sh, lid)
 
 	st.stats.TotalConnects++
-	st.stats.ByClass[d.Class]++
 	st.stats.LastConnect = now
 
 	key := keyFor(ip, sni)
-	st.destClass[key] = d.Class
+	if sni != "" {
+		st.destSNI[key] = sni
+	}
+	// If we have a previously-recorded class and the new classification
+	// is still ClassUnknown, keep the better one. This makes the
+	// reclassify path (SNI arriving after the connect) upgrade Unknown
+	// → CDN cleanly without double-counting.
+	prevClass, hadPrev := st.destClass[key]
+	chosenClass := d.Class
+	if hadPrev && d.Class == destclass.ClassUnknown && prevClass != destclass.ClassUnknown {
+		chosenClass = prevClass
+	}
+	st.destClass[key] = chosenClass
+	st.stats.ByClass[chosenClass]++
+
 	if _, seen := st.uniques[key]; !seen {
 		st.uniques[key] = struct{}{}
 		st.stats.UniqueDests = len(st.uniques)
-		if d.Class == destclass.ClassUnknown {
+		if chosenClass == destclass.ClassUnknown {
 			st.unknown[key] = struct{}{}
 			st.stats.UniqueUnknown = len(st.unknown)
 		}
+	} else if hadPrev && prevClass == destclass.ClassUnknown && chosenClass != destclass.ClassUnknown {
+		// Promoted out of Unknown — clean up the unknown counter.
+		delete(st.unknown, key)
+		st.stats.UniqueUnknown = len(st.unknown)
 	}
 
 	switch d.Class {
@@ -218,6 +236,59 @@ func (o *Observer) Snapshot(lid LineageID) []PerLineageStats {
 	return out
 }
 
+// Reclassify is called when better destination identity (typically
+// SNI from TLS ClientHello parsing arriving after the connect) lets
+// us improve the recorded class for an existing (lineage, ip).
+// Bumps a previously-Unknown destination to its true class without
+// double-counting. No-op if no prior observation exists or if the
+// new SNI doesn't improve the classification.
+func (o *Observer) Reclassify(lid LineageID, ip net.IP, sni string, port uint16) {
+	if ip == nil || lid == 0 || sni == "" {
+		return
+	}
+	sh := o.shardFor(lid)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	st, ok := sh.byLid[lid]
+	if !ok {
+		return
+	}
+	key := keyFor(ip, sni)
+	prev, had := st.destClass[key]
+	if !had {
+		return
+	}
+	d := o.classifier.Classify(ip, sni, port)
+	if d.Class == destclass.ClassUnknown || d.Class == prev {
+		return
+	}
+	st.destSNI[key] = sni
+	st.destClass[key] = d.Class
+	// Move the connect-count from prev class to new class. We don't
+	// know how many of the prev-class connects belonged to this IP
+	// alone vs the whole class, so apply a single re-tag: subtract one
+	// from prev and add one to new (the bare-minimum re-attribution).
+	if st.stats.ByClass[prev] > 0 {
+		st.stats.ByClass[prev]--
+	}
+	st.stats.ByClass[d.Class]++
+	// Move bytes attribution too — full byte count for this dest moves.
+	moved := st.stats.BytesOutByClass[prev]
+	if moved > 0 {
+		st.stats.BytesOutByClass[prev] -= 0 // no-op safeguard
+	}
+	// Bytes-by-class is aggregated across all dests; we can't subtract
+	// just this dest's bytes without tracking per-dest-per-class. For
+	// v1 we accept the slight class-byte skew on reclassify and call
+	// it out in the doc. The destination-level (BytesOutByDest[ip])
+	// is unaffected (still correct).
+	_ = moved
+	if prev == destclass.ClassUnknown {
+		delete(st.unknown, key)
+		st.stats.UniqueUnknown = len(st.unknown)
+	}
+}
+
 // ObserveBytes attributes sendmsg byte counts to a (lineage, dest)
 // flow. Idempotent on dest unknowns: if Classify has not yet been
 // called for this key, the bytes are counted against ClassUnknown and
@@ -257,6 +328,7 @@ func getOrCreateState(sh *shard, lid LineageID) *lineageState {
 			uniques:   map[string]struct{}{},
 			unknown:   map[string]struct{}{},
 			destClass: map[string]destclass.Class{},
+			destSNI:   map[string]string{},
 		}
 		sh.byLid[lid] = st
 	}
@@ -310,6 +382,11 @@ func copyStats(st *lineageState, cutoff time.Time) PerLineageStats {
 	return out
 }
 
+// keyFor canonicalises a destination to an IP-only key. SNI is
+// stored separately (see SNIForKey below) — keying by (ip, sni)
+// shards data when SNI arrives retroactively via TLS ClientHello
+// parsing or DNS hints. Operators expect "this IP" rollups, not
+// "this IP-SNI-pair" rollups.
 func keyFor(ip net.IP, sni string) string {
-	return ip.String() + "|" + sni
+	return ip.String()
 }

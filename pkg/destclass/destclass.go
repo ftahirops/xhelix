@@ -25,6 +25,7 @@ package destclass
 import (
 	"net"
 	"strings"
+	"sync"
 )
 
 // Class is a stable wire-safe label.
@@ -82,6 +83,10 @@ type Classifier struct {
 	fleet        FleetBaseline
 	minFleetSeen int
 
+	// mu protects the live CIDR pointers — hot-swappable by SetCIDRs
+	// callers (CIDR feed sync goroutine).
+	mu sync.RWMutex
+
 	// suffixes are matched against the SNI in priority order.
 	registrySuffixes []string
 	osUpdateSuffixes []string
@@ -91,6 +96,24 @@ type Classifier struct {
 	// CIDRs are matched against the destination IP.
 	cloudCIDRs []*net.IPNet
 	cdnCIDRs   []*net.IPNet
+}
+
+// SetCloudCIDRs hot-swaps the cloud-provider CIDR table. CIDRs is a
+// slice of strings ("1.2.3.0/24"); invalid entries are skipped.
+// Designed for periodic feed sync (e.g. AWS ip-ranges.json).
+func (c *Classifier) SetCloudCIDRs(cidrs []string) {
+	parsed := parseCIDRs(cidrs)
+	c.mu.Lock()
+	c.cloudCIDRs = parsed
+	c.mu.Unlock()
+}
+
+// SetCDNCIDRs hot-swaps the CDN CIDR table.
+func (c *Classifier) SetCDNCIDRs(cidrs []string) {
+	parsed := parseCIDRs(cidrs)
+	c.mu.Lock()
+	c.cdnCIDRs = parsed
+	c.mu.Unlock()
 }
 
 // Option configures the classifier.
@@ -219,16 +242,20 @@ func (c *Classifier) Classify(ip net.IP, sni string, port uint16) Decision {
 	}
 	// 4. CIDR matching. Static tables cover the major cloud
 	//    providers and CDN edges so we can classify even without SNI.
-	if matchCIDRs(ip, c.cloudCIDRs) {
+	c.mu.RLock()
+	cloud := c.cloudCIDRs
+	cdn := c.cdnCIDRs
+	c.mu.RUnlock()
+	if matchCIDRs(ip, cloud) {
 		return Decision{
-			Class: ClassCloudProvider, Reason: "IP in static cloud CIDR",
-			Source: "static-cidr:cloud",
+			Class: ClassCloudProvider, Reason: "IP in cloud CIDR",
+			Source: "cidr:cloud",
 		}
 	}
-	if matchCIDRs(ip, c.cdnCIDRs) {
+	if matchCIDRs(ip, cdn) {
 		return Decision{
-			Class: ClassCDN, Reason: "IP in static CDN CIDR",
-			Source: "static-cidr:cdn",
+			Class: ClassCDN, Reason: "IP in CDN CIDR",
+			Source: "cidr:cdn",
 		}
 	}
 	// 5. Fleet baseline.

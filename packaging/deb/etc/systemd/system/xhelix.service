@@ -18,11 +18,14 @@ NotifyAccess=main
 # Capabilities. Phase 0 needs almost nothing; later phases require
 # CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_SYS_PTRACE, CAP_DAC_READ_SEARCH.
 # CAP_SYS_ADMIN added for fanotify FAN_OPEN_PERM (credbroker fangate, P-USG.2a).
-# Honest tradeoff: this cap is "almost-root" — daemon trust posture is
-# already Tier-1 (master key, BPF, ptrace); CAP_SYS_ADMIN is incremental
-# not categorical. bpf_lsm-based gate (USG.4) will let us drop it.
-AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
-CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN
+# CAP_NET_RAW added for the dpi sensor's AF_PACKET socket — needed to
+# extract TLS ClientHello SNI (P-EGRESS.M1 tuning sprint). Without it,
+# SNI for outbound TLS is invisible and dest classification is IP-only.
+# Honest tradeoff: CAP_NET_RAW lets a popped daemon craft raw packets;
+# given the daemon already has CAP_BPF + CAP_SYS_ADMIN this is
+# incremental, not categorical.
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_SYS_ADMIN CAP_NET_RAW
 
 # Hardening
 NoNewPrivileges=true

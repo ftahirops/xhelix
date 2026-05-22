@@ -596,8 +596,29 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			ExePath:    ev.Image,
 			ArgvJoined: ev.Tags["argv"],
 		}
+		// Stable-lineage fix: when the sensor didn't stamp CGroupID,
+		// resolve it from /proc/<pid>/cgroup → /sys/fs/cgroup/... inode.
+		// Survives worker PID churn within the same cgroup.
+		if sig.LineageID == 0 && ev.PID != 0 {
+			if cgid := appident.ResolveCGroupID(ev.PID); cgid != 0 {
+				sig.LineageID = cgid
+				ev.CGroupID = cgid
+				if ev.Tags == nil {
+					ev.Tags = map[string]string{}
+				}
+				ev.Tags["cgroup_id_resolved"] = "proc"
+			}
+		}
 		if sig.LineageID == 0 {
 			sig.LineageID = uint64(ev.PID)
+		}
+		// Many sensor event types don't populate Container/Image/argv
+		// (e.g. tcp_connect from kprobe only has PID + dst). Enrich
+		// from /proc/<pid>/* before identification so heuristics get
+		// the signals they need. The identifier caches per-lineage so
+		// this proc work happens only on first sight per lineage.
+		if sig.CgroupPath == "" || sig.ExePath == "" || sig.ArgvJoined == "" {
+			sig = appident.EnrichFromProc(ev.PID, sig)
 		}
 		a := p.AppIdent.Identify(sig)
 		if !a.Empty() {
@@ -640,6 +661,14 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				sni := ev.Tags["sni"]
 				if sni == "" {
 					sni = ev.Tags["http_host"]
+				}
+				// Tuning sprint: when SNI isn't on the event (most
+				// connect events don't carry it because TLS Hello
+				// fires after connect), consult connstate. The dpi
+				// sensor attaches SNI to the Conn row when it parses
+				// the ClientHello — usually within ~150ms of connect.
+				if sni == "" && p.ConnTable != nil && ev.PID != 0 {
+					sni = lookupSNIFromConnstate(p.ConnTable, ev.PID, dst, port)
 				}
 				// Inbound vhost attribution: if a recent HTTPS request
 				// noted a Host header for this pid, stamp it onto the

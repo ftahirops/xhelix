@@ -1189,12 +1189,20 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		// via egressObs.WithIntel-equivalent — but the observer's
 		// classifier is fixed at construction. For now build without
 		// intel; P-EGRESS.M1.b will reorder construction.
-		egressObs = egressmon.New(destclass.New(), sampleTTL)
+		classifier := destclass.New()
+		egressObs = egressmon.New(classifier, sampleTTL)
 		cfgAudit.Witness("egress.observe", "EgressObserver")
 		cfgAudit.Witness("egress.sample_ttl", "EgressObserver")
 		cfgAudit.Witness("egress.min_fleet_seen", "EgressObserver")
 		log.Info("egress observer enabled (Mode 1 — observe + classify, no enforcement)",
 			"sample_ttl", sampleTTL, "min_fleet_seen", minFleet)
+		if cfg.Egress.CIDRFeedSync {
+			cfgAudit.Witness("egress.cidr_feed_sync", "DestclassFeedSync")
+			go destclass.SyncLoop(ctx, classifier, destclass.DefaultFeeds(), nil, 24*time.Hour, func(err error) {
+				log.Warn("destclass feed sync error", "err", err)
+			})
+			log.Info("destclass CIDR feed sync enabled (24h cadence, AWS + Cloudflare)")
+		}
 		// Daily rollup writer — periodic snapshot to
 		// /var/lib/xhelix/egress-analytics/YYYY-MM-DD.jsonl.
 		rollupHost, _ := os.Hostname()
