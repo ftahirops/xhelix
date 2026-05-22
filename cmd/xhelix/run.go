@@ -91,6 +91,7 @@ import (
 	"github.com/xhelix/xhelix/sensors/identity"
 	"github.com/xhelix/xhelix/sensors/lsmaudit"
 	"github.com/xhelix/xhelix/sensors/memory"
+	memdiffsensor "github.com/xhelix/xhelix/sensors/memdiff"
 	procmemsensor "github.com/xhelix/xhelix/sensors/procmem"
 	procscrapesensor "github.com/xhelix/xhelix/sensors/procscrape"
 	netidssensor "github.com/xhelix/xhelix/sensors/netids"
@@ -2217,6 +2218,16 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		pms := procmemsensor.NewSensor(hostname, 60*time.Second, procmemRA)
 		activeSensors = append(activeSensors, pms)
 		log.Info("procmem sensor configured", "interval", "60s")
+
+		// memdiff (P-MEMDIFF) — per-PID /proc/*/maps diff for new
+		// anonymous executable mappings. Catches RemotePE-class
+		// reflective loaders that don't trip procmem's thread-RIP
+		// check but DO appear as new RWX regions. Same JIT
+		// allowlist as procmem. 60s tick = ~10-50ms wall time on a
+		// 200-pid host, well below the noise floor.
+		mds := memdiffsensor.NewSensor(hostname, 60*time.Second, procmemRA)
+		activeSensors = append(activeSensors, mds)
+		log.Info("memdiff sensor configured", "interval", "60s")
 	}
 
 	// Procscrape (P-PROCFS-A1) — userspace enrichment for the

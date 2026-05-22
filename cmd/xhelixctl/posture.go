@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xhelix/xhelix/pkg/autobaseline"
+	"github.com/xhelix/xhelix/pkg/posture/modsig"
 	"github.com/xhelix/xhelix/pkg/vendorcatalog"
 	"github.com/xhelix/xhelix/sensors/lsmaudit"
 
@@ -56,7 +57,33 @@ func newPostureCmd() *cobra.Command {
 	cmd.AddCommand(newVendorsCmd())
 	cmd.AddCommand(newBaselineCmd())
 	cmd.AddCommand(newProcfsCmd())
+	cmd.AddCommand(newModsigCmd())
 	return cmd
+}
+
+// newModsigCmd surfaces kernel-module-load defenses + non-root
+// CAP_SYS_MODULE holders. Read-only — does not modify host state.
+func newModsigCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "modsig",
+		Short: "Inspect kernel module-load defenses (BYOVD-equivalent posture)",
+		Long: `Reports host-level defenses against malicious kernel module loads:
+
+  - /sys/module/module/parameters/sig_enforce  (module signature enforcement)
+  - /sys/kernel/security/lockdown               (kernel lockdown mode)
+  - mokutil --sb-state                          (secure boot)
+  - non-root processes holding CAP_SYS_MODULE   (privilege exposure)
+
+xhelix DETECTS kernel module loads via eBPF (kprobe on init_module /
+finit_module) but does not PREVENT them. Prevention lives in the
+kernel — turning on the three flags above raises the BYOVD-class
+attack cost substantially.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st := modsig.Read()
+			fmt.Print(modsig.FormatStatus(st))
+			return nil
+		},
+	}
 }
 
 // newVendorsCmd surfaces what vendorcatalog.AutoDetect found on the

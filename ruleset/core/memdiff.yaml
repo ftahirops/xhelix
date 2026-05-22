@@ -1,0 +1,50 @@
+# In-memory implant detection via /proc/*/maps diff (P-MEMDIFF).
+#
+# The sensor periodically snapshots every PID's anonymous executable
+# mappings and reports any NEW region appearing between ticks. JIT
+# runtime processes (Node/V8, JVM, .NET) are allowlisted to avoid
+# the obvious false-positive class.
+#
+# Together with the existing pkg/procmem thread-outside-module
+# detector this closes the steady-state in-memory implant gap:
+#  - procmem catches "thread RIP in anonymous page" (active execution)
+#  - memdiff catches "new anon-exec region appeared" (the loader's
+#    arrival, even if the thread RIP isn't in it yet)
+---
+id: mem_new_rwx_mapping
+desc: A process gained a new anonymous executable memory region between scans
+severity: high
+mitre: [T1055.002, T1620]
+match: |
+  event.sensor == "memdiff" &&
+  event.tags["kind"] == "mem_new_rwx_mapping"
+tags: [in_memory, reflective_loader, post_exploitation]
+remediation: |
+  Anonymous executable regions appearing in a non-JIT process is
+  the canonical reflective-loader / in-memory implant signal
+  (Cobalt Strike, Sliver, RemotePE-class on Linux). Triage:
+   - check ev.image — JIT runtimes should be allowlisted; if a
+     legitimate JIT is firing here, add it to
+     /etc/xhelix/runtime-allowlist.yaml.
+   - capture /proc/<pid>/maps + a YARA scan of the new region
+     bytes if the process is still alive.
+   - the corresponding pkg/procmem thread-outside-module alert
+     usually arrives within the next 60-120s if a thread starts
+     executing from the region.
+test_id: MD-01
+---
+id: mem_new_rwx_mapping_in_webserver
+desc: A web-server process gained a new anonymous executable region
+severity: critical
+mitre: [T1055, T1190]
+match: |
+  event.sensor == "memdiff" &&
+  event.tags["kind"] == "mem_new_rwx_mapping" &&
+  event.comm in ["nginx", "apache2", "httpd", "php-fpm", "caddy", "haproxy", "lighttpd"]
+tags: [in_memory, post_exploitation, web]
+remediation: |
+  Web servers do NOT legitimately grow new anonymous executable
+  regions at runtime. This is post-RCE in-memory implant injected
+  into the web worker. Quarantine the lineage immediately;
+  forensic-snapshot the region.
+test_id: MD-02
