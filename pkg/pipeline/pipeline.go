@@ -58,6 +58,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/webshellguard"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/sensors/dnsresolver"
+	"github.com/xhelix/xhelix/sensors/procscrape"
 	"github.com/xhelix/xhelix/sensors/netids"
 )
 
@@ -141,6 +142,12 @@ type Pipeline struct {
 	// alert bus directly — the daemon wires its own bus into a
 	// closure and passes it as Emit.
 	Emit func(model.Alert)
+
+	// ProcScrape applies the procfs-read allowlist to events
+	// produced by sensors/ebpf's XH_EV_PROC_SCRAPE program. When
+	// non-nil, Handle() invokes Enrich() on every proc_scrape
+	// event so rules can branch on cred_proc_scrape.
+	ProcScrape *procscrape.Sensor
 }
 
 // Handle processes one event end-to-end. The full per-event chain:
@@ -376,6 +383,15 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 	}
 	if p.ConnTable != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_bytes" {
 		feedConnstateBytes(p.ConnTable, ev)
+	}
+
+	// Procscrape allowlist verdict — tags cred_proc_scrape=true
+	// when an unallowlisted reader opened /proc/<other-pid>/{environ,
+	// maps,mem,auxv}. Runs before rule eval so rules can branch on
+	// the verdict; runs before HotStore.Insert so persisted events
+	// carry the tag for forensic review.
+	if p.ProcScrape != nil && ev.Tags["kind"] == "proc_scrape" {
+		p.ProcScrape.Enrich(&ev)
 	}
 
 	// Enrich with image hash

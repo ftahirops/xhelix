@@ -209,14 +209,32 @@ type RulesetConfig struct {
 
 // SensorsConfig toggles each sensor plane.
 type SensorsConfig struct {
-	EBPF      EBPFSensorConfig      `yaml:"ebpf"`
-	FIM       FIMSensorConfig       `yaml:"fim"`
-	Decoys    DecoysSensorConfig    `yaml:"decoys"`
-	NetIDS    NetIDSConfig          `yaml:"netids"`
-	Identity  IdentityConfig        `yaml:"identity"`
-	Memory    MemoryConfig          `yaml:"memory"`
-	LSMAudit  LSMAuditConfig        `yaml:"lsm_audit"`
-	Heartbeat HeartbeatSensorConfig `yaml:"heartbeat"`
+	EBPF       EBPFSensorConfig       `yaml:"ebpf"`
+	FIM        FIMSensorConfig        `yaml:"fim"`
+	Decoys     DecoysSensorConfig     `yaml:"decoys"`
+	NetIDS     NetIDSConfig           `yaml:"netids"`
+	Identity   IdentityConfig         `yaml:"identity"`
+	Memory     MemoryConfig           `yaml:"memory"`
+	LSMAudit   LSMAuditConfig         `yaml:"lsm_audit"`
+	Heartbeat  HeartbeatSensorConfig  `yaml:"heartbeat"`
+	ProcScrape ProcScrapeSensorConfig `yaml:"procscrape"`
+}
+
+// ProcScrapeSensorConfig governs the /proc-scrape detector. The
+// kernel hook lives in sensors/ebpf and emits proc_scrape events
+// for every openat() against /proc/<pid>/{environ,maps,mem,auxv}.
+// This config wires the userspace allowlist that turns the raw
+// signal into a cred_proc_scrape verdict.
+type ProcScrapeSensorConfig struct {
+	// Enabled controls only the userspace enrichment. The eBPF
+	// program itself is attached as part of sensors.ebpf when
+	// EBPF.Enabled is true; disabling here means events flow
+	// without the allowlist verdict (rules that test
+	// cred_proc_scrape will simply never match).
+	Enabled bool `yaml:"enabled"`
+	// AllowlistFile overlays additional comm/image/glob entries
+	// onto the baked-in default. Missing file is not an error.
+	AllowlistFile string `yaml:"allowlist_file"`
 }
 
 type EBPFSensorConfig struct {
@@ -594,6 +612,13 @@ func Default() Config {
 			Heartbeat: HeartbeatSensorConfig{
 				Enabled:  true,
 				Interval: time.Second,
+			},
+			ProcScrape: ProcScrapeSensorConfig{
+				// Detect-only ships on by default; the rule
+				// (ruleset/core/cred_proc_scrape.yaml) is
+				// medium-sev with no auto-response.
+				Enabled:       true,
+				AllowlistFile: "/etc/xhelix/procscrape-allowlist.conf",
 			},
 		},
 		Alerts: AlertsConfig{

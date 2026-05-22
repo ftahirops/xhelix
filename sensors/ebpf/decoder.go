@@ -83,6 +83,7 @@ var defaultBoolTags = []string{
 	"ptrace_attach", "bpf_syscall", "mod_load", "mount",
 	"outbound", "uid0_transition", "mprotect_rwx",
 	"jit_allowlisted", "package_managed", "first_seen_image",
+	"proc_scrape", "cred_proc_scrape",
 }
 
 // Decode parses a single ringbuf record into a model.Event.
@@ -152,8 +153,64 @@ func Decode(raw []byte) (model.Event, error) {
 		ev.Tags["mod_load"] = "true"
 	case KindMount:
 		ev.Tags["mount"] = "true"
+	case KindProcScrape:
+		decodeProcScrape(payload, &ev)
 	}
 	return ev, nil
+}
+
+// decodeProcScrape parses an XH_EV_PROC_SCRAPE payload:
+//
+//	target_kind(4) | _pad(4) | path(XH_PATH_MAX=256).
+//
+// target_kind values mirror the C-side XH_PROC_SCRAPE_* enum.
+// The userspace decoder parses the target PID out of the path
+// (e.g. /proc/12345/environ → target_pid=12345); allowlist policy
+// is the responsibility of sensors/procscrape, not this layer.
+func decodeProcScrape(b []byte, ev *model.Event) {
+	if len(b) < 8 {
+		return
+	}
+	targetKind := binary.LittleEndian.Uint32(b[0:4])
+	// b[4:8] is padding
+	path := ""
+	if len(b) >= 8+256 {
+		path = nullTerm(b[8 : 8+256])
+	}
+	ev.Tags["path"] = path
+
+	switch targetKind {
+	case 1:
+		ev.Tags["scrape_kind"] = "environ"
+	case 2:
+		ev.Tags["scrape_kind"] = "maps"
+	case 3:
+		ev.Tags["scrape_kind"] = "mem"
+	case 4:
+		ev.Tags["scrape_kind"] = "status"
+	case 5:
+		ev.Tags["scrape_kind"] = "cmdline"
+	case 6:
+		ev.Tags["scrape_kind"] = "auxv"
+	default:
+		ev.Tags["scrape_kind"] = fmt.Sprintf("%d", targetKind)
+	}
+
+	// Parse target PID out of the path. Format: /proc/<pid>/...
+	// or /proc/<pid>/task/<tid>/... — we want the outer pid.
+	if strings.HasPrefix(path, "/proc/") {
+		rest := path[len("/proc/"):]
+		if slash := strings.IndexByte(rest, '/'); slash > 0 {
+			pidStr := rest[:slash]
+			if _, err := strconv.Atoi(pidStr); err == nil {
+				ev.Tags["target_pid"] = pidStr
+			}
+		}
+	}
+
+	// The reader's own identity is already populated from the
+	// event header into ev.PID/ev.Comm/ev.UID by the outer Decode.
+	ev.Tags["proc_scrape"] = "true"
 }
 
 func decodeProcSpawn(b []byte, ev *model.Event) {
@@ -534,6 +591,8 @@ func sensorForKind(k EventKind) string {
 		return "ebpf.proc"
 	case KindMprotectRWX, KindCanaryFail:
 		return "ebpf.memory"
+	case KindProcScrape:
+		return "ebpf.procscrape"
 	}
 	return "ebpf"
 }

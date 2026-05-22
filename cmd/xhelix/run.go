@@ -91,6 +91,7 @@ import (
 	"github.com/xhelix/xhelix/sensors/lsmaudit"
 	"github.com/xhelix/xhelix/sensors/memory"
 	procmemsensor "github.com/xhelix/xhelix/sensors/procmem"
+	procscrapesensor "github.com/xhelix/xhelix/sensors/procscrape"
 	netidssensor "github.com/xhelix/xhelix/sensors/netids"
 	"github.com/xhelix/xhelix/ui/web"
 )
@@ -2198,6 +2199,27 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		log.Info("procmem sensor configured", "interval", "60s")
 	}
 
+	// Procscrape (P-PROCFS-A1) — userspace enrichment for the
+	// XH_EV_PROC_SCRAPE events the eBPF backend emits on
+	// /proc/<pid>/{environ,maps,mem,auxv} opens. The sensor is a
+	// thin wrapper over an allowlist; the actual decision happens
+	// in pkg/pipeline when ev.Tags["kind"] == "proc_scrape".
+	var procScrapeSensor *procscrapesensor.Sensor
+	if cfg.Sensors.ProcScrape.Enabled {
+		allow := procscrapesensor.Default()
+		if path := cfg.Sensors.ProcScrape.AllowlistFile; path != "" {
+			if err := allow.LoadFile(path); err != nil {
+				log.Warn("procscrape allowlist load",
+					"path", path, "err", err,
+					"fallback", "default allowlist only")
+			}
+		}
+		procScrapeSensor = procscrapesensor.NewSensor(allow)
+		activeSensors = append(activeSensors, procScrapeSensor)
+		log.Info("procscrape sensor configured",
+			"allowlist_size", allow.Size())
+	}
+
 	// Decoy sensors
 	if cfg.Sensors.Decoys.Enabled {
 		var honeyFiles []decoy.HoneyFile
@@ -2388,7 +2410,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		egressObs,
 		appIdentifier,
 		vhostCorrelator,
-		ipTS)
+		ipTS,
+		procScrapeSensor)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -2499,6 +2522,7 @@ func dispatch(
 	appIdentifier *appident.Identifier,
 	vhostCorrelator *vhostcorr.Correlator,
 	ipTS *egressmon.IPTimeSeries,
+	procScrapeSensor *procscrapesensor.Sensor,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -2624,6 +2648,7 @@ func dispatch(
 		AppIdent:         appIdentifier,
 		VhostCorr:        vhostCorrelator,
 		IPTimeSeries:     ipTS,
+		ProcScrape:       procScrapeSensor,
 	}
 	p.Run(ctx, events)
 }

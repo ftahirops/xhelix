@@ -55,6 +55,7 @@ func newPostureCmd() *cobra.Command {
 	})
 	cmd.AddCommand(newVendorsCmd())
 	cmd.AddCommand(newBaselineCmd())
+	cmd.AddCommand(newProcfsCmd())
 	return cmd
 }
 

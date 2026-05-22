@@ -45,6 +45,7 @@ const (
 	KindUnshare      EventKind = 19
 	KindSSLRead      EventKind = 20
 	KindNetBytes     EventKind = 22
+	KindProcScrape   EventKind = 23
 )
 
 // String returns a stable, lowercase token for the kind.
@@ -92,6 +93,8 @@ func (k EventKind) String() string {
 		return "ssl_read"
 	case KindNetBytes:
 		return "net_bytes"
+	case KindProcScrape:
+		return "proc_scrape"
 	}
 	return "unknown"
 }
