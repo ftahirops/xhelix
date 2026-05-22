@@ -1,0 +1,7 @@
+test,status,desc,expected,matched,noise,total,duration_s,start,detector
+A1,PASS,"Plaintext cred read by non-allowlisted process","credbroker.plaintext_read",1,2,3,9,19:36:54,credbroker
+B2,PASS,"Mass /proc/*/environ scrape (harvester shape)","cred_proc_scrape",33,4,37,8,19:37:22,procscrape
+J1,PASS,"RWX mprotect (in-memory loader)","mprotect_rwx",1,22,23,9,19:38:28,ebpf.memory
+O1,PASS,"Honey file touch (decoy)","honey",1,14,15,9,19:39:15,credbroker.honey
+P1,SKIPPED,"uid 0 transition w/o setuid",,0,0,0,0,19:39:24,-
+W1,SKIPPED,"Roundcube CVE-2025-49113 actual PoC",,0,0,0,0,19:41:06,-

