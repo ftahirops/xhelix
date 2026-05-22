@@ -21,12 +21,14 @@ package top
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/xhelix/xhelix/pkg/localapi"
 )
@@ -34,30 +36,39 @@ import (
 // ─── Styles ────────────────────────────────────────────────────────
 
 var (
+	// Header bar: white on blue, bold.
 	styleHeader = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("231")).
-			Background(lipgloss.Color("63")).
+			Foreground(lipgloss.Color("15")).
+			Background(lipgloss.Color("27")).
 			Padding(0, 1)
 	styleFooter = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
+			Foreground(lipgloss.Color("250")).
 			Padding(0, 1)
+	// Selected row: bright reverse-video. Visible across every
+	// terminal palette including basic ANSI.
 	styleSelected = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("231")).
-			Background(lipgloss.Color("236"))
-	styleGreen    = lipgloss.NewStyle().Foreground(lipgloss.Color("76"))
-	styleYellow   = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	styleRed      = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+			Reverse(true)
+	styleGreen     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	styleYellow    = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+	styleRed       = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	styleDim       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	styleCol       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")) // cyan
+	styleColHead   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("250"))
 	styleTabActive = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("231")).
-				Background(lipgloss.Color("63")).
-				Padding(0, 2)
-	styleTabIdle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245")).
+			Bold(true).
+			Foreground(lipgloss.Color("15")).
+			Background(lipgloss.Color("27")).
 			Padding(0, 2)
+	styleTabIdle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("250")).
+			Padding(0, 2)
+	// Dashboard panel framing.
+	styleDashboardLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	styleDashboardValue = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	styleDashboardWarn  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	styleDashboardOK    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10"))
 )
 
 // ─── View modes ────────────────────────────────────────────────────
@@ -298,7 +309,10 @@ func (m Model) refreshCmd() tea.Cmd {
 			Enabled  bool `json:"enabled"`
 			Lineages []struct {
 				Lineage        uint64            `json:"lineage"`
+				AppID          string            `json:"app_id"`
+				AppKind        string            `json:"app_kind"`
 				TotalConnects  int               `json:"total_connects"`
+				TotalBytesOut  uint64            `json:"total_bytes_out"`
 				ByClass        map[string]int    `json:"by_class"`
 				UniqueDests    int               `json:"unique_dests"`
 				UniqueUnknown  int               `json:"unique_unknown"`
@@ -308,17 +322,58 @@ func (m Model) refreshCmd() tea.Cmd {
 		}
 		_ = ar
 		_ = c.Call("egress.observe", struct{}{}, &obsResp)
-		// Lineages view
+		// Lineages view + live per-app aggregation.
+		appAgg := map[string]*appRow{}
 		for _, lg := range obsResp.Lineages {
 			intelBad := lg.ByClass["intel_bad"]
 			msg.lineages = append(msg.lineages, lineageRow{
 				Lineage:  lg.Lineage,
+				App:      lg.AppID,
 				Connects: lg.TotalConnects,
 				Unique:   lg.UniqueDests,
 				Unknown:  lg.UniqueUnknown,
 				IntelBad: intelBad,
+				BytesOut: lg.TotalBytesOut,
+				IsShell:  isShellApp(lg.AppID),
 			})
+			appName := lg.AppID
+			if appName == "" {
+				appName = "(unidentified)"
+			}
+			a := appAgg[appName]
+			if a == nil {
+				a = &appRow{App: appName}
+				appAgg[appName] = a
+			}
+			a.Connects += lg.TotalConnects
+			a.BytesOut += lg.TotalBytesOut
+			a.Unique += lg.UniqueDests
+			a.Unknown += lg.UniqueUnknown
+			if intelBad > 0 {
+				a.HighestSev = "critical"
+			}
 		}
+		// Convert appAgg → sorted slice. Replaces rollup-file source.
+		var apps []appRow
+		for _, a := range appAgg {
+			sus := 0
+			if a.HighestSev == "critical" || a.Unknown >= 10 || (isShellApp(a.App) && a.Unknown > 0) {
+				sus = 2
+			} else if a.Unknown >= 3 || (a.App == "(unidentified)" && a.Unknown > 0) {
+				sus = 1
+			}
+			a.Suspicion = sus
+			apps = append(apps, *a)
+		}
+		sort.Slice(apps, func(i, j int) bool {
+			// Suspicion-first ordering: red > yellow > green,
+			// then by bytes_out desc.
+			if apps[i].Suspicion != apps[j].Suspicion {
+				return apps[i].Suspicion > apps[j].Suspicion
+			}
+			return apps[i].BytesOut > apps[j].BytesOut
+		})
+		msg.apps = apps
 
 		// dests view via top-ips
 		var topResp struct {
@@ -408,13 +463,10 @@ func (m Model) refreshCmd() tea.Cmd {
 			Errors:          iResp.VerifierStat.Errors,
 		}
 
-		// Apps view: read today's rollup file directly (cheap, no
-		// new LocalAPI). We aggregate the latest snapshot per lineage.
-		apps, errStr := loadAppsFromRollup()
-		msg.apps = apps
-		if errStr != "" && len(msg.lineages) == 0 {
-			msg.err = errStr
-		}
+		// Apps view: now computed live from the observer above. The
+		// JSONL rollup is still useful for the analytics CLI but the
+		// TUI's "Apps" view needs sub-second freshness.
+		_ = loadAppsFromRollup // referenced by historical analytics CLI
 
 		// API view
 		var apiResp struct {
@@ -771,6 +823,8 @@ func (m Model) View() string {
 	}
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
+	b.WriteString("\n")
+	b.WriteString(m.renderDashboard())
 	b.WriteString("\n")
 	b.WriteString(m.renderTabs())
 	b.WriteString("\n\n")
@@ -1179,6 +1233,91 @@ func (m Model) renderHeader() string {
 	return styleHeader.Render(left + strings.Repeat(" ", pad) + right)
 }
 
+// renderDashboard renders the top status panel — htop-style. Shows
+// the most-important live counters at a glance.
+func (m Model) renderDashboard() string {
+	// Compute aggregate counters.
+	var totalConn, totalUnique, totalUnknown, totalIntelBad int
+	var totalBytes uint64
+	c2Suspects := 0
+	for _, l := range m.lineages {
+		totalConn += l.Connects
+		totalUnique += l.Unique
+		totalUnknown += l.Unknown
+		totalIntelBad += l.IntelBad
+		// Heuristic for "looks-like-C2": intel-bad hit OR ≥5 unique
+		// destinations of class=Unknown (the beacon shape).
+		if l.IntelBad > 0 || l.Unknown >= 5 {
+			c2Suspects++
+		}
+	}
+	for _, a := range m.apps {
+		totalBytes += a.BytesOut
+	}
+	critAlerts := 0
+	highAlerts := 0
+	for _, a := range m.alerts {
+		switch a.Severity {
+		case "critical":
+			critAlerts++
+		case "high":
+			highAlerts++
+		}
+	}
+
+	// Render counters as labeled boxes laid out in two rows.
+	mk := func(label, value, sev string) string {
+		valStyle := styleDashboardValue
+		switch sev {
+		case "warn":
+			valStyle = styleDashboardWarn
+		case "ok":
+			valStyle = styleDashboardOK
+		}
+		return styleDashboardLabel.Render(label+":") + " " + valStyle.Render(value)
+	}
+
+	c2Sev := "ok"
+	if c2Suspects > 0 {
+		c2Sev = "warn"
+	}
+	critSev := "ok"
+	if critAlerts > 0 {
+		critSev = "warn"
+	}
+	intelSev := "ok"
+	if totalIntelBad > 0 {
+		intelSev = "warn"
+	}
+	unkSev := "ok"
+	if totalUnknown >= 10 {
+		unkSev = "warn"
+	}
+
+	row1 := []string{
+		mk("lineages", fmt.Sprintf("%d", len(m.lineages)), ""),
+		mk("connects", fmt.Sprintf("%d", totalConn), ""),
+		mk("bytes_out", humanBytes(totalBytes), ""),
+		mk("unique_dests", fmt.Sprintf("%d", totalUnique), ""),
+		mk("unknown_dests", fmt.Sprintf("%d", totalUnknown), unkSev),
+	}
+	row2 := []string{
+		mk("alerts_crit", fmt.Sprintf("%d", critAlerts), critSev),
+		mk("alerts_high", fmt.Sprintf("%d", highAlerts), ""),
+		mk("intel_bad_hits", fmt.Sprintf("%d", totalIntelBad), intelSev),
+		mk("c2_suspects", fmt.Sprintf("%d", c2Suspects), c2Sev),
+		mk("apis_seen", fmt.Sprintf("%d", len(m.apis)), ""),
+		mk("integrity_rows", fmt.Sprintf("%d", m.integrity.TotalRows), ""),
+	}
+	mismatchSev := "ok"
+	if m.integrity.HashMismatched > 0 {
+		mismatchSev = "warn"
+	}
+	row2 = append(row2, mk("hash_mismatched", fmt.Sprintf("%d", m.integrity.HashMismatched), mismatchSev))
+
+	return "  " + strings.Join(row1, "   ") + "\n  " + strings.Join(row2, "   ")
+}
+
 func (m Model) renderTabs() string {
 	var parts []string
 	for i, v := range allViews {
@@ -1364,19 +1503,31 @@ func renderTable(headers []string, rows [][]string, cursor int) string {
 		}
 	}
 	var b strings.Builder
-	// header
+	// header — bright-bold inverse band for clarity.
+	var hdr strings.Builder
 	for i, h := range headers {
-		b.WriteString(styleHeader.Render(padRight(h, widths[i])))
+		hdr.WriteString(padRight(h, widths[i]))
 		if i < cols-1 {
-			b.WriteString("  ")
+			hdr.WriteString("  ")
 		}
 	}
+	b.WriteString(styleColHead.Render(hdr.String()))
 	b.WriteString("\n")
 	if cursor >= len(rows) {
 		cursor = len(rows) - 1
 	}
+	if cursor < 0 {
+		cursor = 0
+	}
 	for ri, r := range rows {
 		var rowB strings.Builder
+		// Cursor marker column — visible even when ANSI styling is
+		// stripped (some terminals strip Reverse in narrow pipelines).
+		if ri == cursor {
+			rowB.WriteString(styleRed.Render("▶ "))
+		} else {
+			rowB.WriteString("  ")
+		}
 		for i := 0; i < cols && i < len(r); i++ {
 			rowB.WriteString(padRight(r[i], widths[i]))
 			if i < cols-1 {
@@ -1517,6 +1668,13 @@ func isShellApp(app string) bool {
 
 // Run starts the bubbletea program. Used by xhelixctl's `top` command.
 func Run(sock string) error {
+	// Force 256-color rendering. lipgloss auto-detects via termenv,
+	// but the detection can fail under SSH + sudo (no $TERM, etc.)
+	// and downgrade to monochrome. Operators run this over SSH all
+	// the time, so we just force ANSI256 unless NO_COLOR is set.
+	if os.Getenv("NO_COLOR") == "" && os.Getenv("XHELIX_NO_COLOR") == "" {
+		lipgloss.SetColorProfile(termenv.ANSI256)
+	}
 	p := tea.NewProgram(New(sock), tea.WithAltScreen())
 	_, err := p.Run()
 	return err

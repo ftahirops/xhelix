@@ -1955,7 +1955,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			}
 			out = append(out, map[string]any{
 				"lineage":           uint64(s.LineageID),
+				"app_id":            s.AppID,
+				"app_kind":          s.AppKind,
 				"total_connects":    s.TotalConnects,
+				"total_bytes_out":   s.TotalBytesOut,
 				"by_class":          byClass,
 				"unique_dests":      s.UniqueDests,
 				"unique_unknown":    s.UniqueUnknown,
