@@ -37,6 +37,11 @@ func main() {
 	root.AddCommand(newCredbrokerCmd())
 	root.AddCommand(newEgressCmd())
 	root.AddCommand(newIntegrityCmd())
+	root.AddCommand(newSourceCmd())
+	root.AddCommand(newBRPCmd())
+	root.AddCommand(newAppidentCmd())
+	root.AddCommand(newSecrettaintCmd())
+	root.AddCommand(newIncidentsCmd())
 	root.AddCommand(newTopCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
