@@ -29,8 +29,10 @@ packaging/deb/usr/local/bin/xhelix-verify
 
 # Documentation — all .md files excluded from git tracking
 # (operator preference: docs are private; design/strategy/phase
-# reports live on disk only). No whitelist exceptions.
+# reports live on disk only). One exception: README.md is the
+# repository's front-page; tracked so it renders on the git host.
 *.md
+!README.md
 
 # Local state for development
 /var/
