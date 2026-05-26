@@ -98,7 +98,7 @@ match: |
   event.sensor == "fim" &&
   path.startsWith("/etc/systemd/system/") &&
   event.tags["create"] == "true" &&
-  event.tags["package_managed"] != "true"
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
 tags: [persistence]
 remediation: Inspect unit file ExecStart and User= directive.
 test_id: FIM-02
@@ -259,7 +259,7 @@ mitre: [T1574.006]
 match: |
   event.sensor == "fim" &&
   (path == "/etc/ld.so.conf" || path.startsWith("/etc/ld.so.conf.d/")) &&
-  event.tags["package_managed"] != "true"
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
 tags: [persistence, hijack]
 remediation: |
   Adding a writable directory to the linker search path lets the
@@ -308,7 +308,7 @@ match: |
   event.sensor == "fim" &&
   (path.endsWith("/docker-compose.yml") ||
    path.endsWith("/docker-compose.yaml")) &&
-  event.tags["package_managed"] != "true"
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
 tags: [persistence, container]
 remediation: |
   Adding `volumes: ["/:/host"]` or `privileged: true` to a compose
@@ -336,7 +336,7 @@ mitre: [T1542.003]
 match: |
   event.sensor == "fim" &&
   path.startsWith("/boot/") &&
-  event.tags["package_managed"] != "true"
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
 tags: [persistence, rootkit]
 remediation: |
   Bootloader / kernel-image tamper is the highest-leverage
@@ -354,7 +354,7 @@ match: |
   (path.startsWith("/lib/modules/") || path.startsWith("/usr/lib/modules/")) &&
   path.endsWith(".ko") &&
   event.tags["create"] == "true" &&
-  event.tags["package_managed"] != "true"
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
 tags: [persistence, rootkit]
 remediation: |
   Out-of-tree kernel module drop. Capture, hash, check signature.
