@@ -106,8 +106,44 @@ func (e *Engine) SessionCount() int {
 }
 
 func (e *Engine) advanceSessions(c *compiledRule, ev model.Event, now time.Time) {
+	// When the rule has a non-empty GroupBy AND the advancing event
+	// carries values for every group_by key, derive the event's group
+	// key and require it match the session's. This is what group_by
+	// has always meant: each session is scoped to one group, so a
+	// single event shouldn't fan-fire every open session.
+	//
+	// Audited 2026-05-26 against Phase J.2 J.2 dropped-binary rule:
+	// 9× duplicate alerts on one /tmp exec because 9 prior
+	// net_connects from different cgroups had each opened a session
+	// and all advanced on the single proc_spawn.
+	//
+	// Fallback: if the event lacks any of the group_by keys (empty
+	// tag), advance any session for the rule. Preserves older rules
+	// where step 0 stamps the group key but step N events come from
+	// a different sensor that doesn't carry it (e.g. ssh→curl rule
+	// in engine_test.go, where curl has no src_ip).
+	var (
+		eventGroup    string
+		eventHasGroup bool
+	)
+	if len(c.Rule.GroupBy) > 0 {
+		eventTagsHasAll := true
+		for _, f := range c.Rule.GroupBy {
+			if ev.Tags[f] == "" {
+				eventTagsHasAll = false
+				break
+			}
+		}
+		if eventTagsHasAll {
+			eventGroup = groupKeyString(extractGroup(ev, c.Rule.GroupBy))
+			eventHasGroup = true
+		}
+	}
 	for k, s := range e.sessions {
 		if k.rule != c.Rule.ID {
+			continue
+		}
+		if eventHasGroup && k.group != eventGroup {
 			continue
 		}
 		if s.StepIndex >= len(c.Compiled) {

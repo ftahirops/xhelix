@@ -1,0 +1,50 @@
+# Phase J.2 correlator chain rules — cortex-c2 family coverage.
+#
+# Each rule is a sequence of CEL `select` expressions. The engine
+# opens a session when an event matches step 0, then advances on
+# subsequent matching events under the same group key. When the
+# final step fires within `window`, an alert is emitted.
+#
+# Group key is the cgroup_id tag, stamped by pkg/pipeline before
+# correlator.Ingest. Falls back to "" for events without cgroup
+# (identity events, FIM, …) — those won't participate in the chain
+# but also won't cross-pollute.
+#
+# Path allowlist for step 1 (file write) excludes legitimate
+# package-manager / build-cache write paths to suppress the obvious
+# FP source.
+---
+id: dropped_binary_lifecycle
+desc: |
+  Outbound fetch followed by a non-package file write and then exec
+  of that file by the same lineage within 10 minutes. Signature of
+  the cortex-c2 plugin-staging pattern (download → write → chmod+x
+  → exec) and adjacent dropper families.
+severity: high
+mitre: [T1105, T1059, T1071]
+window: 10m
+group_by: [cgroup_id]
+steps:
+  # Step 0 — outbound network connect. The ebpf.net sensor stamps
+  # `outbound=true` (not `dir`); audited 2026-05-26 against live event
+  # tag shape in /var/lib/xhelix/hot.db.
+  - select: |
+      event.sensor == "ebpf.net" && event.tags["kind"] == "net_connect" && event.tags["outbound"] == "true"
+    within: 5m
+  # Step 1 — exec of a binary whose path starts with /tmp/ or
+  # /var/tmp/ or /dev/shm/. Same lineage as the connect. Path-prefix
+  # match is allowlist-by-inverse: anything in the suspicious-path
+  # set fires; system / package paths are excluded by virtue of NOT
+  # matching this prefix list.
+  - select: |
+      event.sensor == "ebpf.proc" && event.tags["kind"] == "proc_spawn" && (event.tags["path"].startsWith("/tmp/") || event.tags["path"].startsWith("/var/tmp/") || event.tags["path"].startsWith("/dev/shm/"))
+    within: 5m
+remediation: |
+  Pattern: outbound fetch → non-package file write → exec from same
+  lineage in <10 min. This is the canonical dropper / plugin-staging
+  chain (cortex-c2 plugins.py, generic loader-binary droppers).
+  Action: capture file hashes, freeze the lineage, isolate host.
+narrative: |
+  Step 0 was the C2 fetch.
+  Step 1 was the binary write to non-standard path.
+  Step 2 was the execution of the dropped binary.
