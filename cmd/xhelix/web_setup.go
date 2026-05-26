@@ -15,6 +15,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/config"
 	"github.com/xhelix/xhelix/pkg/doctor"
 	"github.com/xhelix/xhelix/pkg/enforce"
+	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/netban"
 	"github.com/xhelix/xhelix/pkg/rules"
@@ -53,6 +54,7 @@ func startWebServer(
 	ruleEngine *rules.Engine,
 	soak *enforce.Soak,
 	st *uiStats,
+	incidentEng incidentgraph.Engine,
 ) *http.Server {
 	if !cfg.UI.Enabled {
 		// Legacy path — loopback, no auth, no TLS. Keeps upgrades
@@ -87,6 +89,11 @@ func startWebServer(
 			return r
 		},
 	}, mux)
+
+	// Incident graph HTTP surface (Phase D.2). Registered before
+	// AuthGuard wraps the mux so requests are auth-checked alongside
+	// every other UI route.
+	registerIncidentRoutes(mux, incidentEng)
 
 	// AuthGuard — bearer token + IP allow-list + rate limit + audit.
 	tokenFile := cfg.UI.TokenFile

@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"net"
@@ -25,7 +29,18 @@ import (
 	"github.com/xhelix/xhelix/pkg/nonce"
 	"github.com/xhelix/xhelix/pkg/passport"
 	"github.com/xhelix/xhelix/pkg/policy"
+	"github.com/xhelix/xhelix/pkg/assetclass"
+	"github.com/xhelix/xhelix/pkg/brp"
+	brpphase "github.com/xhelix/xhelix/pkg/brp/phase"
+	"github.com/xhelix/xhelix/pkg/brp/writerattr"
+	"github.com/xhelix/xhelix/pkg/egressguard"
+	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/secrettaint"
+	"github.com/xhelix/xhelix/pkg/sshbrute"
+	"github.com/xhelix/xhelix/pkg/integrity"
+	"github.com/xhelix/xhelix/pkg/verify"
 	"github.com/xhelix/xhelix/pkg/reqcontract"
+	"github.com/xhelix/xhelix/pkg/source"
 )
 
 // defaultCatalogPaths lists candidate paths for the DLCF catalog,
@@ -65,6 +80,53 @@ type foundationContext struct {
 	Origins   *lineage.Store
 	Classes   *lineage.ClassRegistry
 	ProcCache *canonical.ProcKeyCache
+
+	// SourceStore is the SQLite-backed v2 SourceAnchor store. Nil if
+	// the parent directory is not writable — the daemon still runs but
+	// anchors aren't persisted. T01 / Phase A1.
+	SourceStore *source.Store
+	// SourceMinter wires identity-event mint logic against SourceStore,
+	// Minter (id allocator), and Origins (in-memory hot path). Nil-safe.
+	SourceMinter *source.Minter
+	// FileTaint is the in-memory per-path writer-provenance tracker.
+	// Always constructed (no persistence yet); bounded LRU + 24h TTL.
+	// T02 / Phase A2 commit 3.
+	FileTaint *source.FileTaint
+
+	// BRPMatcher resolves binaries to signed Behavioral Reference Profiles.
+	// Loaded from /etc/xhelix/brp/*.signed.json with trust root from
+	// /etc/xhelix/brp/trusted-keys.d/*.pub. Nil-safe — if no profiles
+	// or no trust root, every binary resolves as Unprofiled. T05.
+	BRPMatcher *brp.Matcher
+	// BRPRuntime evaluates EventFacts against a resolved profile.
+	// Stateless. Constructed with DefaultInvariants() unless an operator
+	// override is loaded.
+	BRPRuntime *brp.Runtime
+	// BRPPhases is the per-PID phase state machine. T06.
+	BRPPhases *brpphase.Tracker
+
+	// BRPWriterCache caches eBPF-derived writer attribution so FIM events
+	// can recover the writer identity.
+	BRPWriterCache *writerattr.Cache
+	// IntegrityTester runs the T1-T5 authentic-upgrade policy. Used as
+	// the IntegrityAuthentic trust signal for protected-path writes.
+	IntegrityTester *integrity.Tester
+	// VerifyEngine is the Tier-2 verifier (T07 first-cut).
+	VerifyEngine *verify.Engine
+	// BRPEdges holds operator-signed inter-app interaction edges.
+	BRPEdges *brp.EdgeSet
+	// AssetResolver classifies paths/sockets/hosts into asset classes.
+	AssetResolver assetclass.Resolver
+	// SecretTaint tracks per-lineage secret-touch state.
+	SecretTaint secrettaint.Store
+	// EgressGuard handles per-event egress decisions. Phase C.
+	EgressGuard egressguard.Guard
+	// IncidentGraph assembles correlated incidents from events + alerts (Phase D.1).
+	IncidentGraph incidentgraph.Engine
+	// IncidentStore is the audit-trail backing for IncidentGraph.
+	IncidentStore *incidentgraph.Store
+	// SSHBrute is the per-source-IP SSH auth-failure counter (Phase J.1).
+	SSHBrute *sshbrute.Detector
 
 	// DLCF subsystem (P7). May be nil if no catalog is configured.
 	Catalog   *catalog.Catalog
@@ -215,7 +277,11 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	coldPath := "/var/lib/xhelix/cold.db"
 	if cs, err := coldstore.New(coldstore.Options{
 		Path:          coldPath,
-		RetentionDays: 14, // 2-week local retention; off-host mirror
+		RetentionDays: 3, // 3-day local retention; off-host mirror
+		// (was 14d; reduced 2026-05-24 after cold.db reached 21GB in 2
+		// days at observed event rate. 14d × 12M events/day was
+		// untenable on a 100GB rootfs. Operators with larger disks
+		// can override via cfg.Store.Cold.RetentionDays.)
 		// (P-CJ.10) is expected to hold longer history.
 	}); err == nil {
 		fc.ColdStore = cs
@@ -245,7 +311,301 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// in the audit chain.
 	go fc.sweepOrigins(parent)
 
+	// Open the persistent SourceAnchor store. Missing parent dir or
+	// write failure is non-fatal — Minter is nil-safe and the daemon
+	// keeps running with in-memory-only Origins. T01 / Phase A1.
+	if st, err := source.Open("/var/lib/xhelix/source.db"); err == nil {
+		fc.SourceStore = st
+		hostname, _ := os.Hostname()
+		fc.SourceMinter = source.NewMinter(st, fc.Minter, fc.Origins, hostname)
+		go fc.sweepSourceAnchors(parent)
+	}
+
+	// File-mediated taint tracker (in-memory only). Always constructed.
+	// T02 commit 3.
+	fc.FileTaint = source.NewFileTaint(0, 0) // 0 → defaults (4096 paths, 24h TTL)
+	go fc.sweepFileTaint(parent)
+
+	// BRP runtime substrate (T05/T06). Trust root loaded from
+	// /etc/xhelix/brp/trusted-keys.d/*.pub. Profile library loaded
+	// from /usr/share/xhelix/brp/ (vendor) and /etc/xhelix/brp/
+	// (operator overlays). Missing dirs are not errors — daemon keeps
+	// running with an empty library (every event = Unprofiled).
+	fc.BRPMatcher, fc.BRPRuntime = buildBRP(parent)
+	fc.BRPPhases = brpphase.NewTracker(0, 0, 0) // default windows
+	fc.BRPWriterCache = writerattr.NewCache(0, 0)
+	fc.IntegrityTester = integrity.NewTester()
+	fc.VerifyEngine = verify.NewEngine()
+	// EdgeSet uses the same trust root as the profile matcher. Loads
+	// /etc/xhelix/brp/edges.d/*.edge.json — operator-signed inter-app
+	// interaction allowlists. Empty dir is a valid configuration.
+	{
+		trust := loadBRPTrustRoot("/etc/xhelix/brp/trusted-keys.d")
+		fc.BRPEdges = brp.NewEdgeSet(trust)
+		if loaded, rejected, err := fc.BRPEdges.LoadDir("/etc/xhelix/brp/edges.d"); err == nil {
+			if loaded > 0 || rejected > 0 {
+				slog.Info("brp edges loaded", "loaded", loaded, "rejected", rejected)
+			}
+		}
+	}
+
+	// Asset class resolver (Phase B.1). Operator overrides loaded from
+	// /etc/xhelix/assetclass.d/*.yaml; static rules apply universally
+	// and cannot be relaxed.
+	{
+		opRules, opErrs := assetclass.LoadOperatorRules("/etc/xhelix/assetclass.d")
+		for _, e := range opErrs {
+			slog.Warn("assetclass operator rule error", "err", e)
+		}
+		if len(opRules) > 0 {
+			fc.AssetResolver = assetclass.NewWithOverrides(opRules)
+			slog.Info("assetclass resolver ready", "operator_overrides", len(opRules))
+		} else {
+			fc.AssetResolver = assetclass.NewStaticResolver()
+			slog.Info("assetclass resolver ready", "operator_overrides", 0)
+		}
+	}
+
+	// Secret-taint store (Phase B.2). 24h TTL — long enough for legit
+	// long-running sessions, short enough that abandoned tainted
+	// lineages don't accumulate. Operator can override later if needed.
+	fc.SecretTaint = secrettaint.NewStore(24 * time.Hour)
+	slog.Info("secrettaint store ready", "ttl", "24h")
+	go fc.sweepSecretTaint(parent)
+
+	// Egressguard (Phase C.2). Default mode = OBSERVE at foundation
+	// construction. Mode is RE-SET in run.go after config load via
+	// egressguard.NewGuard re-construction with the config-derived
+	// mode. Foundation has no access to cfg.
+	{
+		backend, name := egressguard.SelectBackend(egressguard.ModeObserve)
+		profiles := egressguard.NewBRPProfileLookup(fc.BRPMatcher)
+		fc.EgressGuard = egressguard.NewGuard(backend, profiles, egressguard.ModeObserve)
+		slog.Info("egressguard ready",
+			"backend", name,
+			"mode", "observe",
+			"note", "mode may be overridden in run.go from cfg.Hardening.Egressguard.Mode")
+	}
+	go fc.sweepBRPPhases(parent)
+	go fc.sweepBRPWriterCache(parent)
+
+	// Incident graph (Phase D.1). 30-minute activity window for the
+	// in-memory engine; Phase H.2 will introduce a parallel
+	// long-window engine. Persistence at /var/lib/xhelix/incidents.db
+	// — failures are logged but never block startup; the daemon
+	// continues with an in-memory-only engine.
+	{
+		base := incidentgraph.NewEngine(30 * time.Minute)
+		store, err := incidentgraph.OpenStore("/var/lib/xhelix/incidents.db")
+		if err != nil {
+			slog.Warn("incidentgraph store unavailable; running in-memory only", "err", err)
+			fc.IncidentGraph = base
+		} else {
+			persisting, err := incidentgraph.NewPersistingEngine(base, store)
+			if err != nil {
+				slog.Warn("incidentgraph rehydrate failed; running in-memory only", "err", err)
+				_ = store.Close()
+				fc.IncidentGraph = base
+			} else {
+				fc.IncidentStore = store
+				fc.IncidentGraph = persisting
+				slog.Info("incidentgraph ready", "store", store.Path(),
+					"hydrated_open", persisting.Size())
+			}
+		}
+		go fc.sweepIncidents(parent)
+	}
+
+	// SSH brute-force detector (Phase J.1). Defaults: 20 failures /
+	// 60s window / 5-min cooldown. Sweep stale per-source state
+	// every 5 min.
+	{
+		threshold, window, cooldown := sshbrute.Defaults()
+		fc.SSHBrute = sshbrute.NewDetector(threshold, window, cooldown)
+		slog.Info("sshbrute ready",
+			"threshold", threshold, "window", window.String(),
+			"cooldown", cooldown.String())
+		go fc.sweepSSHBrute(parent)
+	}
+
 	return fc, nil
+}
+
+// sweepSSHBrute runs the per-source-IP cleanup once every 5 minutes.
+func (fc *foundationContext) sweepSSHBrute(ctx context.Context) {
+	if fc.SSHBrute == nil {
+		return
+	}
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			fc.SSHBrute.Sweep(now)
+		}
+	}
+}
+
+// sweepIncidents runs the in-memory engine's TTL sweeper once per
+// minute. Closed incidents stay in the audit table; only the working
+// set shrinks.
+func (fc *foundationContext) sweepIncidents(ctx context.Context) {
+	if fc.IncidentGraph == nil {
+		return
+	}
+	type sweeper interface{ Sweep(time.Time) []string }
+	sw, ok := fc.IncidentGraph.(sweeper)
+	if !ok {
+		// PersistingEngine embeds Engine; reach through.
+		type embedded interface{ Sweep(time.Time) []string }
+		if pe, ok := fc.IncidentGraph.(*incidentgraph.PersistingEngine); ok {
+			sw = pe.Engine.(embedded)
+		} else {
+			return
+		}
+	}
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			_ = sw.Sweep(now)
+		}
+	}
+}
+
+// buildBRP loads the trust root + signed profile library at startup.
+// Returns a Matcher (possibly empty) and a Runtime with DefaultInvariants.
+// Never fails — missing trust root or library is logged and treated as
+// "no profiles loaded", which is the safe default.
+func buildBRP(ctx context.Context) (*brp.Matcher, *brp.Runtime) {
+	trust := loadBRPTrustRoot("/etc/xhelix/brp/trusted-keys.d")
+	m := brp.NewMatcher(trust)
+	for _, dir := range []string{"/usr/share/xhelix/brp", "/etc/xhelix/brp"} {
+		loaded, rejected, err := m.LoadDir(dir)
+		if err != nil {
+			slog.Warn("brp load dir failed", "dir", dir, "err", err)
+			continue
+		}
+		if loaded > 0 || rejected > 0 {
+			slog.Info("brp profile library loaded",
+				"dir", dir, "loaded", loaded, "rejected", rejected)
+		}
+	}
+	slog.Info("brp matcher ready",
+		"profiles", m.Size(), "trusted_signers", len(trust))
+	r := brp.NewRuntime(brp.DefaultInvariants())
+	return m, r
+}
+
+// loadBRPTrustRoot reads every *.pub file under dir as a base64-encoded
+// Ed25519 public key. The file's basename (without .pub) becomes the
+// signer name. Missing dir → empty map.
+func loadBRPTrustRoot(dir string) map[string]ed25519.PublicKey {
+	out := map[string]ed25519.PublicKey{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".pub") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			slog.Warn("brp trust root: read failed", "path", path, "err", err)
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+		if err != nil {
+			slog.Warn("brp trust root: base64 decode failed",
+				"path", path, "err", err)
+			continue
+		}
+		if len(decoded) != ed25519.PublicKeySize {
+			slog.Warn("brp trust root: key wrong length",
+				"path", path, "len", len(decoded), "want", ed25519.PublicKeySize)
+			continue
+		}
+		signer := strings.TrimSuffix(e.Name(), ".pub")
+		out[signer] = ed25519.PublicKey(decoded)
+	}
+	return out
+}
+
+// sweepSecretTaint periodically reclaims TTL-expired taint entries.
+// Runs hourly; the store's internal Sweep audit-logs each forget.
+func (fc *foundationContext) sweepSecretTaint(ctx context.Context) {
+	if fc.SecretTaint == nil {
+		return
+	}
+	m := secrettaint.AsMemStore(fc.SecretTaint)
+	if m == nil {
+		return
+	}
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			_ = m.Sweep(now)
+		}
+	}
+}
+
+// parseEgressguardMode maps the operator yaml token to the typed
+// egressguard.Mode. Unknown / empty → ModeObserve (safe default).
+func parseEgressguardMode(s string) egressguard.Mode {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "shadow":
+		return egressguard.ModeShadow
+	case "enforce":
+		return egressguard.ModeEnforce
+	}
+	return egressguard.ModeObserve
+}
+
+// sweepBRPWriterCache periodically reclaims stale attribution entries.
+// Runs every 10s; the cache TTL is 5s so this keeps the LRU tight.
+func (fc *foundationContext) sweepBRPWriterCache(ctx context.Context) {
+	if fc.BRPWriterCache == nil {
+		return
+	}
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			fc.BRPWriterCache.Sweep(now)
+		}
+	}
+}
+
+// sweepBRPPhases periodically drops PID entries older than 24h so the
+// tracker stays bounded across daemon lifetime.
+func (fc *foundationContext) sweepBRPPhases(ctx context.Context) {
+	if fc.BRPPhases == nil {
+		return
+	}
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			fc.BRPPhases.Sweep(now, 24*time.Hour)
+		}
+	}
 }
 
 func (fc *foundationContext) Stop() {
@@ -257,6 +617,9 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.ColdStore != nil {
 		_ = fc.ColdStore.Close()
+	}
+	if fc.SourceStore != nil {
+		_ = fc.SourceStore.Close()
 	}
 }
 
@@ -343,6 +706,12 @@ func (fc *foundationContext) pruneColdStore(ctx context.Context) {
 			_ = dropped
 		}
 	}
+	// Size-based backstop. Even with 3-day retention, high event volume
+	// can fill disk inside the retention window. 2026-05-25 incident:
+	// 18GB in 24h at 12-18M events/day pushed disk to 98% before
+	// retention kicked in. 8GB cap fits comfortably on a 100GB rootfs
+	// alongside the chain (~10GB), hot store (~1GB), and other state.
+	const coldMaxBytes int64 = 8 * 1024 * 1024 * 1024
 	for {
 		select {
 		case <-ctx.Done():
@@ -350,6 +719,7 @@ func (fc *foundationContext) pruneColdStore(ctx context.Context) {
 		case <-t.C:
 			if fc.ColdStore != nil {
 				_, _ = fc.ColdStore.DropOldDays(time.Now())
+				_, _ = fc.ColdStore.DropDaysOverSize(coldMaxBytes)
 			}
 		}
 	}
@@ -396,6 +766,45 @@ func (fc *foundationContext) sweepOrigins(ctx context.Context) {
 			return
 		case <-t.C:
 			fc.Origins.SweepOlderThan(time.Now().Add(-24 * time.Hour))
+		}
+	}
+}
+
+// sweepFileTaint prunes per-path writer-provenance entries older than
+// the FileTaint's TTL. Cadence chosen to match the lazy-expiry behaviour
+// of Lookup() so memory stays bounded under churn. T02 commit 3.
+func (fc *foundationContext) sweepFileTaint(ctx context.Context) {
+	if fc.FileTaint == nil {
+		return
+	}
+	t := time.NewTicker(15 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			fc.FileTaint.SweepOlderThan(time.Now().Add(-24 * time.Hour))
+		}
+	}
+}
+
+// sweepSourceAnchors prunes persisted SourceAnchors older than 30 days.
+// Anchors are forensic-grade evidence; longer retention than in-memory
+// Origins (which sweep at 24h) so cross-session and delayed-persistence
+// queries can still walk back to the original entry point.
+func (fc *foundationContext) sweepSourceAnchors(ctx context.Context) {
+	if fc.SourceStore == nil {
+		return
+	}
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			_, _ = fc.SourceStore.SweepOlderThan(ctx, time.Now().Add(-30*24*time.Hour))
 		}
 	}
 }

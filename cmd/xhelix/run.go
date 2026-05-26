@@ -31,6 +31,16 @@ import (
 	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/snicheck"
+	"github.com/xhelix/xhelix/pkg/assetclass"
+	"github.com/xhelix/xhelix/pkg/brp"
+	brpphase "github.com/xhelix/xhelix/pkg/brp/phase"
+	"github.com/xhelix/xhelix/pkg/brp/writerattr"
+	"github.com/xhelix/xhelix/pkg/egressguard"
+	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/secrettaint"
+	"github.com/xhelix/xhelix/pkg/sshbrute"
+	"github.com/xhelix/xhelix/pkg/source"
+	"github.com/xhelix/xhelix/pkg/verify"
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/daemon/forensicingest"
 	"github.com/xhelix/xhelix/pkg/daemon/wire"
@@ -72,6 +82,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/vhostdiscovery"
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
+	"github.com/xhelix/xhelix/pkg/selfseccomp"
 	"github.com/xhelix/xhelix/pkg/session"
 	"github.com/xhelix/xhelix/pkg/shmguard"
 	"github.com/xhelix/xhelix/pkg/store"
@@ -184,6 +195,31 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		"commit", version.Commit,
 	)
 
+	// Phase G.1 unconditional process hardening — runs even when
+	// selfprotect.Enabled=false because the prctls have no
+	// operational cost and their absence is a security regression.
+	selfprotect.ApplyProcessHardening(log)
+
+	// Phase G.2 self-seccomp filter. Default mode = "off"; operator
+	// promotes via hardening.seccomp.mode in xhelix.yaml. Filter is
+	// applied AFTER prctl(NO_NEW_PRIVS) above and BEFORE any sensors
+	// start — keeps the kernel's seccomp_data.arch check meaningful
+	// and avoids racing the eBPF sensor's startup syscalls.
+	{
+		mode := selfseccomp.ParseMode(cfg.Hardening.Seccomp.Mode)
+		if mode != selfseccomp.ModeOff {
+			a := selfseccomp.BaselineAllowList()
+			a.Mode = mode
+			if err := selfseccomp.Apply(a, log); err != nil {
+				log.Error("selfseccomp: install failed; continuing without filter",
+					"mode", mode.String(), "err", err)
+			}
+		} else {
+			log.Info("selfseccomp: mode=off (default); no filter installed",
+				"hint", "set hardening.seccomp.mode: audit in /etc/xhelix/xhelix.yaml to start soak")
+		}
+	}
+
 	// Self-protection
 	var protector *selfprotect.Protector
 	if cfg.SelfProtect.Enabled {
@@ -253,6 +289,22 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	log.Info("foundation primitives started",
 		"self_pid", foundation.SelfProcKey.PID,
 		"self_start_ticks", foundation.SelfProcKey.StartTicks)
+
+	// Phase C.3: apply operator-configured egressguard mode. Foundation
+	// constructed the guard in OBSERVE mode by default; the config can
+	// promote to SHADOW or ENFORCE. Re-construction is needed because
+	// Mode() is locked at NewGuard time (build-spec discipline — mode
+	// changes force operator awareness).
+	if foundation.EgressGuard != nil && cfg.Hardening.Egressguard.Mode != "" {
+		mode := parseEgressguardMode(cfg.Hardening.Egressguard.Mode)
+		if mode != egressguard.ModeObserve {
+			backend, name := egressguard.SelectBackend(mode)
+			profiles := egressguard.NewBRPProfileLookup(foundation.BRPMatcher)
+			foundation.EgressGuard = egressguard.NewGuard(backend, profiles, mode)
+			log.Info("egressguard mode promoted from config",
+				"mode", mode.String(), "backend", name)
+		}
+	}
 
 	// Bus pump
 	go bus.Run(ctx)
@@ -825,6 +877,13 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				"severity": a.Event.Severity.String(),
 			})
 		}
+
+		// Incident-graph alert fan-out (Phase D.1). Bridges the alert
+		// into the incidentgraph engine where it's correlated with
+		// prior events under the same source/lineage. Nil-safe.
+		if foundation != nil && foundation.IncidentGraph != nil {
+			incidentSink(foundation.IncidentGraph, a)
+		}
 	}
 
 	// Tamper guard — emits an alert when something attacks the daemon
@@ -982,6 +1041,29 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	corrEngine, err := correlator.New(emit)
 	if err != nil {
 		return fmt.Errorf("init correlator: %w", err)
+	}
+	// Load correlator chain rules from disk (Phase J.2). Each *.yaml
+	// under /usr/share/xhelix/correlator.d/ contains one or more rule
+	// documents. Missing dir is fine — the correlator just runs empty.
+	{
+		corrDir := "/usr/share/xhelix/correlator.d"
+		corrRules, loadErr := correlator.LoadFromDir(corrDir)
+		if loadErr != nil {
+			log.Warn("correlator: some rules failed to load", "dir", corrDir, "err", loadErr)
+		}
+		if len(corrRules) > 0 {
+			if err := corrEngine.Load(corrRules); err != nil {
+				log.Warn("correlator: Load failed; running with no rules", "err", err)
+			} else {
+				ids := make([]string, 0, len(corrRules))
+				for _, r := range corrRules {
+					ids = append(ids, r.ID)
+				}
+				log.Info("correlator: rules loaded", "count", len(corrRules), "ids", ids)
+			}
+		} else {
+			log.Info("correlator: no rules loaded", "dir", corrDir)
+		}
 	}
 
 	// ProcTree
@@ -1313,14 +1395,22 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// /etc/xhelix/apps.d/*.yaml + heuristics. Always constructed
 	// (cheap, nil-safe, no enforcement). Pipeline uses it to tag
 	// every event with app_id for analytics + grouping.
-	appDecls, appDeclErrs := appident.LoadDecls("/etc/xhelix/apps.d")
-	for _, e := range appDeclErrs {
-		log.Warn("appident decl load error", "err", e)
+	// Two-tier load: vendor decls ship under /usr/share/xhelix/apps.d/
+	// (WordPress, Drupal, Laravel, Rails recognizers); operator overlays
+	// live under /etc/xhelix/apps.d/. Later entries win (operator overrides
+	// vendor) — appident.New takes the merged slice in declaration order.
+	vendorDecls, vendorErrs := appident.LoadDecls("/usr/share/xhelix/apps.d")
+	for _, e := range vendorErrs {
+		log.Warn("appident vendor decl error", "err", e)
 	}
+	opDecls, opDeclErrs := appident.LoadDecls("/etc/xhelix/apps.d")
+	for _, e := range opDeclErrs {
+		log.Warn("appident operator decl error", "err", e)
+	}
+	appDecls := append(vendorDecls, opDecls...)
 	appIdentifier := appident.New(appDecls)
-	if len(appDecls) > 0 {
-		log.Info("appident declarations loaded", "count", len(appDecls))
-	}
+	log.Info("appident declarations loaded",
+		"vendor", len(vendorDecls), "operator", len(opDecls), "total", len(appDecls))
 
 	// Vhost correlator — per-worker-pid pending vhost slot, TTL 2s.
 	// Always constructed; cheap, nil-safe. Pipeline notes inbound
@@ -2123,7 +2213,18 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			if err != nil {
 				log.Warn("chain init failed", "err", err)
 			} else {
-				log.Info("forensics chain ready", "dir", chainDir)
+				// Cap chain growth. Operator can override via
+				// cfg.Chain.MaxBatches; default 2000 covers ~6-12h
+				// at typical event rate, prevents unbounded disk hog
+				// (root cause of /var/lib/xhelix/chain 20GB on
+				// 2026-05-24 incident).
+				maxBatches := cfg.Chain.MaxBatches
+				if maxBatches <= 0 {
+					maxBatches = 2000
+				}
+				forensicsChain.MaxBatches = maxBatches
+				log.Info("forensics chain ready",
+					"dir", chainDir, "max_batches", maxBatches)
 			}
 		}
 	}
@@ -2368,7 +2469,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	})
 	enterpriseSrv := startWebServer(ctx, log, cfg, webServer, sessionTracker, banner, ruleEngine, soak, &uiStats{
 		hot: hot, bus: bus, sessionTracker: sessionTracker, banner: banner,
-	})
+	}, foundation.IncidentGraph)
 
 	// SBOM periodic diff
 	if cfg.SBOM.Enabled && sbomBaseline != nil {
@@ -2443,7 +2544,22 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		vhostCorrelator,
 		ipTS,
 		procScrapeSensor,
-		sniCheck)
+		sniCheck,
+		foundation.SourceMinter,
+		foundation.FileTaint,
+		foundation.SourceStore,
+		foundation.BRPMatcher,
+		foundation.BRPRuntime,
+		foundation.BRPPhases,
+		foundation.BRPWriterCache,
+		foundation.IntegrityTester,
+		foundation.VerifyEngine,
+		foundation.BRPEdges,
+		foundation.AssetResolver,
+		foundation.SecretTaint,
+		foundation.EgressGuard,
+		foundation.IncidentGraph,
+		foundation.SSHBrute)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -2556,6 +2672,21 @@ func dispatch(
 	ipTS *egressmon.IPTimeSeries,
 	procScrapeSensor *procscrapesensor.Sensor,
 	sniCheck *snicheck.Detector,
+	srcMinter *source.Minter,
+	fileTaint *source.FileTaint,
+	srcStore *source.Store,
+	brpMatcher *brp.Matcher,
+	brpRuntime *brp.Runtime,
+	brpPhases *brpphase.Tracker,
+	brpWriterCache *writerattr.Cache,
+	integrityTester *integrity.Tester,
+	verifyEngine *verify.Engine,
+	brpEdges *brp.EdgeSet,
+	assetResolver assetclass.Resolver,
+	secretTaint secrettaint.Store,
+	egressGuard egressguard.Guard,
+	incidentGraph incidentgraph.Engine,
+	sshBrute *sshbrute.Detector,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -2683,6 +2814,21 @@ func dispatch(
 		IPTimeSeries:     ipTS,
 		ProcScrape:       procScrapeSensor,
 		SNICheck:         sniCheck,
+		SourceMinter:     srcMinter,
+		FileTaint:        fileTaint,
+		SourceStore:      srcStore,
+		BRPMatcher:       brpMatcher,
+		BRPRuntime:       brpRuntime,
+		BRPPhases:        brpPhases,
+		BRPWriterCache:   brpWriterCache,
+		IntegrityTester:  integrityTester,
+		VerifyEngine:     verifyEngine,
+		BRPEdges:         brpEdges,
+		AssetResolver:    assetResolver,
+		SecretTaint:      secretTaint,
+		EgressGuard:      egressGuard,
+		IncidentGraph:    incidentGraph,
+		SSHBrute:         sshBrute,
 	}
 	p.Run(ctx, events)
 }
