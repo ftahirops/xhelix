@@ -46,6 +46,36 @@ func NewProtector(stateDir string, log *slog.Logger) *Protector {
 	}
 }
 
+// hardeningResult is one row from hardenProcess(); used to log each
+// mitigation outcome separately so operators can see which knobs the
+// kernel accepted.
+type hardeningResult struct {
+	Name string
+	Err  error
+}
+
+// ApplyProcessHardening runs the Phase G.1 prctl-based mitigations
+// (PR_SET_NO_NEW_PRIVS, PR_SET_DUMPABLE=0) unconditionally at
+// daemon startup. Unlike the rest of selfprotect.Harden(), these are
+// always-on because:
+//   - They have no operational side effects on the daemon's hot path
+//   - They can only be set ONCE per process (re-running is a no-op
+//     but failing the second time is benign)
+//   - Their absence is itself a security regression we want to flag
+//
+// Logging is structured so operators can audit which knobs the
+// kernel accepted.
+func ApplyProcessHardening(log *slog.Logger) {
+	for _, r := range hardenProcess() {
+		if r.Err != nil {
+			log.Warn("process-hardening: step failed",
+				"step", r.Name, "err", r.Err)
+		} else {
+			log.Info("process-hardening: applied", "step", r.Name)
+		}
+	}
+}
+
 // Harden applies best-effort hardening to the running process.
 func (p *Protector) Harden() {
 	// Ignore SIGTERM from unprivileged senders — systemd still uses
@@ -60,6 +90,17 @@ func (p *Protector) Harden() {
 		p.log.Info("selfprotect: mlockall unavailable", "err", err)
 	} else {
 		p.log.Info("selfprotect: memory pinned (mlockall)")
+	}
+
+	// Phase G.1 process hardening — PR_SET_NO_NEW_PRIVS and
+	// PR_SET_DUMPABLE=0. Each step is logged independently. Failures
+	// do NOT block startup; older kernels just keep the default.
+	for _, r := range hardenProcess() {
+		if r.Err != nil {
+			p.log.Warn("selfprotect: hardening step failed", "step", r.Name, "err", r.Err)
+		} else {
+			p.log.Info("selfprotect: hardening applied", "step", r.Name)
+		}
 	}
 
 	if p.binary != "" {
