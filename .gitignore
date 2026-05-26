@@ -4,11 +4,20 @@
 /xhelix-verify
 /xhelix-bridge
 /mynetgate
+/xhelix-dnspoison
+/xhelix-honeysh
+/xhelix-sinkhole
+/xhelix-watchdog
+/xhelix-graph-server
 /dist/
 *.deb
 *.rpm
 *.tar.gz
 *.o
+# Deb staging binaries are populated by `make deb`; not tracked.
+packaging/deb/usr/local/bin/xhelix
+packaging/deb/usr/local/bin/xhelixctl
+packaging/deb/usr/local/bin/xhelix-verify
 
 # Go
 /vendor/
