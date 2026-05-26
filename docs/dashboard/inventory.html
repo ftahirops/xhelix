@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>App Inventory Fingerprinting — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Telemetry / Inventory</div>
+    <h1>App Inventory Fingerprinting</h1>
+    <p class="lead">On bootstrap and on change, the endpoint sends a Class A fingerprint of the host's OS + packages + service versions + config hashes. The hub uses this to compute ProfileKeys correctly.</p>
+<h2 id="layers">Fingerprint layers</h2>
+  <h3>OS layer</h3>
+  <ul>
+    <li>Distro + version + kernel + BTF + libc + systemd version</li>
+    <li>Package manager state hash</li>
+    <li>CVE-feed match delta against installed versions</li>
+  </ul>
+  <h3>Installed packages</h3>
+  <p>Full list via <code>dpkg-query -W</code> / <code>rpm -qa</code> / <code>apk info -v</code> with versions.</p>
+  <h3>Running services</h3>
+  <p>Per service: binary path + SHA-256 + version (queried via <code>--version</code>) + modules/extensions loaded.</p>
+  <h3>Config hashes</h3>
+  <p>SHA-256 of: <code>nginx.conf</code>+Includes, <code>sshd_config</code>, <code>my.cnf</code>, php-fpm pool configs, postfix/dovecot configs, systemd unit files for managed services, crontab files.</p>
+  <h3>Derived ProfileKey</h3>
+  <p>Endpoint computes ProfileKey locally; reports it to hub. Hub buckets endpoints into fleet-consensus groups.</p>
+  <div class="callout note"><div class="title">Privacy</div>All fingerprints are version + hash only. No request data, no log contents, no secrets. Audit via <code>xhelixctl telemetry preview</code>.</div>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

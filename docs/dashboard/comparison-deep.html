@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comparison Level 2 — Deep Features — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Comparison <span class="sep">/</span> Level 2 — Deep Features</div>
+    <h1>Level 2 — Deep feature-by-feature comparison</h1>
+    <p class="lead">For each capability we list <em>how</em> each tool implements it — not just whether it exists. Six dimensions: kernel observation, source attribution, profile-based defense, containment, ML stance, endpoint footprint.</p>
+  <h2 id="level2">Level 2 &mdash; Deep feature-by-feature comparison</h2>
+  <p>For each capability we list <em>how</em> each tool implements it &mdash; not just whether it exists.</p>
+
+  <h3>2.1 Kernel observation depth</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Mechanism</th><th>Kernel minimum</th><th># probes / hooks</th><th>Portable across kernels?</th></tr></thead>
+    <tbody>
+      <tr><td>CrowdStrike Falcon</td><td>Kernel module (Falcon Sensor)</td><td>varies by version</td><td>not published</td><td>requires per-kernel build</td></tr>
+      <tr><td>SentinelOne</td><td>Kernel module + eBPF (recent)</td><td>5.4+</td><td>not published</td><td>partial CO-RE</td></tr>
+      <tr><td>MS Defender (Linux)</td><td>eBPF + auditd</td><td>5.4+</td><td>not published</td><td>partial CO-RE</td></tr>
+      <tr><td>Elastic Security</td><td>auditbeat + auditd userspace</td><td>any auditd</td><td>auditd rule-based</td><td>yes</td></tr>
+      <tr><td>Falco</td><td>eBPF or kernel module</td><td>5.8+ (eBPF) / older (kmod)</td><td>~30 syscalls</td><td>CO-RE since v0.36</td></tr>
+      <tr><td>Tetragon</td><td>eBPF only (cilium/ebpf)</td><td>5.4+</td><td>configurable TracingPolicy</td><td>full CO-RE</td></tr>
+      <tr><td>Sysdig Secure</td><td>eBPF or sysdig kernel module</td><td>5.8+ (eBPF)</td><td>~50 syscalls</td><td>CO-RE</td></tr>
+      <tr><td>Wazuh</td><td>auditd userspace + file integrity (inotify)</td><td>any</td><td>auditd rule-based</td><td>yes</td></tr>
+      <tr><td><strong style="color:var(--acc)">xhelix v2</strong></td><td>eBPF only (cilium/ebpf)</td><td>5.15+ (BPF LSM)</td><td>23 probes + BPF LSM hooks + fanotify</td><td>full CO-RE via BTF</td></tr>
+    </tbody>
+  </table>
+  <div class="src">Sources: vendor docs (CrowdStrike Falcon sensor brief, MS Defender Linux deployment guide), Falco GitHub release notes, Tetragon documentation, Wazuh architecture docs.</div>
+
+  <h3>2.2 Source / causal attribution depth</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Has source attribution?</th><th>Survives PID reuse?</th><th>Survives sudo escalation?</th><th>Survives daemon restart?</th><th>Cross-host pivots?</th></tr></thead>
+    <tbody>
+      <tr><td>CrowdStrike Threat Graph</td><td>partial (process tree + some causality)</td><td>partial</td><td>partial</td><td>cloud-side</td><td>cloud-side</td></tr>
+      <tr><td>SentinelOne Storyline</td><td>yes (closest commercial analog)</td><td>yes</td><td>yes</td><td>cloud-side</td><td>cloud-side</td></tr>
+      <tr><td>MS Defender Incident Graph</td><td>partial</td><td>partial</td><td>partial</td><td>cloud-side</td><td>cloud-side</td></tr>
+      <tr><td>Falco / Tetragon / Sysdig</td><td>no (rule-only, no graph)</td><td>n/a</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+      <tr><td>Wazuh</td><td>no (alert-only)</td><td>n/a</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+      <tr><td>Aikido Zen</td><td>request-level attribution</td><td>n/a (single request)</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+      <tr><td><strong style="color:var(--acc)">xhelix v2</strong></td><td>SourceAnchor + CausalSet</td><td>✅ persisted in source.db</td><td>✅ parent_anchor_id chain</td><td>✅ SQLite survives restart</td><td>✅ hub-side cross-host join</td></tr>
+    </tbody>
+  </table>
+  <div class="src">Sources: SentinelOne Storyline architecture whitepaper (2021), CrowdStrike Threat Graph product page, Falco architecture docs.</div>
+
+  <h3>2.3 Profile-based defense (BRP / behavioral baselines)</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Has profile / baseline?</th><th>Source</th><th>Config-aware?</th><th>Signed?</th><th>Hub-required at enforce?</th></tr></thead>
+    <tbody>
+      <tr><td>CrowdStrike</td><td>cloud ML model</td><td>fleet-trained closed-source ML</td><td>no</td><td>no (model bundle)</td><td>partial</td></tr>
+      <tr><td>SentinelOne</td><td>cloud + local heuristics</td><td>fleet-trained</td><td>no</td><td>no</td><td>partial</td></tr>
+      <tr><td>MS Defender</td><td>cloud ML</td><td>fleet-trained closed</td><td>no</td><td>no</td><td>yes</td></tr>
+      <tr><td>Falco / Tetragon / Sysdig</td><td>rule sets only</td><td>community curated</td><td>no</td><td>git/repo trust</td><td>no</td></tr>
+      <tr><td>AppArmor refpolicy</td><td>MAC profiles (hand-written)</td><td>distro maintainers</td><td>no</td><td>distro signing</td><td>no</td></tr>
+      <tr><td>SELinux refpolicy</td><td>MAC profiles (hand-written)</td><td>distro maintainers</td><td>no</td><td>distro signing</td><td>no</td></tr>
+      <tr><td>Aikido Zen</td><td>framework-aware profiles</td><td>language runtime knowledge</td><td>partial</td><td>vendor signed</td><td>partial</td></tr>
+      <tr><td><strong style="color:var(--acc)">xhelix v2</strong></td><td>BRP (signed JSON)</td><td>(1) parsed from operator config (2) fleet consensus</td><td>✅ config-first</td><td>✅ Ed25519 + HSM</td><td>❌ cached locally</td></tr>
+    </tbody>
+  </table>
+  <div class="src">Statistically-derived, signed, version-pinned, configuration-aware behavioral profiles published as auditable open artifacts is a combination no shipping product offers. Aikido Zen has framework profiles but at the language-runtime layer (RASP), not kernel.</div>
+
+  <h3>2.4 Containment / response automation</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Auto-kill processes</th><th>Auto-block network</th><th>Auto-quarantine files</th><th>Auto-revoke credentials</th><th>Reversibility (PanicSwitch)?</th><th>Latency claim</th></tr></thead>
+    <tbody>
+      <tr><td>CrowdStrike Falcon</td><td>yes</td><td>yes</td><td>yes</td><td>partial</td><td>not documented</td><td>vendor: "real-time"</td></tr>
+      <tr><td>SentinelOne</td><td>yes (Rollback feature)</td><td>yes</td><td>yes</td><td>partial</td><td>yes (file rollback)</td><td>vendor: "&lt;1s"</td></tr>
+      <tr><td>MS Defender</td><td>yes</td><td>yes</td><td>yes</td><td>via Azure AD</td><td>limited</td><td>vendor: not specified</td></tr>
+      <tr><td>Falco</td><td>no (alert only)</td><td>no</td><td>no</td><td>no</td><td>n/a</td><td>n/a</td></tr>
+      <tr><td>Tetragon</td><td>yes (kill action in TracingPolicy)</td><td>partial</td><td>no</td><td>no</td><td>no</td><td>kernel-side, microseconds</td></tr>
+      <tr><td>Sysdig Secure</td><td>yes (k8s response)</td><td>yes</td><td>partial</td><td>no</td><td>partial</td><td>not specified</td></tr>
+      <tr><td>Wazuh</td><td>yes (active response scripts)</td><td>yes (via firewall scripts)</td><td>limited</td><td>no</td><td>no</td><td>seconds</td></tr>
+      <tr><td><strong style="color:var(--acc)">xhelix v2</strong></td><td>yes (source-driven)</td><td>yes (netban)</td><td>yes (with protect-our-own backstop)</td><td>via credbroker</td><td>✅ Soak gate + PanicSwitch</td><td>&lt;2s measured target</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2.5 AI / ML stance</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Uses ML?</th><th>Where?</th><th>Auditable?</th><th>Honest about limits?</th></tr></thead>
+    <tbody>
+      <tr><td>CrowdStrike</td><td>yes (multiple models)</td><td>cloud-side, primary decision driver</td><td>no (closed)</td><td>vendor disclosures vary</td></tr>
+      <tr><td>SentinelOne</td><td>yes (on-agent + cloud)</td><td>both</td><td>no</td><td>partial disclosures</td></tr>
+      <tr><td>MS Defender</td><td>yes</td><td>cloud + endpoint</td><td>no</td><td>partial</td></tr>
+      <tr><td>Falco</td><td>no</td><td>rules only</td><td>n/a</td><td>n/a</td></tr>
+      <tr><td>Tetragon</td><td>no</td><td>TracingPolicy only</td><td>n/a</td><td>n/a</td></tr>
+      <tr><td>Aikido Zen</td><td>no (signature-based)</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
+      <tr><td><strong style="color:var(--acc)">xhelix v2</strong></td><td>none in v1; Phase H advisory only</td><td>operator-supplied via hub query API</td><td>fully (operator controls model)</td><td>explicit "ML out of v1"</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <strong>Why xhelix is conservative on ML:</strong> ML is opaque, hard to debug, easy to poison. Academic research (Holmes 2019) and operational experience both show <em>deterministic LLR scoring with capped per-domain evidence</em> outperforms naive ML for low-FP security decisions. ML adds value as a hint over curated data, not as the primary engine.
+  </div>
+
+  <h3>2.6 Endpoint storage requirements</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Local disk per host</th><th>Local DB type</th><th>External deps</th></tr></thead>
+    <tbody>
+      <tr><td>CrowdStrike Falcon Sensor</td><td>~300 MB binary + cache</td><td>proprietary</td><td>cloud (mandatory)</td></tr>
+      <tr><td>SentinelOne Agent</td><td>~500 MB</td><td>proprietary SQLite</td><td>cloud (mandatory)</td></tr>
+      <tr><td>MS Defender (Linux)</td><td>~700 MB</td><td>proprietary</td><td>Azure (mandatory)</td></tr>
+      <tr><td>Elastic auditbeat</td><td>~150 MB</td><td>local files</td><td>Elasticsearch</td></tr>
+      <tr><td>Falco</td><td>~100 MB</td><td>none (in-memory)</td><td>none (or sink)</td></tr>
+      <tr><td>Tetragon</td><td>~80 MB</td><td>none (in-memory)</td><td>k8s preferred</td></tr>
+      <tr><td>Wazuh agent</td><td>~50 MB</td><td>local files</td><td>Wazuh manager</td></tr>
+      <tr><td><strong style="color:var(--acc)">xhelix v2</strong></td><td>~80 MB binary + 250 MB/day events (rolling 24h)</td><td>SQLite (modernc.org/sqlite, no CGO)</td><td>none required</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+    <p style="margin-top:20px">Continue to <a href="comparison-rates.html">Level 3 — Fact-based detection rates</a>.</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

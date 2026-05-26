@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Protect-Our-Own Backstop — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Architecture / Protect-Our-Own</div>
+    <h1>Protect-Our-Own Backstop</h1>
+    <p class="lead">The immutable list of paths NOTHING can write, quarantine, or delete — not even a correctly-signed BRP. Born from the 2026-05-23 prod scare and the EDR-causing-its-own-incident failure mode.</p>
+<h2 id="rationale">Why this exists</h2>
+  <p>The EDR capability to quarantine files is real. The cost of being wrong about which files matter is catastrophic. We made the decision <em>once, in code, with version control and code review</em> — rather than at runtime under stress.</p>
+  <h2 id="paths">Protected paths (52 entries)</h2>
+  <table>
+    <thead><tr><th>Category</th><th>Paths</th><th>Rationale</th></tr></thead>
+    <tbody>
+      <tr><td>Auth / privilege</td><td><code>/etc/passwd</code>, <code>/etc/shadow</code>, <code>/etc/gshadow</code>, <code>/etc/sudoers</code>, <code>/etc/sudoers.d/</code>, <code>/etc/pam.d/</code>, <code>/etc/security/</code></td><td>Credential and authorisation backbone</td></tr>
+      <tr><td>Plesk control panel</td><td><code>/etc/psa/</code>, <code>/usr/local/psa/</code>, <code>/var/lib/psa/</code></td><td>Added 2026-05-23 after the prod incident</td></tr>
+      <tr><td>Database storage</td><td><code>/var/lib/mysql/</code>, <code>/var/lib/mariadb/</code>, <code>/var/lib/postgresql/</code>, <code>/var/lib/mongodb/</code>, <code>/var/lib/redis/</code></td><td>Deletion = total data loss</td></tr>
+      <tr><td>Package manager</td><td><code>/var/lib/dpkg/</code>, <code>/var/lib/rpm/</code>, <code>/var/lib/apt/lists/</code></td><td>Corruption = no future updates</td></tr>
+      <tr><td>Boot + kernel</td><td><code>/boot/</code>, <code>/lib/modules/</code>, <code>/usr/lib/modules/</code></td><td>Unbootable on corruption</td></tr>
+      <tr><td>Service definitions</td><td><code>/etc/systemd/system/</code>, <code>/etc/systemd/network/</code>, <code>/lib/systemd/system/</code></td><td>Service breakage</td></tr>
+      <tr><td>Scheduled tasks</td><td><code>/etc/cron.d/</code>, <code>/etc/cron.daily/</code>, <code>/etc/cron.hourly/</code>, <code>/etc/crontab</code>, <code>/var/spool/cron/</code></td><td>Persistence/scheduling</td></tr>
+      <tr><td>SSH access</td><td><code>/root/.ssh/</code>, <code>/etc/ssh/sshd_config</code>, <code>/etc/ssh/ssh_host_*_key</code></td><td>Lockout risk</td></tr>
+      <tr><td>Mount / name resolution</td><td><code>/etc/fstab</code>, <code>/etc/hosts</code>, <code>/etc/resolv.conf</code>, <code>/etc/network/</code>, <code>/etc/netplan/</code></td><td>Connectivity breakage</td></tr>
+    </tbody>
+  </table>
+  <div class="callout alert"><div class="title">Even a correctly-signed BRP is rejected if it grants access here</div><code>Profile.Validate()</code> calls <code>IntersectsProtected()</code> on every load. A profile claiming write to <code>/etc/shadow</code> fails validation <em>before</em> signature verification. This is the v2 "curator cannot subvert endpoint" invariant.</div>
+  <h2 id="source">Source</h2>
+  <p>Implementation: <code>pkg/brp/protected.go</code>. Tests: <code>pkg/brp/protected_test.go</code>.</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

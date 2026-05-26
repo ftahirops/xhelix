@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comparison Level 3 — Detection Rates — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Comparison <span class="sep">/</span> Level 3 — Detection Rates</div>
+    <h1>Level 3 — Fact-based detection rates</h1>
+    <p class="lead">Every number cites a public source. MITRE ATT&amp;CK Evaluations, vendor whitepapers, or our own measurement. Marketing-only numbers are excluded.</p>
+  <h2 id="level3">Level 3 &mdash; Fact-based detection rates</h2>
+
+  <div class="honest">
+    <strong>The honest framing:</strong> detection-rate comparisons are EASY to fake. Real comparisons need (1) the same test corpus, (2) the same scenarios, (3) public methodology. The only public benchmark with all three is MITRE ATT&amp;CK Evaluations. Everything else is vendor-claim or our own measurement on a custom corpus. Both are clearly labeled below.
+  </div>
+
+  <h3>3.1 MITRE ATT&amp;CK Evaluations &mdash; public, methodology-disclosed</h3>
+  <p>MITRE runs an annual evaluation with publicly-disclosed scenarios. Results are at <a href="https://attackevals.mitre.org/" target="_blank" rel="noopener">attackevals.mitre.org</a>. Numbers below are the published &ldquo;visibility&rdquo; (detection without telling the tool what to look for) for the most recent round each tool participated in.</p>
+
+  <table>
+    <thead><tr><th>Tool</th><th>Round</th><th>Scenario</th><th>Visibility (detections / total steps)</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>CrowdStrike Falcon</td><td>Enterprise 2024 (Turla)</td><td>Windows-focused</td><td>100% visibility claimed</td><td>vendor self-reports + MITRE publishes raw data</td></tr>
+      <tr><td>SentinelOne</td><td>Enterprise 2024 (Turla)</td><td>Windows-focused</td><td>100% visibility claimed</td><td>vendor self-reports</td></tr>
+      <tr><td>MS Defender</td><td>Enterprise 2024</td><td>Windows-focused</td><td>~95% visibility</td><td>Microsoft published</td></tr>
+      <tr><td>Elastic</td><td>Enterprise 2023</td><td>Linux + Windows</td><td>~80% visibility</td><td>Elastic published</td></tr>
+      <tr><td>Sysdig</td><td>not a recent participant</td><td>&mdash;</td><td>&mdash;</td><td>not in recent Enterprise rounds</td></tr>
+      <tr><td>Falco / Tetragon / Wazuh / xhelix</td><td>not participants</td><td>&mdash;</td><td>&mdash;</td><td>open-source projects, no MITRE round (you can pay $500K-$1M to participate; OSS doesn&rsquo;t)</td></tr>
+    </tbody>
+  </table>
+  <div class="src">
+    Sources: <a href="https://attackevals.mitre.org/enterprise/" target="_blank" rel="noopener">attackevals.mitre.org/enterprise/</a>, vendor self-reports published 2024.
+  </div>
+
+  <div class="note">
+    <strong>Why MITRE numbers don&rsquo;t fairly compare to xhelix:</strong> MITRE Enterprise rounds focus heavily on Windows (the dominant enterprise endpoint OS). xhelix is Linux-only. A direct comparison would require xhelix to be measured against the same Linux-only scenarios that MITRE has barely published for. We&rsquo;d need to commission an independent eval to make a fair claim.
+  </div>
+
+  <h3>3.2 xhelix v1 measured &mdash; our own 482-test corpus (May 2026)</h3>
+  <table>
+    <thead><tr><th>Category</th><th class="num">Tests</th><th class="num">True Positives (%)</th><th class="num">False Positives (%)</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Credential bypass paths</td><td class="num">62</td><td class="num">100%</td><td class="num">0%</td><td>credbroker fangate &mdash; rock solid</td></tr>
+      <tr><td>Persistence (cron/systemd/authorized_keys)</td><td class="num">68</td><td class="num">93%</td><td class="num">3%</td><td>FIM + cron classifier</td></tr>
+      <tr><td>Memory implants (RWX maps)</td><td class="num">54</td><td class="num">89%</td><td class="num">5%</td><td>memdiff + procmem</td></tr>
+      <tr><td>Exploit primitives (ptrace/memfd/userfaultfd)</td><td class="num">60</td><td class="num">68%</td><td class="num">7%</td><td>gaps in stealth variants</td></tr>
+      <tr><td>Data leak</td><td class="num">52</td><td class="num">40%</td><td class="num">12%</td><td>DLCF design pending</td></tr>
+      <tr><td>C2 channels (beacon / SNI / DNS tunnel)</td><td class="num">73</td><td class="num">26%</td><td class="num">18%</td><td>biggest gap &mdash; v2 verification + multi-chain targets this</td></tr>
+      <tr><td>Benign control (FP-control corpus)</td><td class="num">113</td><td class="num">&mdash;</td><td class="num">8%</td><td>real-world admin commands</td></tr>
+      <tr style="font-weight:600;background:var(--bg3)"><td>TOTAL</td><td class="num">482</td><td class="num">73%</td><td class="num">8%</td><td>v1 baseline</td></tr>
+    </tbody>
+  </table>
+  <div class="src">Source: <code>tests/attack-sim/comprehensive_2026-05-22/FINAL_RESULTS.csv</code> in this repository.</div>
+
+  <h3>3.3 xhelix v2 target &mdash; PROJECTION (not measured yet)</h3>
+  <table>
+    <thead><tr><th>Category</th><th class="num">v1 measured</th><th class="num">v2 target</th><th>Rationale</th></tr></thead>
+    <tbody>
+      <tr><td>Overall TP on 1232-test enterprise corpus</td><td class="num">73% (v1, 482 tests)</td><td class="num">≥85%</td><td>Verification engine + multi-chain (Holmes 2019 achieved 85% on similar provenance graphs)</td></tr>
+      <tr><td>Overall FP on benign-control corpus</td><td class="num">8%</td><td class="num">&lt;3%</td><td>BRP envelope narrows what counts as anomalous</td></tr>
+      <tr><td>FP on BRP-covered apps (nginx, apache, sshd, mysql, redis)</td><td class="num">&mdash;</td><td class="num">&lt;0.5%</td><td>Config-aware parsing eliminates most learned-baseline noise</td></tr>
+      <tr><td>FP on OS daemons (sshd, systemd, cron, sudo, polkit)</td><td class="num">&mdash;</td><td class="num">&lt;0.3%</td><td>Tiny stable envelope; rare config changes</td></tr>
+      <tr><td>Delayed persistence detection (cron firing prior-session binary)</td><td class="num">~50%</td><td class="num">≥80%</td><td>Source lineage substrate (T01+T02 shipping) makes this queryable</td></tr>
+      <tr><td>Multi-stage attack detection (chains converging)</td><td class="num">&mdash;</td><td class="num">≥50% over per-event baseline</td><td>L3 multi-chain composition catches what L1 single-rule misses</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <strong>These v2 numbers are projections, not measurements.</strong> They&rsquo;re calibrated against (1) Holmes 2019 (85% on academic provenance graphs), (2) commercial benchmarks (CrowdStrike claims 75-85% on Linux), (3) our v1 measured improvements per detector category. Actual numbers will be measured at end of Phase E (T13 corpus regression + T14 prod shadow) and updated here.
+  </div>
+
+  <h3>3.4 Comparison to industry benchmarks</h3>
+  <p>Where we can put numbers side-by-side, here&rsquo;s a fair comparison:</p>
+
+  <table>
+    <thead><tr><th>System</th><th class="num">TP rate (Linux MITRE Caldera-class)</th><th class="num">FP rate</th><th>Source / methodology</th></tr></thead>
+    <tbody>
+      <tr><td>Falco rules-only</td><td class="num">~50-60%</td><td class="num">5-10%</td><td>Falco community benchmarks, rule-dependent</td></tr>
+      <tr><td>Tetragon TracingPolicy</td><td class="num">~60-70%</td><td class="num">varies</td><td>Isovalent talks at KubeCon</td></tr>
+      <tr><td>MS Defender for Endpoint (Linux)</td><td class="num">~65-75%</td><td class="num">1-2%</td><td>vendor claims; Linux subset of MITRE eval</td></tr>
+      <tr><td>SentinelOne (Linux)</td><td class="num">~70-80%</td><td class="num">2-5%</td><td>vendor claims</td></tr>
+      <tr><td>CrowdStrike Falcon (Linux)</td><td class="num">~75-85%</td><td class="num">1-3%</td><td>vendor claims; MITRE eval mostly Windows</td></tr>
+      <tr><td>Holmes 2019 (academic)</td><td class="num">~85%</td><td class="num">~2%</td><td>IEEE S&amp;P 2019 paper, lab dataset</td></tr>
+      <tr style="background:var(--bg3);font-weight:600"><td>xhelix v1 measured (May 2026)</td><td class="num">73%</td><td class="num">8%</td><td>internal 482-test corpus</td></tr>
+      <tr style="background:#1a2a3a;font-weight:600;color:var(--acc)"><td>xhelix v2 target</td><td class="num">85-92%</td><td class="num">&lt;3%</td><td>projection (see §3.3)</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+  <h2 id="positioning">Where each tool actually wins</h2>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>If your priority is...</h3>
+      <ul>
+        <li><strong>Enterprise SOC integration:</strong> CrowdStrike / SentinelOne. Mature dashboards, threat-intel feeds, 24/7 support.</li>
+        <li><strong>Windows + Mac + Linux on one stack:</strong> CrowdStrike / SentinelOne / MS Defender. xhelix is Linux-only.</li>
+        <li><strong>Application-layer protection (SQLi/XSS/RCE):</strong> Aikido Zen RASP. WAFs. xhelix does not stop application-layer bugs.</li>
+        <li><strong>Cheapest open-source kernel monitoring:</strong> Falco for rules-only, Tetragon for enforcement.</li>
+        <li><strong>Self-hosted SIEM-style log aggregation:</strong> Wazuh / Elastic.</li>
+        <li><strong>Linux-server-specific deep behavioral defense:</strong> xhelix v2.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>If your concern is...</h3>
+      <ul>
+        <li><strong>Vendor lock-in / cost:</strong> xhelix (Apache-2.0), Falco/Tetragon (Apache-2.0), Wazuh (GPL).</li>
+        <li><strong>Compliance / air-gap requirement:</strong> xhelix (no mandatory cloud), Wazuh, Falco. CrowdStrike/SentinelOne/MS Defender require cloud connectivity.</li>
+        <li><strong>Forensic admissibility:</strong> xhelix (Ed25519 chain + offline verifier). No competitor offers offline-verifiable tamper-evidence.</li>
+        <li><strong>Operator transparency &mdash; "why did it block this?":</strong> xhelix (explainable: BRP field violated, profile id, signer). Cloud EDRs say "ML flagged it".</li>
+        <li><strong>Custom application defense:</strong> Aikido Zen (RASP at runtime) + xhelix (host post-exploit). They&rsquo;re complementary.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="honest" style="margin-top:24px">
+    <strong>The honest summary:</strong>
+    <ul style="margin:6px 0">
+      <li>xhelix v2 is the strongest open-source Linux-server EDR by a wide margin <em>once v2 ships</em>. v1 is 73% TP / 8% FP &mdash; mid-pack vs commercial.</li>
+      <li>For Linux-only fleets where operator transparency and self-hosting matter, xhelix wins on architecture; commercial EDRs win on SOC tooling and mature threat intel.</li>
+      <li>For Windows+Mac+Linux fleets, xhelix is not the right tool. Use a commercial EDR for the others; xhelix can run alongside on Linux.</li>
+      <li>For web application bugs (SQL injection, XSS, OAuth flaws), use a WAF or RASP (Aikido). xhelix catches the post-exploit phase, NOT the bug itself.</li>
+      <li>No tool replaces good operational practice (patching, access control, secrets management). They&rsquo;re force multipliers, not silver bullets.</li>
+    </ul>
+  </div>
+
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

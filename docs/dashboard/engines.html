@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Engine Catalog — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Engines / Catalog</div>
+    <h1>Engine Catalog</h1>
+    <p class="lead">All major engines in the xhelix stack, with package path, status, and maturity grade.</p>
+<table>
+    <thead><tr><th>Engine</th><th>Package</th><th>Status</th><th>Maturity</th></tr></thead>
+    <tbody>
+      <tr><td><a href="source-lineage.html">Source Lineage</a></td><td><code>pkg/source</code></td><td><span class="badge b-done">SHIPPING (T01+T02)</span></td><td><span class="grade grade-b">B</span></td></tr>
+      <tr><td><a href="brp.html">Behavioral Reference Profiles</a></td><td><code>pkg/brp</code></td><td><span class="badge b-build">IN PROGRESS (T05)</span></td><td><span class="grade grade-c">C</span></td></tr>
+      <tr><td><a href="verification.html">Verification Engine</a></td><td><code>pkg/verify</code></td><td><span class="badge b-plan">PLANNED (T07)</span></td><td><span class="grade grade-na">—</span></td></tr>
+      <tr><td><a href="multi-chain.html">Multi-Chain Composition</a></td><td><code>pkg/incident</code></td><td><span class="badge b-plan">PLANNED (T10)</span></td><td><span class="grade grade-na">—</span></td></tr>
+      <tr><td><a href="containment.html">Containment Ladder</a></td><td><code>pkg/enforce + netban + credbroker</code></td><td><span class="badge b-done">SHIPPING (v1)</span></td><td><span class="grade grade-b">B</span></td></tr>
+      <tr><td><a href="forensic-chain.html">Forensic Chain</a></td><td><code>pkg/chain · cmd/xhelix-verify</code></td><td><span class="badge b-done">SHIPPING (v1)</span></td><td><span class="grade grade-a">A</span></td></tr>
+      <tr><td>eBPF Sensors</td><td><code>sensors/ebpf</code></td><td><span class="badge b-done">SHIPPING (v1)</span></td><td><span class="grade grade-a">A</span></td></tr>
+      <tr><td>credbroker fangate</td><td><code>sensors/credbroker</code></td><td><span class="badge b-done">SHIPPING (v1)</span></td><td><span class="grade grade-b">B</span></td></tr>
+      <tr><td>FIM (file integrity)</td><td><code>sensors/fim</code></td><td><span class="badge b-done">SHIPPING (v1)</span></td><td><span class="grade grade-b">B</span></td></tr>
+      <tr><td>Posture (procfs + modsig)</td><td><code>pkg/posture</code></td><td><span class="badge b-done">SHIPPING (v1)</span></td><td><span class="grade grade-b">B</span></td></tr>
+    </tbody>
+  </table>
+  <p>Click any engine for its dedicated reference page.</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

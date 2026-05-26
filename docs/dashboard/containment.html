@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Containment Ladder — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Engines / Containment</div>
+    <h1>Containment Ladder</h1>
+    <p class="lead">Graduated 9-step response. Each step requires confidence threshold + Soak gate. PanicSwitch rolls back steps 3-9 with one command.</p>
+<table>
+<thead><tr><th>Step</th><th>Action</th><th>Reversible?</th></tr></thead>
+<tbody>
+  <tr><td>1</td><td>Log only</td><td>n/a</td></tr>
+  <tr><td>2</td><td>Snapshot evidence</td><td>n/a</td></tr>
+  <tr><td>3</td><td>Alert + freeze further escalation</td><td>yes</td></tr>
+  <tr><td>4</td><td>Block credentials at kernel level (credbroker)</td><td>yes</td></tr>
+  <tr><td>5</td><td>Block outbound network destinations (netban)</td><td>yes</td></tr>
+  <tr><td>6</td><td>Quarantine files (chattr +i + move)</td><td>yes</td></tr>
+  <tr><td>7</td><td>Kill all processes for this source</td><td>partial</td></tr>
+  <tr><td>8</td><td>Lock account + force credential rotation</td><td>yes (via operator)</td></tr>
+  <tr><td>9</td><td>Host-wide isolation (cut all egress)</td><td>yes (via PanicSwitch)</td></tr>
+</tbody>
+</table>
+<div class="callout good"><div class="title">Protect-our-own applies here too</div>Step 6 (quarantine) cannot target paths in <code>ProtectedSystemPaths</code> regardless of which rule fires. See <a href="protect-our-own.html">Protect-Our-Own Backstop</a>.</div>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

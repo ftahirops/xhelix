@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comparison Level 1 — Summary — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Comparison <span class="sep">/</span> Level 1 — Summary</div>
+    <h1>Level 1 — Executive summary across 9 tools</h1>
+    <p class="lead">Eight high-level dimensions across nine tools. Honest framing: every claim cites a source; vendor claims are marked; unverified items are explicitly "unknown" rather than padded to "no".</p>
+  <div class="honest">
+    <strong>Honesty rules applied to this page:</strong>
+    <ul style="margin:6px 0">
+      <li>Every detection-rate number cites a public source (MITRE ATT&amp;CK Evaluations, vendor whitepaper, or our own measurement).</li>
+      <li>Vendor-claimed numbers are marked &ldquo;vendor claim&rdquo; without endorsement.</li>
+      <li>xhelix numbers come from the May 2026 internal 482-test corpus (v1 measured) or stated as projections (v2 target).</li>
+      <li>Where a feature is &ldquo;unknown&rdquo; rather than &ldquo;no,&rdquo; that&rsquo;s honest &mdash; we couldn&rsquo;t verify from public docs.</li>
+      <li>Marketing language (&ldquo;next-generation,&rdquo; &ldquo;AI-powered&rdquo;) is excluded; only specific technical capabilities are compared.</li>
+    </ul>
+  </div>
+
+  <h2 id="level1">Level 1 &mdash; Executive summary across 9 tools</h2>
+  <p>Eight high-level dimensions, transposed for readability (tools as rows, dimensions as columns). ✅ full, 🟡 partial, ❌ none/no, ❓ unverified. Hover any column header for the full dimension name.</p>
+
+  <table class="compare-table">
+    <thead><tr>
+      <th>Tool</th>
+      <th title="Open source &amp; auditable">Open<br>source</th>
+      <th title="Linux-first design (vs Windows-primary)">Linux<br>first</th>
+      <th title="Kernel-level eBPF observation">eBPF<br>kernel</th>
+      <th title="Source / causal attribution across PID reuse, sudo, daemon restart">Source<br>attribution</th>
+      <th title="Tamper-evident signed forensic chain, offline verifiable">Signed<br>chain</th>
+      <th title="Works during cloud / hub outage">Offline<br>autonomy</th>
+      <th title="Kernel-level credential mediation — denies READ at the syscall">Cred<br>mediation</th>
+      <th title="Web RASP (application-layer inline)">Web<br>RASP</th>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td class="tool-name">CrowdStrike Falcon</td>
+        <td class="cell cn" title="closed source">❌</td>
+        <td class="cell cp" title="Windows-primary">🟡</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cp" title="Threat Graph (cloud-side)">🟡</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cp" title="reduced functionality offline">🟡</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+      </tr>
+      <tr>
+        <td class="tool-name">SentinelOne</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cp" title="Windows-primary">🟡</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cp" title="Storyline — closest commercial analog">🟡</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cp">🟡</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+      </tr>
+      <tr>
+        <td class="tool-name">MS Defender for Endpoint</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cp" title="Windows-primary">🟡</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cp" title="Incident Graph (cloud-side)">🟡</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cp">🟡</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+      </tr>
+      <tr>
+        <td class="tool-name">Elastic Security</td>
+        <td class="cell cp" title="open-core, partial">🟡</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cp" title="via auditbeat">🟡</td>
+        <td class="cell cu">❓</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cy" title="self-hosted">✅</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+      </tr>
+      <tr>
+        <td class="tool-name">Falco (open source)</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cn" title="rule-only, no causal graph">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+      </tr>
+      <tr>
+        <td class="tool-name">Tetragon (Isovalent)</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+      </tr>
+      <tr>
+        <td class="tool-name">Sysdig Secure</td>
+        <td class="cell cp" title="open-core, partial">🟡</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cp">🟡</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+      </tr>
+      <tr>
+        <td class="tool-name">Wazuh (open source)</td>
+        <td class="cell cy">✅</td>
+        <td class="cell cp" title="multi-platform">🟡</td>
+        <td class="cell cp" title="sysmon / auditd, not native eBPF">🟡</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cy" title="self-hosted">✅</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+      </tr>
+      <tr>
+        <td class="tool-name">Aikido Zen RASP</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn" title="application-layer, not host">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cn">❌</td>
+        <td class="cell cy" title="language-runtime hooks">✅</td>
+      </tr>
+      <tr style="background:#1a2a3a">
+        <td class="tool-name xhelix">xhelix v2</td>
+        <td class="cell cy" title="Apache-2.0">✅</td>
+        <td class="cell cy" title="Linux-only by design">✅</td>
+        <td class="cell cy" title="23 probes + BPF LSM">✅</td>
+        <td class="cell cy" title="SourceAnchor + CausalSet">✅</td>
+        <td class="cell cy" title="Ed25519 + offline xhelix-verify">✅</td>
+        <td class="cell cy" title="30+ day autonomous">✅</td>
+        <td class="cell cy" title="credbroker fangate">✅</td>
+        <td class="cell cn" title="by design — host EDR, not RASP">❌</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>What the Level-1 table is saying:</strong>
+    Every commercial tool ships kernel observation and partial source attribution. None ship a tamper-evident forensic chain. None mediate credentials at the syscall (they detect theft <em>after</em>; xhelix denies the read). Aikido is in a different lane &mdash; it&rsquo;s RASP, not host EDR &mdash; included to show xhelix is NOT a substitute for RASP, they&rsquo;re complementary.
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────────── -->
+    <p style="margin-top:20px">Continue to <a href="comparison-deep.html">Level 2 — Deep feature-by-feature comparison</a>.</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

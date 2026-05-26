@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Data Flow & Storage — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Architecture / Data Flow</div>
+    <h1>Data Flow & Storage</h1>
+    <p class="lead">Where data lives on the endpoint, where it lives on the hub, and why both are needed (not duplicate).</p>
+<h2 id="endpoint">Endpoint storage</h2>
+  <table>
+    <thead><tr><th>What</th><th>Where</th><th>Tech</th><th>Why local</th></tr></thead>
+    <tbody>
+      <tr><td>Recent events (24h ring)</td><td><code>/var/lib/xhelix/hot.db</code></td><td>SQLite (modernc.org/sqlite)</td><td>TUI needs instant query; hub round-trip too slow</td></tr>
+      <tr><td>Source anchors (30 day retention)</td><td><code>/var/lib/xhelix/source.db</code></td><td>Same SQLite</td><td>Attribution must survive restarts and offline periods</td></tr>
+      <tr><td>Forensic chain (signed)</td><td><code>/var/lib/xhelix/chain.db</code></td><td>SQLite + Ed25519</td><td>Authoritative legal evidence; hub gets stream copy only</td></tr>
+      <tr><td>BRP signed profiles</td><td><code>/etc/xhelix/brp/*.signed.json</code></td><td>JSON + Ed25519</td><td>Cached so endpoint enforces even if hub is down</td></tr>
+      <tr><td>Process tree</td><td>RAM</td><td>Hash map + LRU</td><td>Live state; recreated on restart</td></tr>
+      <tr><td>File taint</td><td>RAM</td><td>LRU map, 24h TTL</td><td>Short-lived; not worth uploading</td></tr>
+    </tbody>
+  </table>
+  <h2 id="hub">Hub storage</h2>
+  <p>TimescaleDB on self-hosted PostgreSQL. See the <a href="https://docs.timescale.com">TimescaleDB docs</a>.</p>
+  <table>
+    <thead><tr><th>Age</th><th>Storage</th><th>Per host per year</th></tr></thead>
+    <tbody>
+      <tr><td>0–24h</td><td>Raw, uncompressed, indexed</td><td class="num">~150 MB</td></tr>
+      <tr><td>24h–30d</td><td>Compressed (10×) chunks</td><td class="num">~3 GB</td></tr>
+      <tr><td>30d–90d</td><td>Hourly aggregates only</td><td class="num">~300 MB</td></tr>
+      <tr><td>90d–1y</td><td>Summary only</td><td class="num">~30 MB</td></tr>
+      <tr style="font-weight:600"><td>TOTAL</td><td>&nbsp;</td><td class="num">~3.5 GB/host/year</td></tr>
+    </tbody>
+  </table>
+  <p>Full details: <a href="lifecycle.html">Data Lifecycle &amp; Retention</a>.</p>
+  <p>Canonical doc: <code>docs/OTEL_AND_FULL_TELEMETRY_GRAPH_2026-05-23.md</code></p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

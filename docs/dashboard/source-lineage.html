@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Source Lineage — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Engines / Source Lineage</div>
+    <h1>Source Lineage</h1>
+    <p class="lead">Every event on the host is attributed to an authenticated entry point via SourceAnchor + CausalSet. Propagates across spawn, file taint, network connect, and ptrace injection.</p>
+<h2 id="concepts">Core concepts</h2>
+  <ul>
+    <li><strong>SourceAnchor</strong> — minted at every authenticated entry point (sshd accept, PAM session_open, sudo, cron fire, systemd start). Has unique 64-bit ID, parent_anchor_id for pivot chains, persisted to <code>/var/lib/xhelix/source.db</code>.</li>
+    <li><strong>CausalSet</strong> — bounded (16) deduplicated set of anchor IDs that contributed to a process. Becomes <em>Ambiguous</em> when ≥2 sources merge — the injection-detection signal.</li>
+    <li><strong>PrimarySource</strong> — most-recent contributing anchor on a process. Used for operator display and quick-score path.</li>
+    <li><strong>File taint</strong> — bounded LRU map of <code>path → (writer primary, writer CausalSet)</code>. Reader inherits writer set on tracked paths.</li>
+  </ul>
+  <h2 id="propagation">Propagation rules</h2>
+  <table>
+    <thead><tr><th>Event</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td>Process spawn</td><td>Child inherits parent PrimarySource + CausalSet</td></tr>
+      <tr><td>Identity event with PID</td><td>AttributeSource on the live PID — adds anchor to CausalSet, updates PrimarySource</td></tr>
+      <tr><td>FIM write</td><td>FileTaint records (path → writer source)</td></tr>
+      <tr><td>file_open read</td><td>FileTaint lookup; MergeCausalSet(reader_pid, writer set)</td></tr>
+      <tr><td>net_connect</td><td>Tags event with source_anchor_id + source_set_hash + ambiguous flag</td></tr>
+      <tr><td>ptrace_attach</td><td>Target inherits attacker source → Ambiguous flips → injection signal</td></tr>
+    </tbody>
+  </table>
+  <h2 id="cli">CLI surface</h2>
+  <pre><code>xhelixctl source list --limit 50
+xhelixctl source show 42
+xhelixctl source children 42
+xhelixctl source count</code></pre>
+  <p>Visual graph rendering (<code>xhelixctl source 42 graph</code>) is part of T04.</p>
+  <p>Canonical design: <code>docs/SOURCE_LINEAGE_ARCHITECTURE_2026-05-23.md</code></p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

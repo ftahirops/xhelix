@@ -4,6 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 See [AGENTS.md](AGENTS.md) for the canonical contributor guide — it covers build commands, project layout, architecture notes, and what's wired vs. only present in code. Read it before making non-trivial changes. The notes below are a Claude-Code-specific addendum.
 
+## Host context (durable)
+
+- **This machine IS the dev box `135.181.79.27`.** Local commands operate directly on it — do NOT use ssh / scp to reach the dev box. `sudo systemctl …`, `sudo cp … /usr/local/bin/`, deb installs all run locally here.
+- **Production is `65.108.246.67` — never touched** unless the user explicitly says "deploy to prod" in the current message. The dev/prod split is by IP, not by hostname.
+- Daemon binaries live at `/usr/local/bin/{xhelix,xhelixctl,xhelix-verify}`; state at `/var/lib/xhelix/`; logs at `/var/log/xhelix/`; config at `/etc/xhelix/xhelix.yaml`; service unit `xhelix.service`.
+
 ## Common commands
 
 ```bash

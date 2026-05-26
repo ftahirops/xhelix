@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Introduction — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="sidebar"></nav>
+
+  <main class="content">
+
+    <div class="breadcrumbs">
+      <a href="index.html">Docs</a>
+      <span class="sep">/</span>
+      Introduction
+    </div>
+
+    <h1>xhelix documentation</h1>
+    <p class="lead">
+      Open-source Linux server EDR. Three-plane architecture: endpoint enforces locally, hub analyzes deeply, curator alone changes trust.
+      This site is the canonical operator-and-developer reference.
+    </p>
+
+    <div class="page-meta">
+      <span class="tag">v2</span>
+      <span class="tag">last updated 2026-05-23</span>
+      <span class="tag">Apache-2.0</span>
+      <span class="tag">Linux ≥ 5.15</span>
+    </div>
+
+    <div class="callout note">
+      <div class="title">What xhelix is, in one sentence</div>
+      A program that watches what's happening on a Linux server, decides if any of it looks like an attack, and stops the dangerous parts before they cause damage &mdash; without trusting the application that's being attacked.
+    </div>
+
+    <h2 id="status">Current status</h2>
+
+    <div class="stats">
+      <div class="stat acc">
+        <div class="label">Architecture</div>
+        <div class="value">3 planes</div>
+        <div class="sub">Endpoint · Hub · Curator</div>
+      </div>
+      <div class="stat">
+        <div class="label">Build phase</div>
+        <div class="value">B</div>
+        <div class="sub">A complete · B in progress</div>
+      </div>
+      <div class="stat good">
+        <div class="label">Tests passing</div>
+        <div class="value">110</div>
+        <div class="sub">v2 net-new, all under -race</div>
+      </div>
+      <div class="stat">
+        <div class="label">Tasks done</div>
+        <div class="value">3 / 22</div>
+        <div class="sub">T01 · T02 · T03</div>
+      </div>
+      <div class="stat warn">
+        <div class="label">v1 baseline (measured)</div>
+        <div class="value">73% TP</div>
+        <div class="sub">8% FP · 482-test corpus</div>
+      </div>
+      <div class="stat good">
+        <div class="label">v2 target</div>
+        <div class="value">≥85% TP</div>
+        <div class="sub">&lt;3% FP overall · &lt;0.5% on BRP apps</div>
+      </div>
+    </div>
+
+    <h2 id="explore">Explore the docs</h2>
+    <p>Each section below links to its first page. The full table of contents is in the sidebar.</p>
+
+    <div class="cards">
+      <a class="card-link" href="three-plane.html">
+        <div class="card-title">Architecture →</div>
+        <div class="card-desc">Three planes, six diagrams, detection stack, data flow, the protect-our-own backstop.</div>
+        <div class="card-pages">5 pages · ~20 min read</div>
+      </a>
+
+      <a class="card-link" href="engines.html">
+        <div class="card-title">Engines &amp; Capabilities →</div>
+        <div class="card-desc">Per-engine reference: Source Lineage, BRP, Verification, Multi-Chain, Containment, Forensic Chain.</div>
+        <div class="card-pages">7 pages · ~25 min read</div>
+      </a>
+
+      <a class="card-link" href="telemetry.html">
+        <div class="card-title">Telemetry →</div>
+        <div class="card-desc">Class A/B/C upload model, app inventory fingerprinting, data lifecycle with retention tiers.</div>
+        <div class="card-pages">3 pages</div>
+      </a>
+
+      <a class="card-link" href="progress.html">
+        <div class="card-title">Operations →</div>
+        <div class="card-desc">Build progress across phases A-I, full task list with dependencies.</div>
+        <div class="card-pages">2 pages</div>
+      </a>
+
+      <a class="card-link" href="testing.html">
+        <div class="card-title">Testing &amp; Maturity →</div>
+        <div class="card-desc">v1 measured test results, per-function maturity grades, FP trajectory month-by-month.</div>
+        <div class="card-pages">3 pages</div>
+      </a>
+
+      <a class="card-link" href="comparison.html">
+        <div class="card-title">Comparison →</div>
+        <div class="card-desc">Honest comparison vs 9 commercial &amp; open-source tools, in three levels of depth, with sources cited.</div>
+        <div class="card-pages">3 pages · the new content</div>
+      </a>
+
+      <a class="card-link" href="risks.html">
+        <div class="card-title">Risks &amp; Tradeoffs →</div>
+        <div class="card-desc">22 risks from the locked scope, each with engineered mitigation. Honest non-promises.</div>
+        <div class="card-pages">3 pages</div>
+      </a>
+
+      <a class="card-link" href="mission.html">
+        <div class="card-title">Mission &amp; Scope →</div>
+        <div class="card-desc">What xhelix is for, what it explicitly is NOT for, and where it does and doesn't apply.</div>
+        <div class="card-pages">2 pages</div>
+      </a>
+    </div>
+
+    <h2 id="who">Who should read what</h2>
+
+    <table>
+      <thead><tr><th>If you are a...</th><th>Start here</th><th>Then</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>New operator</strong> evaluating xhelix</td>
+          <td><a href="mission.html">Mission &amp; Scope</a> → <a href="not-xhelix.html">What xhelix is NOT</a></td>
+          <td><a href="comparison.html">Comparison vs other tools</a></td>
+        </tr>
+        <tr>
+          <td><strong>Engineer</strong> contributing or auditing</td>
+          <td><a href="three-plane.html">Three-Plane Overview</a> → <a href="engines.html">Engine Catalog</a></td>
+          <td><a href="progress.html">Build Progress</a> + <a href="tasks.html">Task List</a></td>
+        </tr>
+        <tr>
+          <td><strong>Security analyst</strong> using xhelix output</td>
+          <td><a href="source-lineage.html">Source Lineage</a> → <a href="multi-chain.html">Multi-Chain Composition</a></td>
+          <td><a href="forensic-chain.html">Forensic Chain</a></td>
+        </tr>
+        <tr>
+          <td><strong>CTO / decision-maker</strong></td>
+          <td><a href="mission.html">Mission &amp; Scope</a> → <a href="comparison.html">Comparison summary</a></td>
+          <td><a href="honest-limits.html">Honest Non-Promises</a></td>
+        </tr>
+        <tr>
+          <td><strong>Skeptic</strong> who's seen too many EDR pitches</td>
+          <td><a href="not-xhelix.html">What xhelix is NOT</a> → <a href="risks.html">Risk register</a></td>
+          <td><a href="comparison-rates.html">Fact-based detection rates</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <div class="title">Honest framing applied throughout</div>
+      Numbers that aren't measured are marked as projections. Capabilities not yet shipped are marked as planned. Limits are stated alongside features. Vendor claims (theirs and ours) are clearly labeled. The full list of honest non-promises is at <a href="honest-limits.html">Honest Non-Promises</a>.
+    </div>
+
+    <div class="prevnext"></div>
+
+    <footer>
+      <strong>xhelix</strong> · open-source Linux server EDR · Apache-2.0 (Go) / GPL-2.0 (eBPF C) ·
+      <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a> ·
+      Generated from <code>docs/</code> directory in the repository.
+    </footer>
+  </main>
+
+  <aside class="toc"></aside>
+</div>
+
+</body>
+</html>

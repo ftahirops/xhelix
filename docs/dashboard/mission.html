@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mission & Scope — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Getting Started / Mission</div>
+    <h1>Mission & Scope</h1>
+    <p class="lead">Open-source Linux server EDR that observes via eBPF, attributes via source lineage, decides via BRP + verification engine, and contains via graduated reversible ladder — without trusting the application or any single component overriding the protect-our-own safety list.</p>
+<h2 id="mission">Mission statement</h2>
+<p>xhelix v2 evolves from a per-host detector into a fleet-aware, source-attributed, BRP-validated, verification-gated, causally-composed Linux server EDR with day-one protection via signed reference profiles and zero-effort operator onboarding.</p>
+<h2 id="targets">Threat surface targeted</h2>
+<ul>
+  <li><strong>Strong:</strong> credential theft, kernel-level secret access, persistence implantation, process injection, rootkit primitives, C2 / beacon traffic, source-attributed delayed persistence, forensic tamper</li>
+  <li><strong>Strong (post-exploit phase):</strong> webshell uploads, Log4Shell post-exploitation, SQLi-with-file-write, SSRF→IMDS, WordPress RCE outcomes</li>
+  <li><strong>Moderate:</strong> sensitive data exposure (FS-side), some DoS patterns</li>
+  <li><strong>Out of scope:</strong> see <a href="not-xhelix.html">What xhelix is NOT</a></li>
+</ul>
+<h2 id="ceilings">Honest ceilings</h2>
+<ol>
+  <li>Root attacker with kernel-module-load capability defeats any userspace EDR including xhelix</li>
+  <li>Memory-resident implant inside a legitimate process during a credential TTL window — ~30% residual undetected</li>
+  <li>Off-host attack infrastructure (CDN/proxy chains) — only as good as the threat-intel feed</li>
+  <li>Application-layer logic bugs (SQL injection at parameter parsing) — needs RASP, not host EDR</li>
+</ol>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

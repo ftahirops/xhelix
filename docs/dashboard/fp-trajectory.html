@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FP Trajectory — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Testing & Maturity / FP Trajectory</div>
+    <h1>FP Trajectory</h1>
+    <p class="lead">Per-category realistic FP ceilings + month-by-month improvement curve. Honest projections, not promises.</p>
+<h2 id="curve">Month-by-month projection (post v2 launch)</h2>
+<table>
+<thead><tr><th>Time from v2 launch</th><th>Coverage maturity</th><th class="num">App FP target</th><th class="num">Overall FP target</th></tr></thead>
+<tbody>
+  <tr><td>0 months</td><td>Initial library, low fleet diversity</td><td class="num">~2%</td><td class="num">~5%</td></tr>
+  <tr><td>3 months</td><td>More roles/versions, phase tuning</td><td class="num">~1%</td><td class="num">~3%</td></tr>
+  <tr><td>6 months</td><td>Config-aware role library mature</td><td class="num">~0.6%</td><td class="num">~2%</td></tr>
+  <tr><td>12 months</td><td>Version drift handled, larger fleet</td><td class="num">~0.4%</td><td class="num">~1.5%</td></tr>
+  <tr><td>24 months</td><td>Broad profile library curated</td><td class="num">~0.3%</td><td class="num">~1%</td></tr>
+</tbody>
+</table>
+<h2 id="categories">Per-category realistic ceilings</h2>
+<table>
+<thead><tr><th>Category</th><th class="num">Ceiling</th><th>Why</th></tr></thead>
+<tbody>
+  <tr><td>OS daemons (sshd / systemd / cron / sudo / polkit) with OS BRP + phase</td><td class="num">&lt;0.3%</td><td>tiny stable envelopes, signed packages, rare change</td></tr>
+  <tr><td>nginx / apache with config-aware BRP + phase</td><td class="num">&lt;0.5%</td><td>config declares 80% of intended behavior</td></tr>
+  <tr><td>middleware (php-fpm / gunicorn / uwsgi / node)</td><td class="num">&lt;1%</td><td>broader runtime surface, app variability</td></tr>
+  <tr><td>custom operator apps · local overlay only</td><td class="num">2 – 5%</td><td>no fleet consensus, one-off behavior</td></tr>
+  <tr><td>scripted runtimes / customer code</td><td class="num">3 – 8%</td><td>huge legitimate variability</td></tr>
+  <tr><td>LOLBins (sh, bash, python, awk, sed, find)</td><td class="num">5 – 10%</td><td>legit and malicious overlap heavily</td></tr>
+</tbody>
+</table>
+<div class="callout warn"><div class="title">These are projections</div>The actual numbers will be measured at end of Phase I (T13 corpus regression + T14 prod shadow). This page will be updated then with measured values + their delta from these projections.</div>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

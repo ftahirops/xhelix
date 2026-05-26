@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Detection Stack — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Architecture / Detection Stack</div>
+    <h1>Detection Stack</h1>
+    <p class="lead">Per-event flow through the three gates: L0 hard-deny, L1 BRP envelope verifier, L2 fast-clear. Most events stop at L1; 1% enter L2 deep composition.</p>
+<h2 id="flow">Event flow (verbal)</h2>
+  <ol>
+    <li><strong>Sensor emits</strong> — eBPF, FIM, identity tailer, capwatch.</li>
+    <li><strong>EAC admits</strong> — dedup + ordering + backpressure.</li>
+    <li><strong>Pipeline enriches</strong> — source_anchor_id stamp, proctree ancestry, BRP envelope tag.</li>
+    <li><strong>L0 gate</strong> — protected-paths / forever-suspicious → BLOCK + freeze + snapshot.</li>
+    <li><strong>L1 gate</strong> — 8 domain LLR scoring → 4-state verdict.</li>
+    <li><strong>L2 gate</strong> — Suspicious → multi-chain composition.</li>
+    <li><strong>Containment ladder</strong> — graduated response 1-9.</li>
+    <li><strong>Forensic chain</strong> — Ed25519 batch sign every event.</li>
+  </ol>
+  <div class="callout note"><div class="title">Diagram</div>The flow is rendered visually as Diagram 2 on the <a href="diagrams.html">Diagrams page</a>.</div>
+  <p>Canonical design doc: <code>docs/FINAL_SCOPE_V2_2026-05-23.md</code></p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Forensic Chain — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Engines / Forensic Chain</div>
+    <h1>Forensic Chain</h1>
+    <p class="lead">Ed25519-signed hash-chain of every event. Verifiable offline by xhelix-verify without any access to the daemon, hub, or curator. Tamper-evident even if the EDR itself is compromised.</p>
+<h2 id="structure">Structure</h2>
+<p>Events are batched (configurable; default 1000-event batches or 10-second windows). Each batch contains:</p>
+<ul>
+  <li>The events themselves (canonical JSON)</li>
+  <li>SHA-256 of the previous batch (hash chain)</li>
+  <li>Ed25519 signature of (events + prev_hash)</li>
+  <li>Signing epoch + signer key id</li>
+</ul>
+<h2 id="verify">Verification</h2>
+<p><code>xhelix-verify --chain /var/lib/xhelix/chain.db --pub /etc/xhelix/chain.pub</code></p>
+<p>Walks the chain, re-verifies each batch signature, re-computes hash chain. Names the exact tampered batch on failure.</p>
+<div class="callout note"><div class="title">Court-defensibility</div>The forensic chain stays on the endpoint as the authoritative record. The hub gets a stream copy for searchability, but the cryptographic evidence chain is local. If the hub is later proven compromised, endpoint chain still verifies independently.</div>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

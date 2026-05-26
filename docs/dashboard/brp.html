@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Behavioral Reference Profiles — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Engines / BRP</div>
+    <h1>Behavioral Reference Profiles</h1>
+    <p class="lead">Signed, version-pinned, config-aware profiles describing what each app should legitimately do. Cached locally on endpoint; updated only via curator-signed releases.</p>
+<h2 id="concepts">Core concepts</h2>
+  <ul>
+    <li><strong>ProfileKey</strong> — <code>(app, version_family, os_family, package_origin, role, feature_fingerprint, phase)</code>. Bucketing key for fleet consensus + runtime lookup.</li>
+    <li><strong>ConfigDerivedBehavior</strong> — what the operator config DECLARES: listen ports, read/write roots, allowed exec, declared upstreams, loaded modules.</li>
+    <li><strong>Confidence class</strong> — <code>Strict</code> (exact match), <code>StableFallback</code> (version-family match), <code>ConstrainedAdaptation</code> (role-only match), <code>Unprofiled</code> (no match → conservative log-only).</li>
+  </ul>
+  <h2 id="parsers">Shipped config parsers (T03)</h2>
+  <ul>
+    <li><code>pkg/brp/parser/nginx.go</code> — listen/upstream/lua/njs/grpc/fastcgi/scgi/uwsgi roles</li>
+    <li><code>pkg/brp/parser/apache.go</code> — VirtualHost/Listen/ProxyPass/LoadModule/CGI/WSGI</li>
+    <li><code>pkg/brp/parser/sshd.go</code> — Port/PermitRootLogin/AuthorizedKeysFile/Subsystem/Match</li>
+    <li><code>pkg/brp/parser/mysql.go</code> — bind-address/datadir/log_*/plugin_load/replication</li>
+    <li><code>pkg/brp/parser/phpfpm.go</code> — pool listen/user/pm/security.limit_extensions/php_admin_*</li>
+  </ul>
+  <h2 id="schema">Signed profile schema (T05)</h2>
+  <p>JSON with detached Ed25519 signature. Includes <code>signing_epoch</code>, <code>sample_count</code>, <code>fleet_count</code>, <code>version_range</code>, full Key + Behavior + parse warnings.</p>
+  <div class="callout good"><div class="title">Protect-our-own backstop is enforced at load</div>A profile claiming write/exec to a path in <code>ProtectedSystemPaths</code> is rejected by <code>Profile.Validate()</code> <em>before</em> signature verification. See <a href="protect-our-own.html">Protect-Our-Own Backstop</a>.</div>
+  <p>Canonical design: <code>docs/BEHAVIORAL_REFERENCE_PROFILES_2026-05-23.md</code></p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

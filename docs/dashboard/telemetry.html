@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telemetry Classes — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Telemetry / Class A B C</div>
+    <h1>Telemetry Classes</h1>
+    <p class="lead">Three telemetry classes determine what goes to the hub. Default: A=on, B=on, C=off. Compliance mode: all off — endpoint still works.</p>
+<h2 id="classes">Class definitions</h2>
+  <table>
+    <thead><tr><th>Class</th><th>Default</th><th>Per host per day</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td><strong>A — always send</strong></td><td>on</td><td class="num">&lt;1 MB</td><td>Alerts, hard-invariant violations, secret-touch summaries, lineage anchors, incident edges, app inventory fingerprint</td></tr>
+      <tr><td><strong>B — summarized</strong></td><td>on</td><td class="num">&lt;10 MB</td><td>Hourly aggregates: counts of benign reads/writes/outbound by class, BRP-envelope adherence %, resource percentiles</td></tr>
+      <tr><td><strong>C — opt-in burst</strong></td><td>off</td><td class="num">0 – 500 MB / incident</td><td>Full eBPF detail for 5 min around an alert, RWX memory snapshots, deep request-linked traces</td></tr>
+    </tbody>
+  </table>
+  <h2 id="control">Operator control</h2>
+  <p>Edit <code>/etc/xhelix/telemetry.yaml</code>. Compliance mode (no upload) keeps endpoint fully functional — only loses hub-side cross-host analysis.</p>
+  <pre><code># /etc/xhelix/telemetry.yaml
+classes:
+  a: true     # alerts + lineage + inventory
+  b: true     # hourly aggregates
+  c: false    # forensic bursts on incident</code></pre>
+  <p>Preview what would be uploaded: <code>xhelixctl telemetry preview</code></p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maturity Grades — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Testing & Maturity / Grades</div>
+    <h1>Maturity Grades</h1>
+    <p class="lead">Per-function grade reflects implementation completeness against scoped exit criteria, not just design.</p>
+<table>
+<thead><tr><th>Function</th><th>Status</th><th>Grade</th></tr></thead>
+<tbody>
+  <tr><td>eBPF kernel sensors (23 probes)</td><td><span class="badge b-done">SHIPPING</span></td><td><span class="grade grade-a">A</span></td></tr>
+  <tr><td>Forensic chain (Ed25519 + offline verify)</td><td><span class="badge b-done">SHIPPING</span></td><td><span class="grade grade-a">A</span></td></tr>
+  <tr><td>credbroker fangate</td><td><span class="badge b-done">SHIPPING</span></td><td><span class="grade grade-b">B</span></td></tr>
+  <tr><td>Posture (procfs + modsig)</td><td><span class="badge b-done">SHIPPING</span></td><td><span class="grade grade-b">B</span></td></tr>
+  <tr><td>Containment (Soak + PanicSwitch)</td><td><span class="badge b-done">SHIPPING</span></td><td><span class="grade grade-b">B</span></td></tr>
+  <tr><td>TUI operator interface</td><td><span class="badge b-done">SHIPPING</span></td><td><span class="grade grade-b">B</span></td></tr>
+  <tr><td>CEL rule engine + ruleset (80 rules)</td><td><span class="badge b-done">SHIPPING</span></td><td><span class="grade grade-c">C</span></td></tr>
+  <tr><td>Per-binary baselines (autobaseline)</td><td><span class="badge b-done">SHIPPING</span></td><td><span class="grade grade-c">C</span></td></tr>
+  <tr><td>Source Lineage Engine</td><td><span class="badge b-build">v2 substrate done (T01+T02)</span></td><td><span class="grade grade-c">C</span></td></tr>
+  <tr><td>BRP parsers (5 apps)</td><td><span class="badge b-build">SHIPPING (T03)</span></td><td><span class="grade grade-c">C</span></td></tr>
+  <tr><td>BRP schema + signing (T05)</td><td><span class="badge b-build">IN PROGRESS</span></td><td><span class="grade grade-d">D</span></td></tr>
+  <tr><td>Verification engine (8 domains)</td><td><span class="badge b-plan">PLANNED (T07)</span></td><td><span class="grade grade-na">—</span></td></tr>
+  <tr><td>Hub plane (TimescaleDB)</td><td><span class="badge b-plan">PLANNED (T18)</span></td><td><span class="grade grade-na">—</span></td></tr>
+  <tr><td>Curator plane (HSM signing)</td><td><span class="badge b-plan">PLANNED (T21)</span></td><td><span class="grade grade-na">—</span></td></tr>
+</tbody>
+</table>
+<h2 id="legend">Legend</h2>
+<p>
+<span class="grade grade-aplus">A+</span> production-hardened ·
+<span class="grade grade-a">A</span> shipping · solid ·
+<span class="grade grade-b">B</span> shipping with known gaps ·
+<span class="grade grade-c">C</span> works but limited coverage ·
+<span class="grade grade-d">D</span> partial · brittle ·
+<span class="grade grade-f">F</span> broken ·
+<span class="grade grade-na">—</span> not started
+</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

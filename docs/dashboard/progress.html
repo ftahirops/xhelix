@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Build Progress — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Operations / Progress</div>
+    <h1>Build Progress</h1>
+    <p class="lead">Build phases A through I with task status. Locked scope: 28 weeks single-engineer focused work, ~6-7 months calendar.</p>
+<h2 id="phases">Phases</h2>
+  <table>
+    <thead><tr><th>Phase</th><th>Description</th><th>Status</th><th>Tasks</th></tr></thead>
+    <tbody>
+      <tr><td><strong>A · Substrate</strong></td><td>Source anchors + propagation + BRP parsers</td><td><span class="badge b-done">DONE</span></td><td>T01 · T02 · T03</td></tr>
+      <tr><td><strong>B · Local gating</strong></td><td>Source graph + BRP runtime + phase detection</td><td><span class="badge b-build">IN PROGRESS</span></td><td>T04 · T05 · T06</td></tr>
+      <tr><td><strong>C · Verification engine</strong></td><td>L0/L1 endpoint · 8 domains · LLR · canonical hard-deny list</td><td><span class="badge b-plan">PLANNED</span></td><td>T07 · T08 · T09</td></tr>
+      <tr><td><strong>D · Local containment</strong></td><td>Endpoint quick-score multi-chain + containment ladder</td><td><span class="badge b-plan">PLANNED</span></td><td>T10 · T11 · T12</td></tr>
+      <tr><td><strong>F · Hub plane</strong></td><td>Telemetry ingest + storage + deep multi-chain</td><td><span class="badge b-plan">PLANNED</span></td><td>T17 · T18 · T19</td></tr>
+      <tr><td><strong>G · Curator plane</strong></td><td>Candidate generation + review + HSM signing + rollout</td><td><span class="badge b-plan">PLANNED</span></td><td>T20 · T21 · T22</td></tr>
+      <tr><td><strong>H · AI surface (LAST)</strong></td><td>Read-only query API + AI advisory workflow</td><td><span class="badge b-plan">PLANNED</span></td><td>T23 · T24</td></tr>
+      <tr><td><strong>I · Maturity &amp; hardening</strong></td><td>Corpus regression + shadow mode + soak gate + enforce-on</td><td><span class="badge b-plan">PLANNED</span></td><td>T13 · T14 · T15</td></tr>
+    </tbody>
+  </table>
+  <p>Full task list with dependencies: <a href="tasks.html">Task List</a>.</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

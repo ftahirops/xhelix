@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Architecture Diagrams — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Architecture <span class="sep">/</span> Diagrams</div>
+    <h1>Architecture diagrams</h1>
+    <p class="lead">Six diagrams covering the system from three angles: the three planes in concrete form, the per-event pipeline on the endpoint, the source-attribution tree, the three correlation levels, multi-chain convergence, and the data lifecycle with retention tiers.</p>
+  <!-- ARCHITECTURE DIAGRAMS -->
+  <h2 id="diagrams">2.5 Architecture Diagrams</h2>
+  <p>Six diagrams showing how data and decisions flow through the system. Each one captures a different layer of the same architecture.</p>
+
+  <!-- DIAGRAM 1: 3-plane system view -->
+  <div class="svgwrap">
+    <h4>1. The three planes &mdash; what each owns, what flows between them</h4>
+    <svg viewBox="0 0 880 460" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#62d4ff"/>
+        </marker>
+        <marker id="arr-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#ffd56b"/>
+        </marker>
+        <marker id="arr-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#6effc0"/>
+        </marker>
+      </defs>
+
+      <!-- Endpoints (3 stacked) -->
+      <g transform="translate(20, 30)">
+        <text class="t-label" x="120" y="-8" text-anchor="middle">ENDPOINTS (one per server)</text>
+        <rect class="box-end" x="0" y="0" width="240" height="110" rx="6"/>
+        <text class="t-title" x="120" y="22" text-anchor="middle">server-A (web)</text>
+        <text class="t-sub" x="14" y="42">• 23 eBPF probes</text>
+        <text class="t-sub" x="14" y="58">• /var/lib/xhelix/source.db</text>
+        <text class="t-sub" x="14" y="74">• cached signed BRPs</text>
+        <text class="t-sub" x="14" y="90">• L0 hard-deny &middot; L1 fast verify</text>
+        <text class="t-mono" x="14" y="104">autonomous 30+ days offline</text>
+
+        <rect class="box-end" x="0" y="125" width="240" height="60" rx="6"/>
+        <text class="t-title" x="120" y="146" text-anchor="middle">server-B (db)</text>
+        <text class="t-sub" x="120" y="166" text-anchor="middle">same stack</text>
+        <text class="t-mono" x="120" y="180" text-anchor="middle">independent enforcement</text>
+
+        <rect class="box-end" x="0" y="200" width="240" height="60" rx="6"/>
+        <text class="t-title" x="120" y="221" text-anchor="middle">server-C (mail)</text>
+        <text class="t-sub" x="120" y="241" text-anchor="middle">same stack</text>
+        <text class="t-mono" x="120" y="255" text-anchor="middle">N hosts in fleet</text>
+      </g>
+
+      <!-- Hub -->
+      <g transform="translate(335, 75)">
+        <text class="t-label" x="120" y="-8" text-anchor="middle">HUB (one per fleet)</text>
+        <rect class="box-hub" x="0" y="0" width="240" height="190" rx="6"/>
+        <text class="t-title" x="120" y="22" text-anchor="middle">xhub</text>
+        <text class="t-sub" x="14" y="44">• mTLS telemetry ingest</text>
+        <text class="t-sub" x="14" y="60">• TimescaleDB on Postgres</text>
+        <text class="t-sub" x="14" y="76">• cross-host source graph</text>
+        <text class="t-sub" x="14" y="92">• L2 deep multi-chain</text>
+        <text class="t-sub" x="14" y="108">• per-source aggregate scoring</text>
+        <text class="t-sub" x="14" y="124">• AI query API surface</text>
+        <text class="t-sub" x="14" y="140">• candidate BRP proposal</text>
+        <line x1="14" y1="152" x2="226" y2="152" class="arrow-dim"/>
+        <text class="t-mono" x="120" y="170" text-anchor="middle" style="fill:#ff7a8a">CANNOT publish policy</text>
+        <text class="t-sub" x="120" y="184" text-anchor="middle">analyses, recommends only</text>
+      </g>
+
+      <!-- Curator -->
+      <g transform="translate(650, 75)">
+        <text class="t-label" x="120" y="-8" text-anchor="middle">CURATOR (isolated machine)</text>
+        <rect class="box-cur" x="0" y="0" width="200" height="190" rx="6"/>
+        <text class="t-title" x="100" y="22" text-anchor="middle">xcurator</text>
+        <text class="t-sub" x="14" y="44">• candidate review queue</text>
+        <text class="t-sub" x="14" y="60">• 2-person approval</text>
+        <text class="t-sub" x="14" y="76">• HSM-backed signing</text>
+        <text class="t-sub" x="14" y="92">• staged ring rollout</text>
+        <text class="t-sub" x="14" y="108">• auto-rollback on FP spike</text>
+        <line x1="14" y1="124" x2="186" y2="124" class="arrow-dim"/>
+        <text class="t-mono" x="100" y="142" text-anchor="middle" style="fill:#6effc0">ONLY plane that</text>
+        <text class="t-mono" x="100" y="156" text-anchor="middle" style="fill:#6effc0">can change trust</text>
+        <text class="t-sub" x="100" y="178" text-anchor="middle">air-gappable</text>
+      </g>
+
+      <!-- Arrows: endpoints → hub (telemetry) -->
+      <path d="M 260 80 Q 295 80 335 110" class="arrow" marker-end="url(#arr-acc)"/>
+      <path d="M 260 155 L 335 165" class="arrow" marker-end="url(#arr-acc)"/>
+      <path d="M 260 230 Q 295 230 335 220" class="arrow" marker-end="url(#arr-acc)"/>
+      <text class="t-sub" x="270" y="100">classified A/B/C telemetry</text>
+      <text class="t-sub" x="270" y="248">(compressed, mTLS)</text>
+
+      <!-- Arrow: hub → curator (candidate) -->
+      <path d="M 575 130 L 650 130" class="arrow-warn" marker-end="url(#arr-warn)"/>
+      <text class="t-sub" x="585" y="118">candidate BRP</text>
+      <text class="t-sub" x="585" y="145">(recommend only)</text>
+
+      <!-- Arrow: curator → endpoints (signed policy down) -->
+      <path d="M 750 265 Q 750 350 400 380 Q 250 390 140 320 L 140 290" class="arrow-good" marker-end="url(#arr-good)"/>
+      <text class="t-sub" x="380" y="395" text-anchor="middle">signed BRP releases &middot; verified at endpoint by pinned trust root &middot; staged ring rollout</text>
+
+      <!-- Bottom safety note -->
+      <g transform="translate(20, 415)">
+        <rect class="box-bad" x="0" y="0" width="840" height="30" rx="4"/>
+        <text class="t-title" x="420" y="20" text-anchor="middle">SAFETY INVARIANT &mdash; the endpoint never depends on the hub being alive. Hub down 30 days → endpoint still protects.</text>
+      </g>
+    </svg>
+    <div class="caption">Three independent planes. Each box can only do what its role allows. Compromise of one plane cannot subvert another.</div>
+  </div>
+
+  <!-- DIAGRAM 2: Endpoint event lifecycle -->
+  <div class="svgwrap">
+    <h4>2. What happens to every kernel event on the endpoint</h4>
+    <svg viewBox="0 0 880 440" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr2-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#62d4ff"/>
+        </marker>
+        <marker id="arr2-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff7a8a"/>
+        </marker>
+        <marker id="arr2-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#6effc0"/>
+        </marker>
+      </defs>
+
+      <!-- Step 1: Kernel sensors -->
+      <g transform="translate(20, 30)">
+        <rect class="box-acc" x="0" y="0" width="180" height="80" rx="6"/>
+        <text class="t-title" x="90" y="20" text-anchor="middle">1. eBPF sensors</text>
+        <text class="t-sub" x="12" y="40">23 probes in kernel</text>
+        <text class="t-sub" x="12" y="55">spawn / file / net / cap</text>
+        <text class="t-mono" x="90" y="73" text-anchor="middle">~500-2000 events/sec</text>
+      </g>
+
+      <!-- Step 2: EAC -->
+      <g transform="translate(225, 30)">
+        <rect class="box-neutral" x="0" y="0" width="170" height="80" rx="6"/>
+        <text class="t-title" x="85" y="20" text-anchor="middle">2. EAC</text>
+        <text class="t-sub" x="85" y="40" text-anchor="middle">dedup, ordering</text>
+        <text class="t-sub" x="85" y="55" text-anchor="middle">backpressure</text>
+        <text class="t-mono" x="85" y="73" text-anchor="middle">~95% dedup at burst</text>
+      </g>
+
+      <!-- Step 3: Enrichment -->
+      <g transform="translate(420, 30)">
+        <rect class="box-acc" x="0" y="0" width="200" height="80" rx="6"/>
+        <text class="t-title" x="100" y="20" text-anchor="middle">3. Pipeline.Handle</text>
+        <text class="t-sub" x="12" y="40">+ source_anchor_id</text>
+        <text class="t-sub" x="12" y="55">+ proctree ancestry</text>
+        <text class="t-sub" x="12" y="68">+ BRP envelope tag</text>
+        <text class="t-mono" x="100" y="78" text-anchor="middle">&lt;10ms p99</text>
+      </g>
+
+      <!-- 3 gates -->
+      <g transform="translate(645, 30)">
+        <rect class="box-bad" x="0" y="0" width="220" height="20" rx="3"/>
+        <text class="t-title" x="110" y="14" text-anchor="middle">GATE L0 &mdash; HARD DENY</text>
+      </g>
+      <g transform="translate(645, 60)">
+        <rect class="box-warn" x="0" y="0" width="220" height="20" rx="3"/>
+        <text class="t-title" x="110" y="14" text-anchor="middle">GATE L1 &mdash; BRP ENVELOPE</text>
+      </g>
+      <g transform="translate(645, 90)">
+        <rect class="box-good" x="0" y="0" width="220" height="20" rx="3"/>
+        <text class="t-title" x="110" y="14" text-anchor="middle">GATE L2 &mdash; FAST CLEAR</text>
+      </g>
+
+      <!-- Arrows step 1→2→3 -->
+      <path d="M 200 70 L 225 70" class="arrow" marker-end="url(#arr2-acc)"/>
+      <path d="M 395 70 L 420 70" class="arrow" marker-end="url(#arr2-acc)"/>
+      <path d="M 620 70 L 645 70" class="arrow" marker-end="url(#arr2-acc)"/>
+
+      <!-- Outcomes -->
+      <g transform="translate(80, 165)">
+        <rect class="box-bad" x="0" y="0" width="180" height="80" rx="6"/>
+        <text class="t-title" x="90" y="20" text-anchor="middle">7. Immediate containment</text>
+        <text class="t-sub" x="14" y="40">kill / block creds / netban</text>
+        <text class="t-sub" x="14" y="55">quarantine / freeze account</text>
+        <text class="t-mono" x="90" y="73" text-anchor="middle">&lt;2s decision→enforce</text>
+      </g>
+
+      <g transform="translate(285, 165)">
+        <rect class="box-warn" x="0" y="0" width="180" height="80" rx="6"/>
+        <text class="t-title" x="90" y="20" text-anchor="middle">6. L2 deep compose</text>
+        <text class="t-sub" x="14" y="40">5 local + 3 hub chains</text>
+        <text class="t-sub" x="14" y="55">convergence scoring</text>
+        <text class="t-mono" x="90" y="73" text-anchor="middle">~1% of events reach here</text>
+      </g>
+
+      <g transform="translate(490, 165)">
+        <rect class="box-good" x="0" y="0" width="180" height="80" rx="6"/>
+        <text class="t-title" x="90" y="20" text-anchor="middle">5. Silent pass</text>
+        <text class="t-sub" x="14" y="40">in-envelope event</text>
+        <text class="t-sub" x="14" y="55">~99% of all events</text>
+        <text class="t-mono" x="90" y="73" text-anchor="middle">cheapest path</text>
+      </g>
+
+      <g transform="translate(695, 165)">
+        <rect class="box-acc" x="0" y="0" width="170" height="80" rx="6"/>
+        <text class="t-title" x="85" y="20" text-anchor="middle">4. Chain.Sign</text>
+        <text class="t-sub" x="85" y="40" text-anchor="middle">Ed25519 batch sign</text>
+        <text class="t-sub" x="85" y="55" text-anchor="middle">every event</text>
+        <text class="t-mono" x="85" y="73" text-anchor="middle">forensic-grade evidence</text>
+      </g>
+
+      <!-- Arrows gates → outcomes -->
+      <path d="M 755 50 Q 755 130 170 165" class="arrow-bad" marker-end="url(#arr2-bad)"/>
+      <text class="t-sub" x="450" y="125" text-anchor="middle" style="fill:#ff7a8a">L0 fires → kill chain</text>
+      <path d="M 755 80 Q 600 125 375 165" class="arrow-warn"/>
+      <text class="t-sub" x="600" y="148" style="fill:#ffd56b">L1 suspicious → compose</text>
+      <path d="M 755 100 Q 700 140 580 165" class="arrow-good" marker-end="url(#arr2-good)"/>
+      <text class="t-sub" x="650" y="160" style="fill:#6effc0">in-envelope</text>
+      <path d="M 755 120 L 780 165" class="arrow" marker-end="url(#arr2-acc)"/>
+
+      <!-- Storage panel -->
+      <g transform="translate(20, 280)">
+        <rect class="box-neutral" x="0" y="0" width="840" height="135" rx="6"/>
+        <text class="t-label" x="14" y="20">ENDPOINT LOCAL STORAGE (every event lands here too):</text>
+
+        <rect class="box-acc" x="14" y="32" width="195" height="85" rx="4"/>
+        <text class="t-title" x="111" y="50" text-anchor="middle">Hot store</text>
+        <text class="t-sub" x="111" y="68" text-anchor="middle">SQLite, 24h ring</text>
+        <text class="t-mono" x="111" y="86" text-anchor="middle">/var/lib/xhelix/hot.db</text>
+        <text class="t-sub" x="111" y="104" text-anchor="middle">~150 MB raw / 24h</text>
+
+        <rect class="box-acc" x="225" y="32" width="195" height="85" rx="4"/>
+        <text class="t-title" x="322" y="50" text-anchor="middle">Source anchors</text>
+        <text class="t-sub" x="322" y="68" text-anchor="middle">SQLite, 30d retention</text>
+        <text class="t-mono" x="322" y="86" text-anchor="middle">/var/lib/xhelix/source.db</text>
+        <text class="t-sub" x="322" y="104" text-anchor="middle">persistent across restart</text>
+
+        <rect class="box-acc" x="436" y="32" width="195" height="85" rx="4"/>
+        <text class="t-title" x="533" y="50" text-anchor="middle">Forensic chain</text>
+        <text class="t-sub" x="533" y="68" text-anchor="middle">Ed25519-signed batches</text>
+        <text class="t-mono" x="533" y="86" text-anchor="middle">/var/lib/xhelix/chain.db</text>
+        <text class="t-sub" x="533" y="104" text-anchor="middle">offline-verifiable</text>
+
+        <rect class="box-good" x="647" y="32" width="180" height="85" rx="4"/>
+        <text class="t-title" x="737" y="50" text-anchor="middle">→ Hub upload</text>
+        <text class="t-sub" x="737" y="68" text-anchor="middle">Class A (always)</text>
+        <text class="t-sub" x="737" y="82" text-anchor="middle">Class B (hourly agg)</text>
+        <text class="t-sub" x="737" y="96" text-anchor="middle">Class C (incident burst)</text>
+        <text class="t-mono" x="737" y="112" text-anchor="middle">~1-30 MB/host/day</text>
+      </g>
+    </svg>
+    <div class="caption">Every event flows through the same 3-gate pipeline. 99% are cleared silently at L2; 1% compose into incidents at L1; rare hard-deny matches kill the chain at L0 immediately.</div>
+  </div>
+
+  <!-- DIAGRAM 3: Source anchor propagation tree -->
+  <div class="svgwrap">
+    <h4>3. Source attribution &mdash; one SSH login's full activity tree</h4>
+    <svg viewBox="0 0 880 460" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr3-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#62d4ff"/>
+        </marker>
+        <marker id="arr3-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff7a8a"/>
+        </marker>
+      </defs>
+
+      <!-- Root: SSH session anchor -->
+      <g transform="translate(290, 15)">
+        <rect class="box-acc" x="0" y="0" width="300" height="55" rx="6"/>
+        <text class="t-title" x="150" y="20" text-anchor="middle">SourceAnchor #42 &middot; SSH session</text>
+        <text class="t-mono" x="150" y="38" text-anchor="middle">alice from 1.2.3.4 &middot; 2026-05-23 10:00 UTC</text>
+        <text class="t-sub" x="150" y="50" text-anchor="middle">key=sha256:abc... &middot; login_uid=1000</text>
+      </g>
+
+      <!-- bash -->
+      <g transform="translate(330, 95)">
+        <rect class="box-end" x="0" y="0" width="220" height="40" rx="5"/>
+        <text class="t-title" x="110" y="18" text-anchor="middle">PID 200 bash</text>
+        <text class="t-mono" x="110" y="32" text-anchor="middle">+0.0s &middot; inherits anchor 42</text>
+      </g>
+      <line x1="440" y1="70" x2="440" y2="95" class="arrow" marker-end="url(#arr3-acc)"/>
+
+      <!-- bash branches -->
+      <!-- LEFT branch: file reads -->
+      <g transform="translate(20, 165)">
+        <rect class="box-good" x="0" y="0" width="170" height="35" rx="4"/>
+        <text class="t-sub" x="85" y="14" text-anchor="middle" style="fill:#fff">FILE READ ~/.bashrc</text>
+        <text class="t-mono" x="85" y="28" text-anchor="middle">tier=user_data</text>
+      </g>
+      <g transform="translate(20, 210)">
+        <rect class="box-good" x="0" y="0" width="170" height="35" rx="4"/>
+        <text class="t-sub" x="85" y="14" text-anchor="middle" style="fill:#fff">FILE READ /etc/passwd</text>
+        <text class="t-mono" x="85" y="28" text-anchor="middle">tier=public</text>
+      </g>
+
+      <!-- MIDDLE branch: sudo escalation -->
+      <g transform="translate(220, 165)">
+        <rect class="box-warn" x="0" y="0" width="220" height="40" rx="5"/>
+        <text class="t-title" x="110" y="18" text-anchor="middle">PID 250 sudo &middot; setuid 1000→0</text>
+        <text class="t-mono" x="110" y="32" text-anchor="middle">+30s &middot; CAP_SETUID used</text>
+      </g>
+      <!-- new sudo anchor -->
+      <g transform="translate(220, 215)">
+        <rect class="box-acc" x="0" y="0" width="220" height="40" rx="5"/>
+        <text class="t-title" x="110" y="18" text-anchor="middle">SourceAnchor #43</text>
+        <text class="t-mono" x="110" y="32" text-anchor="middle">parent=42 &middot; alice→root</text>
+      </g>
+      <line x1="330" y1="205" x2="330" y2="215" class="arrow"/>
+      <!-- root bash -->
+      <g transform="translate(220, 265)">
+        <rect class="box-end" x="0" y="0" width="220" height="40" rx="5"/>
+        <text class="t-title" x="110" y="18" text-anchor="middle">PID 260 bash (root)</text>
+        <text class="t-mono" x="110" y="32" text-anchor="middle">+30.1s &middot; inherits anchor 43</text>
+      </g>
+      <line x1="330" y1="255" x2="330" y2="265" class="arrow"/>
+
+      <!-- root bash's writes — BLOCKED -->
+      <g transform="translate(220, 320)">
+        <rect class="box-bad" x="0" y="0" width="220" height="50" rx="5"/>
+        <text class="t-title" x="110" y="18" text-anchor="middle">FILE WRITE /etc/cron.d/backup</text>
+        <text class="t-mono" x="110" y="34" text-anchor="middle" style="fill:#ff7a8a">L0 hard-deny FIRED</text>
+        <text class="t-sub" x="110" y="46" text-anchor="middle">→ BLOCKED + alert + freeze</text>
+      </g>
+      <line x1="330" y1="305" x2="330" y2="320" class="arrow-bad"/>
+
+      <!-- RIGHT branch: curl -->
+      <g transform="translate(470, 165)">
+        <rect class="box-end" x="0" y="0" width="220" height="40" rx="5"/>
+        <text class="t-title" x="110" y="18" text-anchor="middle">PID 270 curl</text>
+        <text class="t-mono" x="110" y="32" text-anchor="middle">+50s &middot; inherits anchor 42</text>
+      </g>
+      <line x1="440" y1="135" x2="580" y2="165" class="arrow"/>
+
+      <g transform="translate(470, 215)">
+        <rect class="box-bad" x="0" y="0" width="220" height="50" rx="5"/>
+        <text class="t-title" x="110" y="18" text-anchor="middle">FILE READ /root/.aws/credentials</text>
+        <text class="t-mono" x="110" y="34" text-anchor="middle" style="fill:#ff7a8a">credbroker fangate fired</text>
+        <text class="t-sub" x="110" y="46" text-anchor="middle">→ BLOCKED (EACCES returned)</text>
+      </g>
+      <line x1="580" y1="205" x2="580" y2="215" class="arrow-bad"/>
+
+      <g transform="translate(470, 280)">
+        <rect class="box-warn" x="0" y="0" width="220" height="50" rx="5"/>
+        <text class="t-title" x="110" y="18" text-anchor="middle">NETWORK CONNECT 5.6.7.8:443</text>
+        <text class="t-mono" x="110" y="34" text-anchor="middle">dest_class=unknown</text>
+        <text class="t-sub" x="110" y="46" text-anchor="middle">→ tagged Suspicious, enters L2</text>
+      </g>
+
+      <line x1="580" y1="265" x2="580" y2="280" class="arrow-warn"/>
+      <line x1="105" y1="135" x2="105" y2="165" class="arrow"/>
+      <line x1="105" y1="200" x2="105" y2="210" class="arrow"/>
+      <line x1="330" y1="135" x2="330" y2="165" class="arrow"/>
+
+      <!-- bottom callout -->
+      <g transform="translate(20, 400)">
+        <rect class="box-acc" x="0" y="0" width="840" height="45" rx="4"/>
+        <text class="t-title" x="14" y="20">Query: <tspan class="t-mono">xhelixctl source 42 graph --depth 10</tspan></text>
+        <text class="t-sub" x="14" y="36">→ returns this entire tree, regardless of PID churn, sudo escalation, or daemon restart. The anchor outlives all of them.</text>
+      </g>
+    </svg>
+    <div class="caption">One authenticated entry point (the SSH login) anchors EVERY child action. The anchor survives PID reuse, sudo escalation, and daemon restarts.</div>
+  </div>
+
+  <!-- DIAGRAM 4: Three correlation levels -->
+  <div class="svgwrap">
+    <h4>4. Three correlation levels &mdash; cost vs coverage</h4>
+    <svg viewBox="0 0 880 320" xmlns="http://www.w3.org/2000/svg">
+      <!-- L1 -->
+      <g transform="translate(40, 30)">
+        <rect class="box-good" x="0" y="0" width="800" height="70" rx="5"/>
+        <text class="t-title" x="14" y="22">L1 &mdash; PID ancestry</text>
+        <text class="t-mono" x="170" y="22" style="fill:#6effc0">cost: O(1) hash lookup &middot; runs on EVERY event</text>
+        <text class="t-sub" x="14" y="42">For each event, automatic via pkg/proctree: walk parent chain back to PID 1.</text>
+        <text class="t-sub" x="14" y="58">CATCHES: process-tree-shape attacks (web user → curl → /tmp script → bash).</text>
+      </g>
+
+      <!-- L2 -->
+      <g transform="translate(40, 115)">
+        <rect class="box-warn" x="0" y="0" width="800" height="70" rx="5"/>
+        <text class="t-title" x="14" y="22">L2 &mdash; Source attribution</text>
+        <text class="t-mono" x="220" y="22" style="fill:#ffd56b">cost: indexed SQL &middot; runs per session, on demand</text>
+        <text class="t-sub" x="14" y="42">Query: SELECT * FROM events WHERE source_anchor_id = X → entire session activity.</text>
+        <text class="t-sub" x="14" y="58">CATCHES: delayed persistence (cron firing binary alice's session wrote 3 weeks ago), pivots across PID reuse.</text>
+      </g>
+
+      <!-- L3 -->
+      <g transform="translate(40, 200)">
+        <rect class="box-bad" x="0" y="0" width="800" height="90" rx="5"/>
+        <text class="t-title" x="14" y="22">L3 &mdash; Multi-chain convergence</text>
+        <text class="t-mono" x="280" y="22" style="fill:#ff7a8a">cost: recursive CTE &middot; runs every minute on hub</text>
+        <text class="t-sub" x="14" y="42">8 parallel chains: process, file_read, file_write, secret_access, network_egress, identity, persistence, privilege.</text>
+        <text class="t-sub" x="14" y="58">Incident emerges when ≥2 chains converge on (same source, same asset class, same destination class).</text>
+        <text class="t-sub" x="14" y="78">CATCHES: multi-step, low-individual-signal attacks. Cross-host pivots when hub is reachable.</text>
+      </g>
+    </svg>
+    <div class="caption">Three levels run in parallel. 99% of events stop at L1 (cleared). ~1% enter L2 attribution. The tiny fraction L2 flags as Suspicious get pulled into L3 deep composition on the hub.</div>
+  </div>
+
+  <!-- DIAGRAM 5: Multi-chain convergence -->
+  <div class="svgwrap">
+    <h4>5. Multi-chain convergence &mdash; how an incident emerges</h4>
+    <svg viewBox="0 0 880 420" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr5-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff7a8a"/>
+        </marker>
+      </defs>
+
+      <!-- 3 chains as horizontal swimlanes -->
+      <g transform="translate(20, 30)">
+        <text class="t-label" x="0" y="14">IDENTITY CHAIN</text>
+        <rect class="box-neutral" x="0" y="20" width="500" height="50" rx="4"/>
+        <rect class="box-warn" x="50" y="28" width="200" height="34" rx="3"/>
+        <text class="t-sub" x="150" y="42" text-anchor="middle" style="fill:#fff">SSH success from 1.2.3.4</text>
+        <text class="t-mono" x="150" y="56" text-anchor="middle">geo=RU &middot; never seen</text>
+      </g>
+
+      <g transform="translate(20, 110)">
+        <text class="t-label" x="0" y="14">SECRET ACCESS CHAIN</text>
+        <rect class="box-neutral" x="0" y="20" width="500" height="50" rx="4"/>
+        <rect class="box-warn" x="170" y="28" width="200" height="34" rx="3"/>
+        <text class="t-sub" x="270" y="42" text-anchor="middle" style="fill:#fff">read /root/.aws/credentials</text>
+        <text class="t-mono" x="270" y="56" text-anchor="middle">asset_class=credentials</text>
+      </g>
+
+      <g transform="translate(20, 190)">
+        <text class="t-label" x="0" y="14">NETWORK EGRESS CHAIN</text>
+        <rect class="box-neutral" x="0" y="20" width="500" height="50" rx="4"/>
+        <rect class="box-warn" x="280" y="28" width="200" height="34" rx="3"/>
+        <text class="t-sub" x="380" y="42" text-anchor="middle" style="fill:#fff">TLS connect 5.6.7.8:443</text>
+        <text class="t-mono" x="380" y="56" text-anchor="middle">dest_class=unknown</text>
+      </g>
+
+      <!-- shared anchor -->
+      <g transform="translate(540, 80)">
+        <rect class="box-acc" x="0" y="0" width="300" height="140" rx="6"/>
+        <text class="t-title" x="150" y="22" text-anchor="middle">Source #42 (alice)</text>
+        <text class="t-sub" x="150" y="42" text-anchor="middle">Same anchor on all 3 chains</text>
+        <text class="t-mono" x="150" y="68" text-anchor="middle" style="fill:#62d4ff">chain_count = 3</text>
+        <text class="t-mono" x="150" y="86" text-anchor="middle" style="fill:#62d4ff">threshold = 2</text>
+        <text class="t-sub" x="150" y="110" text-anchor="middle">→ convergence triggered</text>
+        <text class="t-sub" x="150" y="128" text-anchor="middle">→ incident composed</text>
+      </g>
+
+      <!-- arrows -->
+      <line x1="250" y1="45" x2="540" y2="110" class="arrow-warn"/>
+      <line x1="370" y1="125" x2="540" y2="150" class="arrow-warn"/>
+      <line x1="480" y1="205" x2="540" y2="190" class="arrow-warn"/>
+
+      <!-- INCIDENT box -->
+      <g transform="translate(220, 280)">
+        <rect class="box-bad" x="0" y="0" width="440" height="80" rx="6"/>
+        <text class="t-title" x="220" y="22" text-anchor="middle" style="fill:#ff7a8a">INCIDENT &mdash; credential exfiltration</text>
+        <text class="t-sub" x="14" y="42">intent=data_exfiltration &middot; asset=credentials &middot; destination=external</text>
+        <text class="t-sub" x="14" y="58">verification: 3 independent chains agree &middot; cross_signal_score=high</text>
+        <text class="t-mono" x="14" y="74" style="fill:#ff7a8a">containment ladder → step 4 (block credbroker) + step 5 (netban 5.6.7.8)</text>
+      </g>
+      <line x1="690" y1="220" x2="500" y2="280" class="arrow-bad" marker-end="url(#arr5-bad)"/>
+
+      <!-- bottom rationale -->
+      <g transform="translate(20, 380)">
+        <text class="t-sub" x="0" y="14">Any one chain alone = borderline alert. Three chains converging on the same anchor = undeniable incident. THIS is why we don't fire per-event alerts.</text>
+      </g>
+    </svg>
+    <div class="caption">An attacker can hide one suspicious step. They cannot hide three independent telemetry chains all pointing at the same authenticated session.</div>
+  </div>
+
+  <!-- DIAGRAM 6: Data lifecycle with retention tiers -->
+  <div class="svgwrap">
+    <h4>6. Data lifecycle &mdash; from kernel event to long-term archive</h4>
+    <svg viewBox="0 0 880 430" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr6-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#62d4ff"/>
+        </marker>
+      </defs>
+
+      <!-- Stage 1 -->
+      <g transform="translate(20, 30)">
+        <rect class="box-acc" x="0" y="0" width="140" height="65" rx="5"/>
+        <text class="t-title" x="70" y="20" text-anchor="middle">Raw eBPF</text>
+        <text class="t-sub" x="70" y="38" text-anchor="middle">500-2000 ev/sec</text>
+        <text class="t-mono" x="70" y="56" text-anchor="middle">~5 GB/day</text>
+      </g>
+
+      <g transform="translate(190, 30)">
+        <rect class="box-acc" x="0" y="0" width="140" height="65" rx="5"/>
+        <text class="t-title" x="70" y="20" text-anchor="middle">+ EAC dedup</text>
+        <text class="t-sub" x="70" y="38" text-anchor="middle">95% dropped</text>
+        <text class="t-mono" x="70" y="56" text-anchor="middle">~250 MB/day</text>
+      </g>
+
+      <g transform="translate(360, 30)">
+        <rect class="box-acc" x="0" y="0" width="140" height="65" rx="5"/>
+        <text class="t-title" x="70" y="20" text-anchor="middle">+ baseline cut</text>
+        <text class="t-sub" x="70" y="38" text-anchor="middle">delta-only</text>
+        <text class="t-mono" x="70" y="56" text-anchor="middle">~150 MB/day</text>
+      </g>
+
+      <g transform="translate(530, 30)">
+        <rect class="box-acc" x="0" y="0" width="140" height="65" rx="5"/>
+        <text class="t-title" x="70" y="20" text-anchor="middle">Class A/B/C split</text>
+        <text class="t-sub" x="70" y="38" text-anchor="middle">A: 1 MB/day to hub</text>
+        <text class="t-mono" x="70" y="56" text-anchor="middle">~95% drop on wire</text>
+      </g>
+
+      <g transform="translate(700, 30)">
+        <rect class="box-good" x="0" y="0" width="160" height="65" rx="5"/>
+        <text class="t-title" x="80" y="20" text-anchor="middle">→ hub TimescaleDB</text>
+        <text class="t-sub" x="80" y="38" text-anchor="middle">zstd compression</text>
+        <text class="t-mono" x="80" y="56" text-anchor="middle">10-20× ratio</text>
+      </g>
+
+      <!-- chain arrows -->
+      <line x1="160" y1="62" x2="190" y2="62" class="arrow" marker-end="url(#arr6-acc)"/>
+      <line x1="330" y1="62" x2="360" y2="62" class="arrow" marker-end="url(#arr6-acc)"/>
+      <line x1="500" y1="62" x2="530" y2="62" class="arrow" marker-end="url(#arr6-acc)"/>
+      <line x1="670" y1="62" x2="700" y2="62" class="arrow" marker-end="url(#arr6-acc)"/>
+
+      <!-- Retention tier ladder -->
+      <g transform="translate(20, 130)">
+        <text class="t-label" x="0" y="14">RETENTION TIERS ON HUB (per host, per year)</text>
+
+        <rect class="box-acc" x="0" y="25" width="840" height="40" rx="4"/>
+        <text class="t-title" x="14" y="40">0&ndash;24h &mdash; raw, full fidelity</text>
+        <text class="t-mono" x="700" y="40">~150 MB</text>
+        <text class="t-sub" x="14" y="55">indexed for instant query &middot; supports L3 deep composition</text>
+
+        <rect class="box-good" x="0" y="75" width="700" height="40" rx="4"/>
+        <text class="t-title" x="14" y="90">24h&ndash;30d &mdash; compressed (10×) chunks</text>
+        <text class="t-mono" x="560" y="90">~3 GB</text>
+        <text class="t-sub" x="14" y="105">queryable, slightly slower &middot; bulk of investigation window</text>
+
+        <rect class="box-warn" x="0" y="125" width="420" height="40" rx="4"/>
+        <text class="t-title" x="14" y="140">30d&ndash;90d &mdash; hourly aggregates only</text>
+        <text class="t-mono" x="290" y="140">~300 MB</text>
+        <text class="t-sub" x="14" y="155">individual events dropped &middot; 100× reduction</text>
+
+        <rect class="box-bad" x="0" y="175" width="220" height="40" rx="4"/>
+        <text class="t-title" x="14" y="190">90d&ndash;1y &mdash; summary only</text>
+        <text class="t-mono" x="135" y="190">~30 MB</text>
+        <text class="t-sub" x="14" y="205">trend data &middot; 1000× reduction</text>
+      </g>
+
+      <g transform="translate(20, 380)">
+        <rect class="box-neutral" x="0" y="0" width="840" height="35" rx="4"/>
+        <text class="t-title" x="14" y="22">TOTAL: ~3.5 GB/host/year on hub disk &middot; ~250 MB/day raw on endpoint local rolling 24h ring</text>
+      </g>
+    </svg>
+    <div class="caption">Each stage drops volume by 10-100×. By the time data reaches long-term storage it's compressed, deduped, and aggregated. The kernel sees billions of events; the 1-year archive holds thousands.</div>
+  </div>
+
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

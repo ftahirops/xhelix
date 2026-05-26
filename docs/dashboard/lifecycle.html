@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Data Lifecycle & Retention — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Telemetry / Lifecycle</div>
+    <h1>Data Lifecycle & Retention</h1>
+    <p class="lead">Eight-stage pipeline from kernel event to long-term archive. Each stage drops volume by 10-100×.</p>
+<p>See Diagram 6 on the <a href="diagrams.html">Diagrams page</a> for the visual representation.</p>
+  <h2 id="stages">Stages</h2>
+  <ol>
+    <li><strong>Raw eBPF</strong> — 500-2000 ev/sec, ~5 GB/day</li>
+    <li><strong>EAC dedup</strong> — ~95% dropped, ~250 MB/day</li>
+    <li><strong>Baseline cut</strong> — delta-only, ~150 MB/day</li>
+    <li><strong>Class A/B/C split</strong> — A: ~1 MB/day to hub</li>
+    <li><strong>Hub TimescaleDB</strong> — zstd compression, 10-20× ratio</li>
+  </ol>
+  <h2 id="retention">Retention tiers on hub</h2>
+  <table>
+    <thead><tr><th>Age</th><th>Storage</th><th>Per host per year</th></tr></thead>
+    <tbody>
+      <tr><td>0–24h</td><td>Raw, indexed, full fidelity</td><td class="num">~150 MB</td></tr>
+      <tr><td>24h–30d</td><td>Compressed (10×) chunks</td><td class="num">~3 GB</td></tr>
+      <tr><td>30d–90d</td><td>Hourly aggregates only</td><td class="num">~300 MB</td></tr>
+      <tr><td>90d–1y</td><td>Summary only</td><td class="num">~30 MB</td></tr>
+      <tr style="font-weight:600"><td>TOTAL</td><td>&nbsp;</td><td class="num">~3.5 GB/host/year</td></tr>
+    </tbody>
+  </table>
+  <p>Class C (forensic burst) retention is explicit "forever" per scope decision (FINAL_SCOPE_V2 §3.4.1), revisited when measured volume informs policy.</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

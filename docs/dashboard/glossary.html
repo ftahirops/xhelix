@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Glossary — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Reference / Glossary</div>
+    <h1>Glossary</h1>
+    <p class="lead">Quick definitions for the terms used throughout the docs.</p>
+<h2 id="terms">Terms</h2>
+<dl style="font-size:13.5px">
+<dt><strong>BRP (Behavioral Reference Profile)</strong></dt>
+<dd>Signed JSON profile describing what an app should legitimately do. Cached locally; updated only via curator-signed releases.</dd>
+<dt><strong>CausalSet</strong></dt>
+<dd>Bounded (16) deduplicated set of SourceAnchor IDs that contributed to a process. Becomes <em>Ambiguous</em> when ≥2 sources merge.</dd>
+<dt><strong>credbroker fangate</strong></dt>
+<dd>The fanotify-based syscall interceptor that denies credential file reads at the kernel level (not after).</dd>
+<dt><strong>EAC (Event Admission Controller)</strong></dt>
+<dd>The dedup + ordering + backpressure stage between sensors and the pipeline.</dd>
+<dt><strong>FIM (File Integrity Monitor)</strong></dt>
+<dd>Tracks writes/changes/deletions to a configured set of paths.</dd>
+<dt><strong>LLR (Log-Likelihood Ratio)</strong></dt>
+<dd>The scoring math used by the verification engine. Replaces naive Bayes which would over-count correlated features.</dd>
+<dt><strong>PrimarySource</strong></dt>
+<dd>Most-recent contributing SourceAnchor on a process. Used for operator display and quick-score.</dd>
+<dt><strong>ProfileKey</strong></dt>
+<dd>The bucketing key <code>(app, version_family, os_family, package_origin, role, feature_fingerprint, phase)</code>.</dd>
+<dt><strong>Protect-our-own</strong></dt>
+<dd>The immutable list of paths xhelix can never touch with its own actions — even with a correctly-signed BRP.</dd>
+<dt><strong>SourceAnchor</strong></dt>
+<dd>The unique ID minted at every authenticated entry point (SSH, PAM, sudo, cron, systemd). Persists in <code>source.db</code>.</dd>
+<dt><strong>Soak gate</strong></dt>
+<dd>Delay + recheck before applying containment. Prevents acting on transient signals.</dd>
+<dt><strong>PanicSwitch</strong></dt>
+<dd>Operator command that rolls back containment steps 3-9 atomically.</dd>
+</dl>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

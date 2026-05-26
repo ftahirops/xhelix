@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Honest Non-Promises — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Reference / Limits</div>
+    <h1>Honest Non-Promises</h1>
+    <p class="lead">What we explicitly do NOT promise. Helps you make a realistic decision.</p>
+<ol>
+<li>The 28-week estimate is single-engineer focused work. Distractions or technical surprises will extend it.</li>
+<li>The 85% TP / &lt;3% FP targets are projections based on Holmes 2019 (~85%) and commercial benchmarks (CrowdStrike 75-85%). Actual measured numbers may differ by ±5 percentage points.</li>
+<li>&lt;0.5% FP on BRP-covered apps requires active curation. Without it, FP rate degrades over time.</li>
+<li>Real adversaries adapt. TP rate erodes over time without continuous rule + invariant tuning.</li>
+<li>Root attacker with kernel-module-load capability defeats any userspace EDR — including xhelix.</li>
+<li>Memory-resident implants during a credential TTL window remain partially undetected (~30% residual).</li>
+<li>Off-host attacker infrastructure detection is only as good as threat-intel feeds.</li>
+<li>Application-layer logic bugs (SQLi at parameter parsing) need RASP, not host EDR.</li>
+<li>xhelix v2 won\x27t match SentinelOne&rsquo;s UX at launch. CLI-first operator surface.</li>
+<li>xhelix won\x27t replace CrowdStrike for organisations needing Windows + SOC support + compliance certifications.</li>
+</ol>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

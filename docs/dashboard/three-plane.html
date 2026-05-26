@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Three-Plane Overview — xhelix docs</title>
+<link rel="stylesheet" href="docs.css">
+<script defer src="docs.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search">
+    <input type="search" placeholder="Search pages..." aria-label="Search">
+    <div class="search-results" role="listbox"></div>
+  </div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+
+    <div class="breadcrumbs">
+      <a href="index.html">Docs</a> <span class="sep">/</span>
+      Architecture <span class="sep">/</span>
+      Three-Plane Overview
+    </div>
+
+    <h1>Three-plane architecture</h1>
+    <p class="lead">
+      The three planes are intentionally non-trusting of each other. Endpoint decides fast and locally. Hub understands deeply. Curator alone is allowed to change trust.
+    </p>
+
+    <h2 id="why-three">Why three planes and not one</h2>
+    <p>
+      Each plane represents a different kind of bet. If any one bet fails, the others must continue to provide value &mdash; particularly the endpoint, which must never depend on the hub being alive.
+    </p>
+
+    <table>
+      <thead><tr><th>Plane</th><th>The bet</th><th>If it fails</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Endpoint</strong></td>
+          <td>"I can decide in &lt;2 seconds with what I see locally"</td>
+          <td>Server is unprotected — unacceptable</td>
+        </tr>
+        <tr>
+          <td><strong>Hub</strong></td>
+          <td>"I can find cross-host patterns nobody on one server can see"</td>
+          <td>We lose analytical depth, but endpoint still protects</td>
+        </tr>
+        <tr>
+          <td><strong>Curator</strong></td>
+          <td>"I can decide what's trustworthy enough to push to every server"</td>
+          <td>Bad policy hits everyone — so we make this step the hardest, slowest, and most reviewed</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout good">
+      <div class="title">Key safety property</div>
+      The endpoint NEVER depends on the hub being alive. Hub down for 30+ days → server is still protected by what was last shipped to it. This rule was non-negotiable in the locked scope (FINAL_SCOPE_V2 §3.3).
+    </div>
+
+    <h2 id="endpoint">Endpoint plane</h2>
+    <p><strong>One per protected host.</strong> Autonomous decision-maker. Owns:</p>
+    <ul>
+      <li><strong>L0 hard-deny enforcement</strong> — immutable invariants (protected-paths backstop, forever-suspicious actions)</li>
+      <li><strong>L1 fast verification</strong> — BRP envelope check against cached signed profile</li>
+      <li><strong>Source lineage</strong> — SourceAnchor mint + CausalSet propagation</li>
+      <li><strong>Immediate containment</strong> — kill / block / quarantine / freeze, &lt;2s decision→enforce</li>
+      <li><strong>Forensic chain signing</strong> — Ed25519 batches, offline-verifiable</li>
+      <li><strong>Telemetry classification</strong> — Class A/B/C upload to hub (if reachable)</li>
+    </ul>
+    <p>What the endpoint <strong>cannot</strong> do:</p>
+    <ul>
+      <li>Pull unsigned policy from anywhere</li>
+      <li>Self-modify hard invariants</li>
+      <li>Depend on hub for enforcement decisions</li>
+    </ul>
+
+    <h2 id="hub">Hub plane</h2>
+    <p><strong>One per fleet (typically; regional federation deferred to post-v2).</strong> Analysis only.</p>
+    <ul>
+      <li>Telemetry ingestion via mTLS</li>
+      <li>Time-series + graph storage (TimescaleDB on Postgres — see <a href="data-flow.html">Data Flow</a>)</li>
+      <li>Cross-host source graph reconstruction</li>
+      <li>L2 deep multi-chain composition</li>
+      <li>Per-source aggregate scoring at fleet scale</li>
+      <li>Analysis query API (the AI/observability surface)</li>
+      <li>Candidate BRP profile proposal — <strong>recommend only</strong></li>
+    </ul>
+
+    <div class="callout alert">
+      <div class="title">The hub CANNOT publish policy</div>
+      Hub being compromised must not let an attacker push malicious profiles to endpoints. The hub can recommend candidate profiles; it can never sign them. That privilege belongs exclusively to the curator.
+    </div>
+
+    <h2 id="curator">Curator plane</h2>
+    <p><strong>Separate machine, typically air-gappable.</strong> The only plane allowed to change endpoint trust.</p>
+    <ul>
+      <li>Candidate BRP review queue (input from hub)</li>
+      <li>Diff-against-prior-version explainer</li>
+      <li>Two-person approval workflow (cryptographic — each reviewer signs)</li>
+      <li>HSM-backed signing (YubiHSM 2 / AWS KMS / Vault transit)</li>
+      <li>Staged ring rollout (ring 0 → ring 1 → ring 2 → general)</li>
+      <li>Auto-rollback on detection rate or FP rate spike</li>
+      <li>Signed distribution channel to endpoints</li>
+    </ul>
+
+    <h2 id="invariants">Plane invariants (cannot be violated)</h2>
+
+    <table>
+      <thead><tr><th>Plane</th><th>Owns</th><th>Forbidden</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Endpoint</td>
+          <td>hard-deny, BRP match, source anchors, taint, immediate containment, cached signed policy, offline survival</td>
+          <td>Cannot pull unsigned policy. Cannot self-modify hard invariants. Must work 30+ days without hub.</td>
+        </tr>
+        <tr>
+          <td>Hub</td>
+          <td>telemetry ingestion, cross-host graph, deep analysis, candidate proposal</td>
+          <td>Cannot publish policy directly. Cannot bypass curator. Compromise of hub does not compromise endpoints.</td>
+        </tr>
+        <tr>
+          <td>Curator</td>
+          <td>candidate review, signing, staged rollout, rollback</td>
+          <td>Cannot observe live telemetry. Cannot run analysis. Cannot push without two-person approval and HSM signature.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="next">Next</h2>
+    <p>
+      The <a href="diagrams.html">Architecture Diagrams</a> page shows the same model visually with six SVG diagrams: the three planes in concrete form, event lifecycle, source attribution tree, three correlation levels, multi-chain convergence, and the data lifecycle with retention tiers.
+    </p>
+
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body>
+</html>

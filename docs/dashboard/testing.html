@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Test Results — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Testing & Maturity / Results</div>
+    <h1>Test Results</h1>
+    <p class="lead">v1 measured: 73% TP / 8% FP on the May 2026 482-test corpus. Per-category breakdown shows credbroker fangate at 100% TP / 0% FP; C2 channels the biggest gap (26% TP).</p>
+<h2 id="v1">v1 measured (May 2026)</h2>
+<table>
+<thead><tr><th>Category</th><th class="num">Tests</th><th class="num">TP %</th><th class="num">FP %</th><th>Notes</th></tr></thead>
+<tbody>
+  <tr><td>Credential bypass paths</td><td class="num">62</td><td class="num">100%</td><td class="num">0%</td><td>credbroker fangate — rock solid</td></tr>
+  <tr><td>Persistence</td><td class="num">68</td><td class="num">93%</td><td class="num">3%</td><td>FIM + cron + systemd</td></tr>
+  <tr><td>Memory implants</td><td class="num">54</td><td class="num">89%</td><td class="num">5%</td><td>memdiff + RWX scan</td></tr>
+  <tr><td>Exploit primitives</td><td class="num">60</td><td class="num">68%</td><td class="num">7%</td><td>ptrace/memfd/userfaultfd — gaps in stealth</td></tr>
+  <tr><td>Data leak</td><td class="num">52</td><td class="num">40%</td><td class="num">12%</td><td>DLCF design pending</td></tr>
+  <tr><td>C2 channels</td><td class="num">73</td><td class="num">26%</td><td class="num">18%</td><td>biggest gap · v2 verification + multi-chain targets this</td></tr>
+  <tr><td>Benign control (FP)</td><td class="num">113</td><td class="num">—</td><td class="num">8%</td><td>real-world admin commands</td></tr>
+  <tr style="font-weight:600;background:var(--bg3)"><td>TOTAL</td><td class="num">482</td><td class="num">73%</td><td class="num">8%</td><td>v1 baseline</td></tr>
+</tbody>
+</table>
+<h2 id="v2net">v2 net-new tests in this session</h2>
+<p>Unit + integration tests added during v2 build: <strong>110 passing under <code>-race</code></strong>.</p>
+<ul>
+  <li>22 tests in <code>pkg/source</code> (anchor store + mint + CausalSet + FileTaint)</li>
+  <li>12 tests in <code>pkg/proctree</code> (T02 propagation + existing)</li>
+  <li>5 integration tests in <code>pkg/pipeline</code> (source-attribution E2E)</li>
+  <li>45 tests in <code>pkg/brp/parser</code> (nginx + apache + sshd + mysql + phpfpm)</li>
+  <li>31 tests in <code>pkg/brp</code> (signing + protect-our-own + matcher)</li>
+</ul>
+<p>Full module build (<code>CGO_ENABLED=0 go build ./...</code>) clean; <code>make static-check</code> confirms all 5 binaries statically linked.</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

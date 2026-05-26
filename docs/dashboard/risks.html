@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Risk Register — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Reference / Risks</div>
+    <h1>Risk Register</h1>
+    <p class="lead">22 risks from the locked scope. Each one has an engineered mitigation. Sorted by impact.</p>
+<h2 id="high">High-impact (project-killing if unmitigated)</h2>
+<table>
+<thead><tr><th>#</th><th>Risk</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>R1</td><td>Performance overhead at full v2 stack &gt; 5%</td><td>Per-iteration perf gates · tiered graphing · promotion-on-suspicion · feature freeze if blown</td></tr>
+<tr><td>R2</td><td>BPF verifier rejects complex eBPF programs (burned 3× already)</td><td>Keep eBPF small · heavy lifting userspace · test 5.15 / 6.1 / 6.8 before merge</td></tr>
+<tr><td>R10</td><td>Determinism breaks if multi-chain naively parallelized</td><td>Chains run SEQUENTIALLY · replay test in CI · CLAUDE.md hard constraint</td></tr>
+<tr><td>R23</td><td>Hub compromise → fleet compromise via malicious policy push</td><td>Curator is separate plane · hub cannot publish · HSM + 2-person required at curator</td></tr>
+<tr><td>R29</td><td>Policy poisoning via fleet learning (attacker controls ⅓+ of canary)</td><td>Canary hosts are project-controlled · Byzantine ≥⅔ · hard invariants override learning</td></tr>
+<tr><td>R30</td><td>HSM key custody loss bricks future policy updates</td><td>Multi-key M-of-N quorum · backup HSM in air-gapped vault · annual recovery drill</td></tr>
+<tr><td>R33</td><td>AI suggestions auto-approved by lazy curator</td><td>AI candidates require 3-of-3 approval (not 2-of-2) · audit log · external audit</td></tr>
+</tbody>
+</table>
+<h2 id="medium">Medium-impact</h2>
+<table>
+<thead><tr><th>#</th><th>Risk</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>R3</td><td>SQLite write amplification</td><td>WAL + 60s batch flush · periodic offline compaction</td></tr>
+<tr><td>R4</td><td>Source graph storage explosion</td><td>Tiered fidelity · promotion-on-suspicion · hard 100 MB/day ceiling</td></tr>
+<tr><td>R5</td><td>Config parsers brittle on real-world configs</td><td>Battle-tested grammar · fall back to Unprofiled on parse failure</td></tr>
+<tr><td>R7</td><td>Phase detection false transitions</td><td>Multi-signal (age + config-read + signals + spawn pattern)</td></tr>
+<tr><td>R25</td><td>Hub storage cost explosion at fleet scale</td><td>Tiered retention 7d/30d/90d/1y · zstd compression</td></tr>
+<tr><td>R31</td><td>Curator becomes bottleneck (humans don\x27t review fast enough)</td><td>Diff-explainer · default to stale-but-safe · no pressure to rubber-stamp</td></tr>
+</tbody>
+</table>
+<p>Full register: FINAL_SCOPE_V2 §4.</p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>

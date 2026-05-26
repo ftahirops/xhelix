@@ -226,3 +226,16 @@ enforce.
   `sudo pkill -9 -f xhelix` → `for p in $(ps -eo pid,stat | awk
   "\$2~/T/{print \$1}"); do kill -CONT $p; done` to release SIGSTOP'd
   victims.
+
+## 2026-05-26 — incidentgraph eager bootstrap (Phase D.1 deploy)
+
+**What didn't work:** First D.1 deploy bound `pipeline.Handle → IncidentGraph.Observe(event)` with create-on-first-event semantics. On a quiet dev box this produced **900 open incidents in 5 minutes** from raw ebpf.net/ebpf.proc traffic with no alerts behind them. Snapshot-based persist flush then scanned all 900 per mutation → quadratic CPU.
+
+**What worked instead:**
+1. Events are **enrich-only**: incidents are seeded by `ObserveAlert` (and verifier results / events on a route that already has one). No alert → no incident.
+2. `PersistingEngine.flushFor` does O(1) routing-map lookup via a `router` interface, not Snapshot scan.
+3. `Seed(Incident)` on the engine lets the persistence layer rehydrate routing maps directly at startup (Observe is no longer a backdoor for that).
+
+After fix: 900 → 8 incidents at steady state, RSS 251 MB unchanged, 0 hard_deny / 0 shadow_deny over 30s sample.
+
+**Note for next time:** alerts → incidents is the right grain; events → incidents is per-process bookkeeping with extra DB writes. Same lesson as the ebpf.net cold.db flood — raw event volume must not flow into operator-facing stores. Add a "is this fed by alert rate or event rate?" check before wiring any new persistent subsystem.

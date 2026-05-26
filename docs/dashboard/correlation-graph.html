@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Correlation Graph &mdash; xhelix</title>
+<link rel="stylesheet" href="docs.css">
+<style>
+  body { overflow: hidden; }
+  .cg-layout {
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr) 320px;
+    grid-template-rows: 1fr;             /* force the row to fill — was missing, made #sigma collapse to 0 height */
+    height: calc(100vh - 56px);
+    background: var(--bg);
+  }
+  .cg-left, .cg-center, .cg-right {
+    min-height: 0;                       /* allow grid item to shrink rather than overflow */
+    height: 100%;
+  }
+  .cg-left {
+    background: var(--bg2);
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+    padding: 14px 16px;
+  }
+  .cg-center {
+    position: relative;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .cg-right {
+    background: var(--bg2);
+    border-left: 1px solid var(--line);
+    overflow-y: auto;
+    padding: 14px 16px;
+  }
+  #sigma {
+    position: absolute;                  /* fill the center pane regardless of inline size resolution */
+    top: 0; left: 0; right: 0; bottom: 28px;
+    width: auto !important;
+    height: auto !important;
+  }
+  .cg-section { margin-bottom: 18px; }
+  .cg-section h3 {
+    font-size: 11px;
+    color: var(--fg3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 8px;
+    font-weight: 700;
+  }
+  .anchor-list { list-style: none; padding: 0; margin: 0; }
+  .anchor-list li {
+    background: var(--bg3);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .anchor-list li:hover { border-color: var(--acc); background: var(--bg4); }
+  .anchor-list li.active { border-color: var(--acc); background: var(--bg4); }
+  .anchor-list .a-id { font-family: var(--mono); font-size: 11px; color: var(--acc); }
+  .anchor-list .a-actor { font-weight: 600; color: #fff; font-size: 13px; }
+  .anchor-list .a-meta { font-size: 11px; color: var(--fg2); margin-top: 2px; }
+  .anchor-list .a-count { font-family: var(--mono); font-size: 11px; color: var(--acc2); margin-top: 2px; }
+  .time-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
+  .time-buttons button {
+    background: var(--bg3); border: 1px solid var(--line); color: var(--fg2);
+    padding: 4px 10px; border-radius: 3px; font-size: 12px; cursor: pointer;
+    font-family: var(--mono);
+  }
+  .time-buttons button:hover { border-color: var(--acc); color: var(--fg); }
+  .time-buttons button.active { background: var(--bg4); border-color: var(--acc); color: var(--acc); }
+  .filter-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .filter-list label {
+    background: var(--bg3); border: 1px solid var(--line); border-radius: 3px;
+    padding: 4px 8px; font-size: 11.5px; color: var(--fg); cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .filter-list label:hover { border-color: var(--acc); }
+  .filter-list input[type=checkbox] { margin: 0; accent-color: var(--acc); }
+  #sigma { width: 100%; height: 100%; }
+  .center-overlay {
+    position: absolute; top: 12px; left: 12px; right: 12px;
+    display: flex; justify-content: space-between; gap: 10px;
+    pointer-events: none;
+  }
+  .center-overlay > div { pointer-events: auto; }
+  .overlay-pill {
+    background: rgba(11,13,16,0.85);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--fg);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .legend-strip { display: flex; gap: 12px; font-size: 11px; align-items: center; }
+  .legend-strip .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+  .detail-block { margin-bottom: 14px; }
+  .detail-block .k { font-size: 11px; color: var(--fg3); text-transform: uppercase; letter-spacing: 0.05em; }
+  .detail-block .v { font-family: var(--mono); font-size: 12px; color: var(--fg); margin-top: 2px; word-break: break-all; }
+  .detail-event-list { list-style: none; padding: 0; margin: 0; max-height: 360px; overflow-y: auto; }
+  .detail-event-list li {
+    background: var(--bg3); border: 1px solid var(--line); border-radius: 3px;
+    padding: 7px 10px; margin-bottom: 5px; font-size: 11.5px;
+  }
+  .detail-event-list .when { color: var(--fg3); font-family: var(--mono); }
+  .detail-event-list .what { color: var(--fg); margin-top: 2px; }
+  .badge-sev {
+    display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    font-family: var(--mono); font-weight: 600; margin-left: 4px;
+  }
+  .sev-info { background: #1d2a3a; color: #7eb8e0; }
+  .sev-warn { background: #3a2f1a; color: var(--warn); }
+  .sev-high { background: #3a1d22; color: #ff9aa5; }
+  .sev-critical { background: #3a1d22; color: var(--alert); }
+  .status-bar {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: var(--bg3); border-top: 1px solid var(--line);
+    padding: 6px 12px; font-size: 11px; color: var(--fg2);
+    font-family: var(--mono);
+    display: flex; justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 · correlation graph</span>
+  <a href="index.html" style="margin-left:auto;font-size:12px;color:var(--fg2)">← Back to docs</a>
+</header>
+
+<div class="cg-layout">
+  <aside class="cg-left">
+    <div class="cg-section">
+      <h3>Source Anchors</h3>
+      <p style="font-size:11px;color:var(--fg3);margin:0 0 8px">Click any anchor to render its activity graph.</p>
+      <ul class="anchor-list" id="anchor-list"><li style="color:var(--fg3)">loading…</li></ul>
+    </div>
+    <div class="cg-section">
+      <h3>Initial Depth</h3>
+      <div class="time-buttons" id="depth-buttons">
+        <button data-depth="1">1</button>
+        <button data-depth="2">2</button>
+        <button data-depth="3" class="active">3</button>
+        <button data-depth="4">4</button>
+        <button data-depth="5">5</button>
+        <button data-depth="0">all</button>
+      </div>
+      <p style="font-size:11px;color:var(--fg3);margin:6px 0 0">Click any process node to expand its children.</p>
+    </div>
+    <div class="cg-section">
+      <h3>Time Window</h3>
+      <div class="time-buttons" id="time-buttons">
+        <button data-window="5m">5m</button>
+        <button data-window="15m">15m</button>
+        <button data-window="1h">1h</button>
+        <button data-window="6h">6h</button>
+        <button data-window="24h">24h</button>
+        <button data-window="all" class="active">all</button>
+      </div>
+    </div>
+    <div class="cg-section">
+      <h3>Event Filters</h3>
+      <div class="filter-list" id="filter-list"></div>
+    </div>
+    <div class="cg-section">
+      <h3>Legend</h3>
+      <div style="font-size:11px;line-height:1.8">
+        <div><span class="dot" style="background:#62d4ff"></span>source anchor</div>
+        <div><span class="dot" style="background:#7eb8e0"></span>process</div>
+        <div><span class="dot" style="background:#6effc0"></span>file read</div>
+        <div><span class="dot" style="background:#ffd56b"></span>file write</div>
+        <div><span class="dot" style="background:#c08eff"></span>net connect</div>
+        <div><span class="dot" style="background:#ff7a8a"></span>secret / hard-deny</div>
+        <div><span class="dot" style="background:#ff9d3d"></span>capability change</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="cg-center">
+    <div id="sigma"></div>
+    <div class="center-overlay">
+      <div class="overlay-pill" id="meta-pill">select an anchor →</div>
+      <div class="overlay-pill legend-strip">
+        Layout: spine + petals · click a petal to expand
+      </div>
+    </div>
+    <div class="status-bar">
+      <span id="status-left">ready</span>
+      <span id="status-right">—</span>
+    </div>
+  </main>
+
+  <aside class="cg-right">
+    <div class="cg-section">
+      <h3>Detail</h3>
+      <div id="detail-empty" style="color:var(--fg3);font-size:12px">Click any node in the graph to see its detail.</div>
+      <div id="detail" style="display:none"></div>
+    </div>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.0/dist/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+
+<script>
+// xhelix correlation graph — Cytoscape.js + dagre tree layout
+// Canvas renderer works in all browsers without WebGL.
+// All dynamic DOM uses createElement + textContent (no innerHTML with dynamic data).
+
+if (typeof cytoscapeDagre === 'function') cytoscape.use(cytoscapeDagre);
+
+const KIND_COLOR = {
+  source:        '#62d4ff',
+  process:       '#7eb8e0',
+  spawn:         '#7eb8e0',
+  exec:          '#9eccef',
+  exit:          '#5e6a78',
+  file_read:     '#6effc0',
+  file_write:    '#ffd56b',
+  file_exec:     '#ffd56b',
+  net_connect:   '#c08eff',
+  net_listen:    '#a16eff',
+  net_accept:    '#a16eff',
+  dns_query:     '#a16eff',
+  secret_access: '#ff7a8a',
+  cap_change:    '#ff9d3d',
+  ns_change:     '#ff9d3d',
+  ptrace:        '#ff7a8a',
+  memfd_exec:    '#ff7a8a',
+  persistence:   '#cc4444',
+  identity:      '#ffd56b',
+};
+const KIND_SIZE = { source: 18, process: 11 };
+const PETAL_SIZE = 9;
+const SCALE_X = 0.7;
+const SCALE_Y = 0.6;
+
+const state = {
+  anchors: [],
+  selectedAnchor: null,
+  window: 'all',
+  depth: 3,                   // default — user-selectable
+  filters: new Set(),
+  cy: null,
+  elements: [],
+  nodeDataByKey: {},
+  expandedPIDs: new Set(),    // PIDs we've already expanded (avoid re-fetching)
+};
+
+const el = (s) => document.querySelector(s);
+
+function makeEl(tag, attrs, text) {
+  const e = document.createElement(tag);
+  if (attrs) for (const k of Object.keys(attrs)) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+async function init() {
+  await loadAnchors();
+  buildFilterCheckboxes();
+  bindTimeButtons();
+  if (state.anchors.length > 0) {
+    selectAnchor(state.anchors[0].id);
+  }
+}
+
+async function loadAnchors() {
+  el('#status-left').textContent = 'loading anchors…';
+  try {
+    const resp = await fetch('/api/v1/source');
+    state.anchors = await resp.json();
+  } catch (e) {
+    el('#status-left').textContent = 'error: ' + e.message;
+    return;
+  }
+  renderAnchorList();
+  el('#status-left').textContent = 'ready · ' + state.anchors.length + ' anchors';
+}
+
+function renderAnchorList() {
+  const ul = el('#anchor-list');
+  ul.replaceChildren();
+  if (state.anchors.length === 0) {
+    ul.appendChild(makeEl('li', { style: 'color:var(--fg3)' }, '(no anchors yet — daemon is collecting…)'));
+    return;
+  }
+  for (const a of state.anchors) {
+    const li = makeEl('li');
+    li.dataset.id = a.id;
+    if (a.id === state.selectedAnchor) li.classList.add('active');
+    const idStr = String(a.id);
+    const dispId = idStr.length > 8 ? '…' + idStr.slice(-6) : idStr;
+    li.appendChild(makeEl('div', { class: 'a-id' }, '#' + dispId + ' · ' + a.kind + (idStr.length > 8 ? ' · LIVE' : '')));
+    li.appendChild(makeEl('div', { class: 'a-actor' }, a.actor || '(no actor)'));
+    const fromIP = a.source_ip ? 'from ' + a.source_ip : (a.unit ? a.unit : '');
+    li.appendChild(makeEl('div', { class: 'a-meta' }, fromIP + ' · ' + new Date(a.created).toLocaleString()));
+    li.appendChild(makeEl('div', { class: 'a-count' }, a.event_count + ' events'));
+    li.addEventListener('click', () => selectAnchor(a.id));
+    ul.appendChild(li);
+  }
+}
+
+function buildFilterCheckboxes() {
+  const kinds = [
+    'spawn', 'exec', 'exit',
+    'file_read', 'file_write', 'file_exec',
+    'net_connect', 'net_listen', 'net_accept', 'dns_query',
+    'secret_access', 'cap_change', 'ns_change',
+    'ptrace', 'memfd_exec', 'persistence', 'identity',
+  ];
+  const wrap = el('#filter-list');
+  wrap.replaceChildren();
+  for (const k of kinds) {
+    const label = makeEl('label');
+    const cb = makeEl('input');
+    cb.type = 'checkbox';
+    cb.dataset.kind = k;
+    cb.checked = true;
+    cb.addEventListener('change', onFilterChange);
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(' ' + k));
+    wrap.appendChild(label);
+  }
+}
+
+function onFilterChange() {
+  const filters = new Set();
+  const allChecked = Array.from(document.querySelectorAll('#filter-list input')).every(c => c.checked);
+  if (!allChecked) {
+    for (const c of document.querySelectorAll('#filter-list input')) {
+      if (c.checked) filters.add(c.dataset.kind);
+    }
+  }
+  state.filters = filters;
+  if (state.selectedAnchor != null) loadGraph(state.selectedAnchor);
+}
+
+function bindTimeButtons() {
+  for (const btn of document.querySelectorAll('#time-buttons button')) {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#time-buttons button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.window = btn.dataset.window;
+      if (state.selectedAnchor != null) loadGraph(state.selectedAnchor);
+    });
+  }
+  for (const btn of document.querySelectorAll('#depth-buttons button')) {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#depth-buttons button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.depth = parseInt(btn.dataset.depth, 10);
+      if (state.selectedAnchor != null) loadGraph(state.selectedAnchor);
+    });
+  }
+}
+
+async function selectAnchor(id) {
+  state.selectedAnchor = id;
+  renderAnchorList();
+  el('#status-left').textContent = 'loading graph for #' + id + '…';
+  await loadGraph(id);
+}
+
+async function loadGraph(id) {
+  if (state.cy) { state.cy.destroy(); state.cy = null; }
+  state.elements = [];
+  state.nodeDataByKey = {};
+
+  const params = new URLSearchParams();
+  if (state.window && state.window !== 'all') params.set('window', state.window);
+  if (state.filters.size > 0) params.set('filters', Array.from(state.filters).join(','));
+  params.set('depth', state.depth === 0 ? 'all' : String(state.depth));
+  state.expandedPIDs.clear();
+
+  const url = '/api/v1/source/' + id + '/graph?' + params.toString();
+  let metaInfo = null;
+  let edgeCount = 0, nodeCount = 0;
+
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const m = JSON.parse(line);
+        switch (m.type) {
+          case 'meta':    metaInfo = m; break;
+          case 'spine':   addSpineNode(m); nodeCount++; break;
+          case 'group':   addGroupNode(m); nodeCount++; break;
+          case 'edge':    addEdge(m); edgeCount++; break;
+          case 'end':     break;
+        }
+      }
+    }
+  } catch (e) {
+    el('#status-left').textContent = 'graph load failed: ' + e.message;
+    return;
+  }
+
+  const container = el('#sigma');
+  if (container.offsetHeight === 0) {
+    el('#status-left').textContent = 'graph container has 0 height — CSS layout failed';
+    return;
+  }
+  state.cy = cytoscape({
+    container: container,
+    elements: state.elements,
+    layout: {
+      name: 'dagre',
+      rankDir: 'TB',
+      nodeSep: 80,
+      rankSep: 140,
+      edgeSep: 20,
+      ranker: 'tight-tree',
+      fit: true,
+      padding: 60,
+      animate: false,
+    },
+    minZoom: 0.25,
+    maxZoom: 4,
+    wheelSensitivity: 0.2,
+    style: [
+      // ───── base node ─────
+      { selector: 'node', style: {
+          'label': 'data(label)',
+          'color': '#fff',
+          'font-size': 13,
+          'font-family': 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+          'font-weight': 500,
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'text-outline-color': '#0b0d10',
+          'text-outline-width': 3,
+          'text-outline-opacity': 0.9,
+          'text-wrap': 'wrap',
+          'text-max-width': 180,
+          'background-color': 'data(color)',
+          'background-opacity': 0.95,
+          'border-color': '#0b0d10',
+          'border-width': 2,
+          'overlay-opacity': 0,
+      }},
+      // ───── source anchor (ROOT): the most prominent ─────
+      { selector: 'node[kind = "source"]', style: {
+          'shape': 'round-rectangle',
+          'width': 280, 'height': 64,
+          'font-size': 16,
+          'font-weight': 'bold',
+          'border-width': 3,
+          'border-color': '#62d4ff',
+          'background-color': '#1a2a3a',
+          'background-blacken': -0.1,
+      }},
+      // ───── process spine node ─────
+      { selector: 'node[node_type = "spine"][kind != "source"]', style: {
+          'shape': 'round-rectangle',
+          'width': 180, 'height': 52,
+          'border-color': '#7eb8e0',
+          'border-width': 2,
+          'background-color': '#1a2a3a',
+          'font-size': 13,
+          'font-weight': 600,
+      }},
+      // ───── compound (process containing its activity petals) ─────
+      // When a process node has children (its petals via parent reference), it
+      // automatically gets the :parent pseudoclass — give it a soft box look.
+      { selector: 'node:parent', style: {
+          'background-opacity': 0.18,
+          'background-color': '#1d2a3a',
+          'border-color': '#2d4a6a',
+          'border-width': 2,
+          'padding': 18,
+          'text-valign': 'top',
+          'text-margin-y': -8,
+          'font-size': 14,
+          'font-weight': 600,
+          'color': '#7eb8e0',
+          'text-background-color': '#0b0d10',
+          'text-background-opacity': 0.7,
+          'text-background-padding': 4,
+          'text-background-shape': 'round-rectangle',
+          'shape': 'round-rectangle',
+      }},
+      // ───── activity petal (group node, child of a process) ─────
+      { selector: 'node[node_type = "group"]', style: {
+          'shape': 'round-rectangle',
+          'width': 'label',
+          'height': 32,
+          'padding': '8px',
+          'font-size': 12,
+          'font-weight': 500,
+          'border-width': 1,
+          'border-opacity': 0.6,
+      }},
+      // ───── high-severity petal — red glow ─────
+      { selector: 'node[high_severity = "true"]', style: {
+          'border-color': '#ff7a8a',
+          'border-width': 2,
+          'border-opacity': 1,
+      }},
+      // ───── hover (mouse-over) — subtle lift ─────
+      { selector: 'node.hover', style: {
+          'border-width': 3,
+          'border-color': '#62d4ff',
+          'overlay-opacity': 0.08,
+          'overlay-color': '#62d4ff',
+      }},
+      // ───── selection — clearer cue ─────
+      { selector: 'node:selected', style: {
+          'border-color': '#62d4ff',
+          'border-width': 4,
+          'overlay-opacity': 0.12,
+          'overlay-color': '#62d4ff',
+      }},
+      // ───── edges (spine connections, root → process → child) ─────
+      { selector: 'edge', style: {
+          'width': 2,
+          'line-color': '#3d4f63',
+          'curve-style': 'bezier',           // smooth Datadog-style curves
+          'control-point-step-size': 40,
+          'target-arrow-shape': 'none',
+          'opacity': 0.6,
+      }},
+      { selector: 'edge[edge_kind = "spine"]', style: {
+          'width': 2.5,
+          'line-color': '#7eb8e0',
+          'opacity': 0.7,
+      }},
+    ],
+  });
+  state.cy.on('tap', 'node', (evt) => onNodeTap(evt.target));
+  state.cy.on('tap', (evt) => { if (evt.target === state.cy) clearDetail(); });
+  state.cy.on('mouseover', 'node', (evt) => evt.target.addClass('hover'));
+  state.cy.on('mouseout', 'node', (evt) => evt.target.removeClass('hover'));
+
+  // Re-fit after layout completes.
+  state.cy.one('layoutstop', () => { if (state.cy) state.cy.fit(undefined, 40); });
+  requestAnimationFrame(() => {
+    if (state.cy) state.cy.fit(undefined, 40);
+  });
+
+  window.addEventListener('resize', () => {
+    if (state.cy) state.cy.resize();
+  }, { passive: true });
+
+  if (metaInfo) {
+    const pill = el('#meta-pill');
+    pill.replaceChildren();
+    // For display, truncate huge nanos IDs (live-minted) to last 6 digits.
+    const dispId = String(metaInfo.source_id);
+    const shortId = dispId.length > 8 ? '…' + dispId.slice(-6) : dispId;
+    pill.appendChild(makeEl('code', null, '#' + shortId));
+    pill.appendChild(document.createTextNode(
+      ' · ' + metaInfo.spine_count + ' processes' +
+      ' · ' + metaInfo.group_count + ' groups' +
+      ' · ' + metaInfo.total_events + ' events' +
+      ' · window=' + metaInfo.window
+    ));
+  }
+  el('#status-left').textContent = 'rendered ' + nodeCount + ' nodes, ' + edgeCount + ' edges';
+  el('#status-right').textContent = 'anchor #' + id;
+}
+
+function addSpineNode(m) {
+  const color = KIND_COLOR[m.kind] || KIND_COLOR['process'];
+  state.elements.push({
+    group: 'nodes',
+    data: {
+      id: m.id,
+      label: m.label || m.id,
+      kind: m.kind,
+      node_type: 'spine',
+      color: color,
+    },
+  });
+  state.nodeDataByKey[m.id] = m;
+}
+
+function addGroupNode(m) {
+  const color = m.high_severity ? KIND_COLOR['secret_access'] : (KIND_COLOR[m.kind] || '#9aa6b2');
+  // Petals are regular siblings of their parent's children — NOT compound-contained.
+  // The edge from process → petal renders the connection visually.
+  state.elements.push({
+    group: 'nodes',
+    data: {
+      id: m.id,
+      label: m.summary || (m.kind + ' (' + m.count + ')'),
+      kind: m.kind,
+      node_type: 'group',
+      color: color,
+      high_severity: m.high_severity ? 'true' : 'false',
+    },
+  });
+  state.nodeDataByKey[m.id] = m;
+}
+
+function addEdge(m) {
+  state.elements.push({
+    group: 'edges',
+    data: {
+      id: m.src + '__' + m.dst,
+      source: m.src,
+      target: m.dst,
+      edge_kind: m.kind,
+    },
+  });
+}
+
+// Tap router: a process node expands its subtree; a group/source node opens the detail panel.
+async function onNodeTap(node) {
+  const data = state.nodeDataByKey[node.id()];
+  if (!data) return;
+  if (data.type === 'spine' && data.pid && data.pid > 0) {
+    // Process node: expand inline if not already expanded; otherwise show detail.
+    if (!state.expandedPIDs.has(data.pid)) {
+      await expandSubtree(data.pid);
+      return;
+    }
+  }
+  showDetail(node.id());
+}
+
+async function expandSubtree(pid) {
+  if (state.expandedPIDs.has(pid)) return;
+  state.expandedPIDs.add(pid);
+  el('#status-left').textContent = 'expanding subtree of PID ' + pid + '…';
+
+  const params = new URLSearchParams();
+  if (state.window && state.window !== 'all') params.set('window', state.window);
+  if (state.filters.size > 0) params.set('filters', Array.from(state.filters).join(','));
+  params.set('depth', '2');  // each click reveals 2 more levels
+
+  const url = '/api/v1/source/' + state.selectedAnchor + '/subtree/' + pid + '?' + params.toString();
+  const newNodes = [];
+  const newEdges = [];
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const m = JSON.parse(line);
+        if (m.type === 'spine' || m.type === 'group') {
+          if (state.cy.getElementById(m.id).length > 0) continue; // already present
+          const color = (m.type === 'group')
+            ? (m.high_severity ? KIND_COLOR['secret_access'] : (KIND_COLOR[m.kind] || '#9aa6b2'))
+            : (KIND_COLOR[m.kind] || KIND_COLOR['process']);
+          newNodes.push({
+            group: 'nodes',
+            data: {
+              id: m.id,
+              label: m.label || m.summary || (m.kind + ' (' + m.count + ')'),
+              kind: m.kind,
+              node_type: m.type,
+              color: color,
+              high_severity: m.high_severity ? 'true' : 'false',
+            },
+          });
+          state.nodeDataByKey[m.id] = m;
+        } else if (m.type === 'edge') {
+          const edgeId = m.src + '__' + m.dst;
+          if (state.cy.getElementById(edgeId).length > 0) continue;
+          newEdges.push({
+            group: 'edges',
+            data: { id: edgeId, source: m.src, target: m.dst, edge_kind: m.kind },
+          });
+        }
+      }
+    }
+  } catch (e) {
+    el('#status-left').textContent = 'expand failed: ' + e.message;
+    return;
+  }
+  if (newNodes.length === 0 && newEdges.length === 0) {
+    el('#status-left').textContent = 'no further children for PID ' + pid;
+    return;
+  }
+  state.cy.add(newNodes);
+  state.cy.add(newEdges);
+  state.cy.layout({
+    name: 'dagre', rankDir: 'TB', nodeSep: 80, rankSep: 140,
+    edgeSep: 20, ranker: 'tight-tree', fit: true, padding: 60, animate: false,
+  }).run();
+  el('#status-left').textContent = 'expanded PID ' + pid + ': +' + newNodes.length + ' nodes';
+}
+
+async function showDetail(nodeKey) {
+  const data = state.nodeDataByKey[nodeKey];
+  if (!data) return;
+  el('#detail-empty').style.display = 'none';
+  const d = el('#detail');
+  d.style.display = 'block';
+  d.replaceChildren();
+
+  function block(k, v) {
+    const w = makeEl('div', { class: 'detail-block' });
+    w.appendChild(makeEl('div', { class: 'k' }, k));
+    w.appendChild(makeEl('div', { class: 'v' }, v));
+    d.appendChild(w);
+  }
+
+  if (data.type === 'spine') {
+    block('Type', data.kind === 'source' ? 'Source Anchor (root)' : 'Process');
+    block('Label', data.label || '');
+    if (data.pid) block('PID', String(data.pid));
+    if (data.comm) block('Comm', data.comm);
+    if (data.uid !== undefined) block('UID', String(data.uid));
+    if (data.first_seen) block('First seen', new Date(data.first_seen).toLocaleString());
+    if (data.last_seen)  block('Last seen',  new Date(data.last_seen).toLocaleString());
+  } else if (data.type === 'group') {
+    block('Type', 'Activity group');
+    block('Kind', data.kind);
+    block('Count', String(data.count));
+    block('Summary', data.summary || '');
+    block('Severity', data.high_severity ? 'high or critical' : 'info / warn');
+    if (data.first_seen) block('First', new Date(data.first_seen).toLocaleString());
+    if (data.last_seen)  block('Last',  new Date(data.last_seen).toLocaleString());
+
+    const w = makeEl('div', { class: 'detail-block' });
+    const k = makeEl('div', { class: 'k' }, 'Events (loading…)');
+    w.appendChild(k);
+    const ul = makeEl('ul', { class: 'detail-event-list' });
+    w.appendChild(ul);
+    d.appendChild(w);
+
+    const params = new URLSearchParams();
+    params.set('limit', '50');
+    if (state.window && state.window !== 'all') params.set('window', state.window);
+    try {
+      const resp = await fetch('/api/v1/source/' + state.selectedAnchor + '/group/' + data.id + '?' + params.toString());
+      const text = await resp.text();
+      let n = 0;
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue;
+        const obj = JSON.parse(line);
+        if (obj.type !== 'event') continue;
+        n++;
+        const li = makeEl('li');
+        li.appendChild(makeEl('div', { class: 'when' }, new Date(obj.time).toLocaleTimeString()));
+        const what = makeEl('div', { class: 'what' });
+        const targetParts = [];
+        if (obj.target_path) targetParts.push(obj.target_path);
+        if (obj.target_host) targetParts.push(obj.target_host + ':' + obj.target_port);
+        if (obj.target_socket) targetParts.push(obj.target_socket);
+        if (obj.target_image) targetParts.push(obj.target_image);
+        what.textContent = obj.kind + ' · pid ' + obj.pid + ' · ' + (obj.comm || '?')
+          + (targetParts.length ? ' · ' + targetParts.join(' ') : '');
+        if (obj.severity && obj.severity !== 'info') {
+          const b = makeEl('span', { class: 'badge-sev sev-' + obj.severity }, ' ' + obj.severity);
+          what.appendChild(b);
+        }
+        li.appendChild(what);
+        ul.appendChild(li);
+      }
+      k.textContent = 'Events (' + n + ')';
+    } catch (e) {
+      k.textContent = 'Events (error: ' + e.message + ')';
+    }
+  }
+}
+
+function clearDetail() {
+  el('#detail-empty').style.display = 'block';
+  el('#detail').style.display = 'none';
+}
+
+init();
+</script>
+
+</body>
+</html>

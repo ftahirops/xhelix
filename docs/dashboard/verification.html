@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verification Engine — xhelix docs</title>
+<link rel="stylesheet" href="docs.css"><script defer src="docs.js"></script>
+</head><body>
+<header class="topbar">
+  <button class="burger" aria-label="Menu">☰</button>
+  <div class="logo">xhelix</div>
+  <span class="ver">v2 docs · 2026-05-23</span>
+  <div class="search"><input type="search" placeholder="Search pages..." aria-label="Search"><div class="search-results" role="listbox"></div></div>
+</header>
+<div class="layout">
+  <nav class="sidebar"></nav>
+  <main class="content">
+    <div class="breadcrumbs"><a href="index.html">Docs</a> <span class="sep">/</span> Engines / Verification</div>
+    <h1>Verification Engine</h1>
+    <p class="lead">L0 hard-deny + L1 four-state lattice (VerifiedClean / BenignButUnverified / Suspicious / MaliciousLikely) using calibrated log-likelihood ratios across 8 independent domains.</p>
+<h2 id="domains">The 8 verification domains</h2>
+<ol>
+  <li><strong>Identity</strong> — binary hash, package signature, expected uid/gid, cgroup unit, capabilities</li>
+  <li><strong>Authority</strong> — role contract, credbroker grants, declared capability set</li>
+  <li><strong>Provenance</strong> — proctree lineage, SourceAnchor + CausalSet, taint inheritance</li>
+  <li><strong>Asset</strong> — asset class, service-role↔asset matrix, tenant boundary</li>
+  <li><strong>Behavioral</strong> — BRP envelope check + per-host overlay</li>
+  <li><strong>Temporal</strong> — maintenance window, deploy window, time-since-bootstrap, phase</li>
+  <li><strong>Cross-signal</strong> — eBPF ∩ FIM ∩ connstate ∩ memory ∩ identity agreement</li>
+  <li><strong>Threat</strong> — IOC match, honey-artifact touch, recent alert proximity, recent exploit proximity</li>
+</ol>
+<h2 id="math">Why LLR not naive Bayes</h2>
+<p>Naive Bayes assumes independent features. Our domains share underlying signals (eBPF + proctree + baseline all share the process stream). We use <strong>calibrated log-likelihood ratios with capped per-domain evidence + explicit interaction bonuses</strong> — the math from the v2 verification architecture doc.</p>
+<p>Canonical: <code>docs/VERIFICATION_ENGINE_ARCHITECTURE_2026-05-23.md</code></p>
+    <div class="prevnext"></div>
+    <footer><strong>xhelix</strong> · <a href="https://github.com/xhelix/xhelix">github.com/xhelix/xhelix</a></footer>
+  </main>
+  <aside class="toc"></aside>
+</div>
+</body></html>
