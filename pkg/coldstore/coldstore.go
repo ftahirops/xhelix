@@ -23,6 +23,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -557,6 +558,73 @@ func (s *Store) DropOldDays(now time.Time) ([]string, error) {
 
 // AbsPath returns the resolved absolute DB path. Useful for the
 // LocalAPI handler so operators can see exactly which file is in use.
+// DropDaysOverSize drops the OLDEST day partitions until the on-disk
+// file size is at or below maxBytes. Never drops the currently-active
+// table. Returns the names dropped.
+//
+// This is the BACKSTOP that runs alongside DropOldDays. Retention-based
+// pruning can still leave disk full if event volume is high (the
+// 2026-05-25 incident: 18GB in 24h at 12-18M events/day pushed disk to
+// 98% inside the retention window). Size-based pruning is the safety
+// net: if the file exceeds maxBytes despite retention, drop oldest
+// days until it doesn't, even if retention would have kept them.
+//
+// maxBytes <= 0 disables size pruning. Recommended: 5-10 GB on a
+// 100GB rootfs after accounting for the chain (~10GB), hot store
+// (~500MB), and other state.
+func (s *Store) DropDaysOverSize(maxBytes int64) ([]string, error) {
+	if maxBytes <= 0 {
+		return nil, nil
+	}
+	dbPath := s.AbsPath()
+	fi, err := os.Stat(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("coldstore stat: %w", err)
+	}
+	if fi.Size() <= maxBytes {
+		return nil, nil
+	}
+
+	rows, err := s.db.Query(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'events_________' ORDER BY name ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("coldstore enum tables: %w", err)
+	}
+	var candidates []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("coldstore scan: %w", err)
+		}
+		candidates = append(candidates, name)
+	}
+	rows.Close()
+
+	var dropped []string
+	for _, name := range candidates {
+		s.currentTableMu.Lock()
+		isCurrent := s.currentTable == name
+		s.currentTableMu.Unlock()
+		if isCurrent {
+			continue
+		}
+		if _, err := s.db.Exec(`DROP TABLE IF EXISTS ` + name); err != nil {
+			return dropped, fmt.Errorf("coldstore drop %s: %w", name, err)
+		}
+		dropped = append(dropped, name)
+		// Re-stat after each drop. SQLite needs VACUUM to fully reclaim,
+		// but DROP TABLE frees pages to the free-list which limits
+		// further growth. Stop as soon as we're under budget OR we've
+		// dropped everything except the current table.
+		if fi2, err := os.Stat(dbPath); err == nil && fi2.Size() <= maxBytes {
+			break
+		}
+	}
+	return dropped, nil
+}
+
 func (s *Store) AbsPath() string {
 	abs, err := filepath.Abs(s.path)
 	if err != nil {

@@ -51,6 +51,20 @@ type Chain struct {
 	PrivKey   ed25519.PrivateKey
 	HostKeyID [16]byte
 
+	// MaxBatches caps the number of *.bin files kept in Dir. After each
+	// finalise, the oldest batches are deleted until the count is at or
+	// below MaxBatches. 0 = unbounded (legacy behavior — DO NOT USE in
+	// production; pre-rotation builds destroyed disks at ~3.5MB/batch
+	// × hundreds of batches/hour). Recommended: 2000-5000 for typical
+	// workloads (covers ~6-24h of history at default event volume).
+	//
+	// Rotation breaks chain.Verify back to genesis after old batches
+	// are removed; the verifier still validates any contiguous range
+	// from the oldest surviving batch forward. This is the right
+	// tradeoff for an endpoint EDR — long-window forensics belongs
+	// off-host.
+	MaxBatches int
+
 	mu          sync.Mutex
 	current     []model.Event
 	bodyBytes   int
@@ -156,6 +170,33 @@ func (c *Chain) finaliseLocked() error {
 	c.nextBatchID++
 	c.current = c.current[:0]
 	c.bodyBytes = 0
+
+	// Rotate: delete oldest batches if we exceed MaxBatches. 0 = no
+	// rotation (legacy unbounded growth). Operators should set this
+	// in config — typical: 2000-5000.
+	if c.MaxBatches > 0 {
+		_ = c.rotateLocked()
+	}
+	return nil
+}
+
+// rotateLocked deletes oldest batch files until count ≤ MaxBatches.
+// Caller holds c.mu. Errors deleting individual files are not fatal —
+// the chain still functions; next rotation tick will retry.
+func (c *Chain) rotateLocked() error {
+	files, err := batchFiles(c.Dir)
+	if err != nil {
+		return err
+	}
+	excess := len(files) - c.MaxBatches
+	if excess <= 0 {
+		return nil
+	}
+	// batchFiles returns sorted by name (which is hex batch ID) —
+	// oldest first.
+	for i := 0; i < excess; i++ {
+		_ = os.Remove(files[i])
+	}
 	return nil
 }
 

@@ -158,6 +158,11 @@ type Signals struct {
 	ExePath      string
 	ArgvJoined   string   // single space-joined argv string
 	ParentImages []string // ancestor exe paths (best-effort)
+	// Comm is the kernel's TASK_COMM_NAME — survives the exec window
+	// briefly and is the only identity signal that doesn't change to
+	// the target on exec events. Used by heuristicCommServerApp as a
+	// last-resort recognizer.
+	Comm string
 }
 
 // Identifier is goroutine-safe and caches per-lineage identity so
@@ -232,6 +237,14 @@ func (i *Identifier) compute(s Signals) AppID {
 		return a
 	}
 	if a, ok := heuristicExeBasename(s); ok {
+		return a
+	}
+	// Comm-based fallback: on exec events the kernel reports the NEW
+	// image in ExePath, so we lose the actor identity. Comm survives
+	// the exec window briefly. Use a curated table for well-known
+	// server apps; fall through to empty if not recognized (no
+	// guessing on arbitrary comm values).
+	if a, ok := heuristicCommServerApp(s); ok {
 		return a
 	}
 	return AppID{}
@@ -320,6 +333,51 @@ var containerCgroupRE = regexp.MustCompile(`docker[-/]([0-9a-f]{6,12})`)
 func heuristicContainer(s Signals) (AppID, bool) {
 	if m := containerCgroupRE.FindStringSubmatch(s.CgroupPath); len(m) == 2 {
 		return AppID{Name: "docker", Vhost: m[1][:12], Kind: KindContainer, Source: "heuristic:docker_cgroup"}, true
+	}
+	return AppID{}, false
+}
+
+// commServerApps maps known server-process comm values to (Name, Kind).
+// Used as the last-resort recognizer when ExePath is empty (sensor blind
+// spot) or points at an exec target (so the exe-based heuristics would
+// mis-identify the actor as the target). Conservative list — only
+// well-known server processes whose comm is unambiguous.
+var commServerApps = map[string]struct {
+	Name string
+	Kind Kind
+}{
+	"nginx":         {"nginx", KindWeb},
+	"apache2":       {"apache", KindWeb},
+	"httpd":         {"apache", KindWeb},
+	"php-fpm":       {"php-fpm", KindWeb},
+	"mysqld":         {"mysql", KindService},
+	"mariadbd":       {"mariadb", KindService},
+	"postgres":       {"postgres", KindService},
+	"redis-server":   {"redis", KindService},
+	"redis-sentinel": {"redis", KindService},
+	"memcached":      {"memcached", KindService},
+	"mongod":         {"mongodb", KindService},
+	"sshd":          {"sshd", KindService},
+	"systemd":       {"systemd", KindService},
+	"crond":         {"cron", KindService},
+	"chronyd":       {"chrony", KindService},
+	"ntpd":          {"ntp", KindService},
+	"dockerd":       {"docker", KindService},
+	"containerd":    {"containerd", KindService},
+	"runc":          {"runc", KindService},
+	"haproxy":       {"haproxy", KindWeb},
+	"caddy":         {"caddy", KindWeb},
+	"traefik":       {"traefik", KindWeb},
+	"node":          {"node", KindBackground},
+	"java":          {"java", KindBackground},
+}
+
+func heuristicCommServerApp(s Signals) (AppID, bool) {
+	if s.Comm == "" {
+		return AppID{}, false
+	}
+	if a, ok := commServerApps[s.Comm]; ok {
+		return AppID{Name: a.Name, Kind: a.Kind, Source: "heuristic:comm"}, true
 	}
 	return AppID{}, false
 }

@@ -62,6 +62,46 @@ func TestHeuristicBasenameStripsVersion(t *testing.T) {
 	}
 }
 
+func TestHeuristicCommServerApp_Recognized(t *testing.T) {
+	cases := map[string]string{
+		"nginx":        "nginx",
+		"mysqld":       "mysql",
+		"postgres":     "postgres",
+		"sshd":         "sshd",
+		"redis-server": "redis",
+		"dockerd":      "docker",
+	}
+	for comm, wantName := range cases {
+		a := New(nil).Identify(Signals{LineageID: 0, Comm: comm})
+		if a.Name != wantName {
+			t.Errorf("comm=%q: got Name=%q, want %q", comm, a.Name, wantName)
+		}
+		if a.Source != "heuristic:comm" {
+			t.Errorf("comm=%q: source=%q, want heuristic:comm", comm, a.Source)
+		}
+	}
+}
+
+func TestHeuristicCommServerApp_UnknownComm(t *testing.T) {
+	// Unknown comm + no other signals → empty identification.
+	a := New(nil).Identify(Signals{Comm: "totally_made_up_proc"})
+	if !a.Empty() {
+		t.Errorf("unknown comm with no other signals should be empty, got %+v", a)
+	}
+}
+
+func TestHeuristicCommServerApp_ExeWins(t *testing.T) {
+	// When ExePath gives us a clear answer (basename heuristic), comm
+	// fallback should NOT override it. Order: exe-based → comm.
+	a := New(nil).Identify(Signals{
+		ExePath: "/usr/sbin/sshd",
+		Comm:    "nginx", // bogus comm — must not be used
+	})
+	if a.Name != "sshd" {
+		t.Errorf("exe-basename should win over comm, got Name=%q", a.Name)
+	}
+}
+
 func TestDeclarationOverridesHeuristics(t *testing.T) {
 	i := New([]Declaration{
 		{

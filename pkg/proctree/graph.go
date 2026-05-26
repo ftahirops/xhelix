@@ -11,10 +11,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/model"
+	"github.com/xhelix/xhelix/pkg/source"
 )
 
 // Node is a single process record.
+//
+// Source attribution fields (PrimarySource, CausalSet) are populated by
+// the pipeline as identity events mint anchors. A spawned process
+// inherits its parent's PrimarySource + CausalSet (see Graph.OnSpawn);
+// injection (ptrace, process_vm_writev, memfd execve) merges the
+// attacker's source into the target's CausalSet so PrimarySource
+// becomes Ambiguous.
 type Node struct {
 	PID       uint32
 	PPID      uint32
@@ -28,6 +37,17 @@ type Node struct {
 	Children  map[uint32]struct{}
 	FirstSeen time.Time
 	LastEvent time.Time
+
+	// PrimarySource is the authoritative anchor for this process when
+	// CausalSet has exactly one member. When CausalSet.Ambiguous() is
+	// true, PrimarySource is the *most-recent* contributing anchor;
+	// callers that need certainty must consult CausalSet.Ambiguous()
+	// before treating PrimarySource as authoritative.
+	PrimarySource lineage.LineageID
+
+	// CausalSet is the bounded, deduplicated set of anchors that have
+	// contributed to this process's provenance. T02 / Phase A2.
+	CausalSet source.CausalSet
 }
 
 // Graph is the live view of all known pids.
@@ -47,6 +67,14 @@ func New(cap int) *Graph {
 }
 
 // OnSpawn records a new process.
+//
+// Source-attribution propagation (T02): if the spawn event did not
+// pre-populate PrimarySource/CausalSet on n AND the parent has a
+// PrimarySource, the child inherits both. This is the single-line
+// implementation of "spawn inherits parent's source" from the v2
+// source lineage spec. Identity events that DO carry an explicit
+// SourceAnchorID (e.g. the sshd login that spawns the shell) override
+// inheritance by populating n.PrimarySource before calling OnSpawn.
 func (g *Graph) OnSpawn(n Node) {
 	now := time.Now()
 	if n.FirstSeen.IsZero() {
@@ -60,14 +88,92 @@ func (g *Graph) OnSpawn(n Node) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	g.nodes[n.PID] = &n
 	if parent, ok := g.nodes[n.PPID]; ok {
 		parent.Children[n.PID] = struct{}{}
+		// Inherit only if the spawn event didn't already attribute the
+		// child explicitly.
+		if n.PrimarySource == 0 && parent.PrimarySource != 0 {
+			n.PrimarySource = parent.PrimarySource
+		}
+		if n.CausalSet.IsEmpty() && !parent.CausalSet.IsEmpty() {
+			n.CausalSet.Merge(parent.CausalSet)
+		}
 	}
+	// Invariant: if PrimarySource is set, CausalSet must contain it.
+	// This holds whether PrimarySource came from inheritance or from
+	// an explicit spawn-time stamp.
+	if n.PrimarySource != 0 {
+		n.CausalSet.Add(n.PrimarySource)
+	}
+	g.nodes[n.PID] = &n
 
 	if len(g.nodes) > g.cap {
 		g.evictLocked()
 	}
+}
+
+// AttributeSource records that the given anchor contributed to pid's
+// provenance. If pid currently has no PrimarySource, it becomes id;
+// otherwise id is added to the CausalSet, which may flip the actor to
+// Ambiguous. Used by:
+//
+//   - identity events that mint a fresh anchor (sshd login, sudo, …):
+//     the post-mint event is dispatched against the originating pid.
+//   - file-mediated taint inheritance (T02 commit 3): reader absorbs
+//     the file's last_writer_primary_source.
+//   - injection events (T02 commit 4): ptrace target absorbs attacker
+//     source, causing Ambiguous.
+//
+// No-op if id is 0 or pid is not in the graph.
+func (g *Graph) AttributeSource(pid uint32, id lineage.LineageID) {
+	if id == 0 {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	n, ok := g.nodes[pid]
+	if !ok {
+		return
+	}
+	if n.PrimarySource == 0 {
+		n.PrimarySource = id
+	} else {
+		// The "most recent contributing anchor" rule from the spec.
+		// PrimarySource follows the latest attribution while CausalSet
+		// preserves history.
+		n.PrimarySource = id
+	}
+	n.CausalSet.Add(id)
+	n.LastEvent = time.Now()
+}
+
+// MergeCausalSet absorbs all anchors in cs into pid's CausalSet. Used
+// for file-read taint inheritance (reader absorbs writer's full set).
+// Returns true if any new id was added. No-op if pid not in graph.
+func (g *Graph) MergeCausalSet(pid uint32, cs source.CausalSet) bool {
+	if cs.IsEmpty() {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	n, ok := g.nodes[pid]
+	if !ok {
+		return false
+	}
+	return n.CausalSet.Merge(cs)
+}
+
+// SourceOf returns the (PrimarySource, CausalSet copy) for pid. The
+// CausalSet copy is safe to publish — modifying it does not affect the
+// graph. Returns (0, empty) if pid is not in the graph.
+func (g *Graph) SourceOf(pid uint32) (lineage.LineageID, source.CausalSet) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	n, ok := g.nodes[pid]
+	if !ok {
+		return 0, source.CausalSet{}
+	}
+	return n.PrimarySource, source.NewCausalSet(n.CausalSet.Slice()...)
 }
 
 // OnExit removes a pid; its children are reparented to PID 1 (true

@@ -66,6 +66,10 @@ type Config struct {
 	// See PROTECTED_SERVICES_TRAP.md.
 	ProtectedServices ProtectedServicesConfig `yaml:"protected_services"`
 
+	// Hardening — runtime hardening config (Phase C+G).
+	// Includes egressguard mode + protected-role allowlist.
+	Hardening HardeningConfig `yaml:"hardening"`
+
 	// ForensicIngest — JSON-lines ingest path config (P-RF.9e).
 	// (Named ForensicIngest, not Forensic, because the existing
 	// Forensic field above is the /proc snapshot subsystem.)
@@ -411,6 +415,51 @@ type ChainConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Dir     string `yaml:"dir"`
 	KeyPath string `yaml:"key_path"`
+	// MaxBatches caps the number of *.bin batch files kept under Dir.
+	// 0 = use default (2000). Negative = unbounded (legacy unsafe;
+	// destroyed disk in 2026-05-24 incident — 5571 files / 20GB in 28h).
+	MaxBatches int `yaml:"max_batches"`
+}
+
+// HardeningConfig is the operator surface for the runtime hardening
+// substrate (Phase C egressguard + Phase G daemon hardening). All
+// fields default to safe values; the daemon ships with everything in
+// the most permissive setting and operators promote per-feature.
+type HardeningConfig struct {
+	Egressguard EgressguardConfig `yaml:"egressguard"`
+	// Seccomp controls the daemon's self-applied seccomp allowlist
+	// (Phase G.2). Default mode = "off" (no filter). Operator promotes
+	// to "audit" (filter installed, denied syscalls logged to
+	// /var/log/audit/audit.log but not blocked) for 24-48h soak,
+	// inspects the audit log for any denied syscall, then promotes
+	// to "enforce" (denied syscalls return EPERM; daemon will die if
+	// any required syscall is denied). High self-DoS risk — do NOT
+	// enable enforce without audit-mode soak.
+	Seccomp SeccompConfig `yaml:"seccomp"`
+}
+
+// SeccompConfig controls the daemon self-seccomp filter (Phase G.2).
+type SeccompConfig struct {
+	// Mode is "off" | "audit" | "enforce". Empty = "off".
+	Mode string `yaml:"mode"`
+}
+
+// EgressguardConfig controls the per-event egress decision plane.
+//
+// Mode rollout discipline (build spec §0 lock):
+//   observe  — classify only, no logging or kernel push (default)
+//   shadow   — log would-be denies; no kernel push; safe for FP soak
+//   enforce  — push denies to kernel backend; production gate
+//
+// Operator promotes observe → shadow → enforce, with a soak between
+// each stage. Auto-rollback on FP budget breach is a Phase E.1 feature.
+type EgressguardConfig struct {
+	// Mode is "observe" | "shadow" | "enforce". Empty = "observe".
+	Mode string `yaml:"mode"`
+	// ProtectedRoles overrides the default protected-role allowlist
+	// (nginx-*, apache-*, mysql-*, sshd-*, etc.). When non-empty,
+	// replaces the default. When empty, the default is used.
+	ProtectedRoles []string `yaml:"protected_roles"`
 }
 
 type PostureConfig struct {

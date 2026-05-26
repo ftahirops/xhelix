@@ -40,7 +40,21 @@ func NewBus(sinks []model.Sink, capacity int, log *slog.Logger) *Bus {
 }
 
 // Send enqueues an alert. Returns true if accepted, false if dropped.
+//
+// CRITICAL: callers continue to mutate event.Tags after this returns
+// (downstream pipeline enrichment runs in the same goroutine). The
+// bus must take a SNAPSHOT of the tags map here, otherwise sinks
+// JSON-marshalling the event will race with pipeline writes —
+// observed crashes "fatal error: concurrent map iteration and map
+// write" during attack-sim runs on prod (2026-05-23).
 func (b *Bus) Send(a model.Alert) bool {
+	if a.Event.Tags != nil {
+		snap := make(map[string]string, len(a.Event.Tags))
+		for k, v := range a.Event.Tags {
+			snap[k] = v
+		}
+		a.Event.Tags = snap
+	}
 	select {
 	case b.queue <- a:
 		return true
