@@ -1,0 +1,9 @@
+app: rails
+kind: web
+match:
+  argv_substring:
+    - "rails server"
+    - "bundle exec puma"
+    - "config/application.rb"
+  exe_regex:
+    - "^/usr/bin/(ruby|puma|unicorn)"

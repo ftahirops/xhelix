@@ -1,0 +1,53 @@
+# Procfs credential-scrape rules. P-PROCFS-A1.
+#
+# Fires when a non-allowlisted process opens /proc/<other-pid>/{environ,
+# maps,mem,auxv}. The kernel hook + allowlist verdict live in
+# sensors/ebpf (XH_EV_PROC_SCRAPE) and sensors/procscrape; this file
+# only describes what becomes an alert.
+#
+# Detect-mode default: severity=medium, no auto-response. The
+# expected steady-state false-positive surface is the long tail of
+# admin tooling that wasn't in the baked-in allowlist — operators
+# extend /etc/xhelix/procscrape-allowlist.conf when triage shows a
+# legitimate reader.
+---
+id: cred_proc_scrape
+desc: A non-allowlisted process read another process's /proc credential surface
+severity: warn
+mitre: [T1003.007, T1552.001]
+match: |
+  event.sensor == "ebpf.procscrape" &&
+  event.tags["cred_proc_scrape"] == "true"
+tags: [credential_access, procfs, detect_only]
+remediation: |
+  Triage the reader. Legitimate cases (admin tooling, monitoring
+  agents) should be added to /etc/xhelix/procscrape-allowlist.conf
+  using one of:
+    comm: <task-name>
+    image: <absolute-path>
+    glob: <absolute-path-with-wildcards>
+  Then 'systemctl restart xhelix' to reload.
+
+  Genuine cases warrant immediate investigation — the inspected PID
+  may have leaked secrets via environ, and any outbound traffic from
+  the reader in the same lineage should be considered tainted.
+test_id: PS-01
+---
+id: cred_proc_scrape_environ_burst
+desc: A single PID scraped /proc/<*>/environ across many targets
+severity: high
+mitre: [T1003.007, T1552.001]
+match: |
+  event.sensor == "ebpf.procscrape" &&
+  event.tags["cred_proc_scrape"] == "true" &&
+  event.tags["scrape_kind"] == "environ"
+tags: [credential_access, procfs, harvesting]
+remediation: |
+  This shape (single PID iterating /proc) is the credential-
+  harvesting stage of Megalodon / TeamTNT-class malware. Quarantine
+  the reader's lineage immediately.
+
+  Correlation across multiple events from the same reader_pid is
+  handled by the correlator engine; this rule fires per-event so
+  the first scrape is visible without delay.
+test_id: PS-02

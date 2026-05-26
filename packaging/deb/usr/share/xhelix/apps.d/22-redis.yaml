@@ -1,0 +1,9 @@
+app: redis
+kind: service
+match:
+  exe_path:
+    - /usr/bin/redis-server
+    - /usr/local/bin/redis-server
+  cgroup_substring:
+    - "redis.service"
+    - "redis-server.service"

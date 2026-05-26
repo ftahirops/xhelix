@@ -1,0 +1,15 @@
+app: wordpress
+kind: web
+match:
+  cgroup_substring:
+    - "wp-content"
+    - "wordpress"
+  argv_substring:
+    - "/wp-config.php"
+    - "/wp-admin/"
+  exe_regex:
+    - "^/usr/bin/(php-fpm|php)"
+  parent_image:
+    - "/usr/sbin/nginx"
+    - "/usr/sbin/apache2"
+    - "/usr/sbin/httpd"

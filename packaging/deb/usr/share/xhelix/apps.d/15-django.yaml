@@ -1,0 +1,10 @@
+app: django
+kind: web
+match:
+  argv_substring:
+    - "manage.py"
+    - "wsgi:application"
+    - "asgi:application"
+    - "django"
+  exe_regex:
+    - "^/usr/bin/(gunicorn|uwsgi|python)"

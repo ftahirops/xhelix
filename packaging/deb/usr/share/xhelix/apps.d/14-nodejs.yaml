@@ -1,0 +1,11 @@
+app: nodejs
+kind: web
+match:
+  argv_substring:
+    - "node "
+    - ".js"
+    - "npm start"
+    - "yarn start"
+  exe_regex:
+    - "^/usr/bin/node"
+    - "^/usr/local/bin/node"

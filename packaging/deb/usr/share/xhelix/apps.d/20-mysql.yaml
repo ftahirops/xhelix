@@ -1,0 +1,11 @@
+app: mysql
+kind: service
+match:
+  exe_path:
+    - /usr/sbin/mysqld
+    - /usr/libexec/mysqld
+  exe_regex:
+    - "^/opt/mysql/.*/mysqld$"
+  cgroup_substring:
+    - "mysql.service"
+    - "mariadb.service"

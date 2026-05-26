@@ -1,0 +1,9 @@
+app: laravel
+kind: web
+match:
+  argv_substring:
+    - "/artisan"
+    - "/bootstrap/app.php"
+    - "vendor/laravel/framework"
+  exe_regex:
+    - "^/usr/bin/(php-fpm|php)"

@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -153,17 +154,24 @@ func (s *SSHTailer) deliver(ctx context.Context, ev model.Event) {
 
 // Patterns we recognise. Each pattern produces an Event; unmatched
 // lines are silently ignored (auth.log has many irrelevant entries).
+// Each regex captures the daemon PID as the first group so the parsed
+// event can carry ev.PID = the sshd/sudo/su process PID. This lets
+// pkg/source.Minter.AttributeSource attach the new SourceAnchor to the
+// live process, which is what enables proctree propagation to
+// session-spawned descendants. Without the PID, the anchor mints but no
+// child events ever inherit (audited 2026-05-24 — 12 SSH anchors had
+// only 1 attributed event each, exactly the identity event itself).
 var (
 	reAccepted = regexp.MustCompile(
-		`sshd\[\d+\]: Accepted (\w+) for (\S+) from (\S+) port (\d+)`)
+		`sshd\[(\d+)\]: Accepted (\w+) for (\S+) from (\S+) port (\d+)`)
 	reFailed = regexp.MustCompile(
-		`sshd\[\d+\]: Failed (\w+) for (\S+) from (\S+) port (\d+)`)
+		`sshd\[(\d+)\]: Failed (\w+) for (\S+) from (\S+) port (\d+)`)
 	reInvalid = regexp.MustCompile(
-		`sshd\[\d+\]: Invalid user (\S+) from (\S+)`)
+		`sshd\[(\d+)\]: Invalid user (\S+) from (\S+)`)
 	reSudo = regexp.MustCompile(
-		`sudo\[\d+\]:\s+(\S+) : TTY=(\S+)\s+;\s+PWD=(\S+)\s+;\s+USER=(\S+)\s+;\s+COMMAND=(.+)$`)
+		`sudo\[(\d+)\]:\s+(\S+) : TTY=(\S+)\s+;\s+PWD=(\S+)\s+;\s+USER=(\S+)\s+;\s+COMMAND=(.+)$`)
 	reSu = regexp.MustCompile(
-		`su\[\d+\]:\s+\(to\s+(\S+)\)\s+(\S+)\s+on\s+(\S+)`)
+		`su\[(\d+)\]:\s+\(to\s+(\S+)\)\s+(\S+)\s+on\s+(\S+)`)
 )
 
 // ParseSSHDLine extracts a model.Event from a single auth log line.
@@ -177,53 +185,68 @@ func ParseSSHDLine(line, host string) (model.Event, bool) {
 	if m := reAccepted.FindStringSubmatch(line); m != nil {
 		ev := model.NewEvent("identity.sshd", model.SeverityInfo)
 		ev.Host = host
+		ev.PID = parsePID(m[1])
 		ev.Tags["service"] = "sshd"
 		ev.Tags["outcome"] = "success"
-		ev.Tags["method"] = m[1]
-		ev.Tags["user"] = m[2]
-		ev.Tags["src_ip"] = m[3]
-		ev.Tags["src_port"] = m[4]
+		ev.Tags["method"] = m[2]
+		ev.Tags["user"] = m[3]
+		ev.Tags["src_ip"] = m[4]
+		ev.Tags["src_port"] = m[5]
 		return ev, true
 	}
 	if m := reFailed.FindStringSubmatch(line); m != nil {
 		ev := model.NewEvent("identity.sshd", model.SeverityWarn)
 		ev.Host = host
+		ev.PID = parsePID(m[1])
 		ev.Tags["service"] = "sshd"
 		ev.Tags["outcome"] = "failure"
-		ev.Tags["method"] = m[1]
-		ev.Tags["user"] = m[2]
-		ev.Tags["src_ip"] = m[3]
-		ev.Tags["src_port"] = m[4]
+		ev.Tags["method"] = m[2]
+		ev.Tags["user"] = m[3]
+		ev.Tags["src_ip"] = m[4]
+		ev.Tags["src_port"] = m[5]
 		return ev, true
 	}
 	if m := reInvalid.FindStringSubmatch(line); m != nil {
 		ev := model.NewEvent("identity.sshd", model.SeverityNotice)
 		ev.Host = host
+		ev.PID = parsePID(m[1])
 		ev.Tags["service"] = "sshd"
 		ev.Tags["outcome"] = "invalid_user"
-		ev.Tags["user"] = m[1]
-		ev.Tags["src_ip"] = m[2]
+		ev.Tags["user"] = m[2]
+		ev.Tags["src_ip"] = m[3]
 		return ev, true
 	}
 	if m := reSudo.FindStringSubmatch(line); m != nil {
 		ev := model.NewEvent("identity.sudo", model.SeverityNotice)
 		ev.Host = host
+		ev.PID = parsePID(m[1])
 		ev.Tags["service"] = "sudo"
-		ev.Tags["user"] = m[1]
-		ev.Tags["tty"] = m[2]
-		ev.Tags["pwd"] = m[3]
-		ev.Tags["target_user"] = m[4]
-		ev.Tags["command"] = m[5]
+		ev.Tags["user"] = m[2]
+		ev.Tags["tty"] = m[3]
+		ev.Tags["pwd"] = m[4]
+		ev.Tags["target_user"] = m[5]
+		ev.Tags["command"] = m[6]
 		return ev, true
 	}
 	if m := reSu.FindStringSubmatch(line); m != nil {
 		ev := model.NewEvent("identity.su", model.SeverityNotice)
 		ev.Host = host
+		ev.PID = parsePID(m[1])
 		ev.Tags["service"] = "su"
-		ev.Tags["target_user"] = m[1]
-		ev.Tags["user"] = m[2]
-		ev.Tags["tty"] = m[3]
+		ev.Tags["target_user"] = m[2]
+		ev.Tags["user"] = m[3]
+		ev.Tags["tty"] = m[4]
 		return ev, true
 	}
 	return model.Event{}, false
+}
+
+// parsePID parses a decimal PID string into uint32. Returns 0 on any
+// error; callers treat 0 as "PID unknown" and skip proctree attribution.
+func parsePID(s string) uint32 {
+	n, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(n)
 }

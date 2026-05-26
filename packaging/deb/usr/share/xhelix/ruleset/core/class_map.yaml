@@ -18,16 +18,24 @@
 # treatment.
 
 class_1:  # Hard invariants — auto-deny candidates
-  # Recalibrated 2026-05-22 after live attack-sim on plesk.douxl.com
-  # showed Imunify-notifier legitimately drops cron files and Plesk
-  # tooling legitimately writes /etc/passwd via non-allowlisted
-  # paths. Rules with demonstrated legitimate triggers on a Plesk
-  # host were demoted to Class 2. Class 1 now contains ONLY rules
-  # that are adversarial-by-construction or have no legitimate
-  # trigger we've ever observed.
+  # Universal-by-construction: a rule belongs in Class 1 if the act
+  # is adversarial regardless of host. Host-specific legitimate
+  # triggers (Plesk control panel, package managers, certbot) are
+  # gated by *lineage authenticity* via the credbroker Layer-2
+  # contracts + Layer-1 image-regex baseline, NOT by demoting the
+  # rule globally. A demoted rule fires nowhere; an authenticity-
+  # gated rule fires on every host except where an authentic
+  # actor is responsible.
+  #
+  # Revert log (2026-05-22): the previous 2026-05-22-AM demotions
+  # of user_crontab_modified / tamper_passwd / web_server_spawns_shell
+  # etc. baked Plesk's tooling into the shipped class_map. Restored
+  # to Class 1 here; FP gating now lives in the rule's actor-allowlist
+  # / Layer-2 contract layer, not the class.
   #
   # Loader hooks ────────────────────────────────────────────────
   - ld_so_preload_modified         # classic rootkit, package-managed gated
+  - ld_so_conf_modified            # gated by allowlist of package-manager actors
   - pam_module_drop                # backdoor PAM module
   # Kernel surface ──────────────────────────────────────────────
   - kernel_module_dropped          # package-managed gated
@@ -40,9 +48,19 @@ class_1:  # Hard invariants — auto-deny candidates
   - shell_with_socket_fd           # reverse-shell signature
   - ssh_tunnel_listener            # SSH -R/-L/-D
   - web_user_runs_db_client        # nginx/php-fpm spawning mysql
+  - web_server_spawns_shell        # actor-gated: panel/certbot in allowlist
+  - uid0_no_transition             # actor-gated: systemd-run --uid 0 allowed
   # Container escape ────────────────────────────────────────────
   - mount_host_root_into_container
   - container_escape_attempt
+  # Persistence — universally adversarial unless authentic actor ─
+  - user_crontab_modified          # actor-gated: panel cron drops in allowlist
+  - rc_local_modified              # actor-gated: distro installers in allowlist
+  - ssh_login_hook_dropped         # actor-gated: operator setup in allowlist
+  - ssh_key_added_root             # actor-gated: operator key-mgmt in allowlist
+  # Identity-store tamper ──────────────────────────────────────
+  - tamper_passwd                  # actor-gated: pwd-mgmt suite in allowlist
+  - tamper_shadow                  # actor-gated: pwd-mgmt suite in allowlist
   # Decoy / canary — adversarial by construction ────────────────
   - decoy_file_opened
   - decoy_service_connect
@@ -59,18 +77,11 @@ class_1:  # Hard invariants — auto-deny candidates
   - tamper.auditd_dead
   # Package-diff vs known-critical binaries — gated by manifest.
   - package_diff_critical_binary
+  # Universal Secret Gate — adversarial by construction ─────────
+  - credbroker.unauthentic_open    # lineage failed Layer-2 authenticity
+  - credbroker.honey_touched       # zero legitimate readers by design
 
 class_2:  # Strong exploit signals — freeze candidates
-  # Demoted from Class 1 after live FP observation:
-  - user_crontab_modified          # Imunify drops cron files legitimately
-  - rc_local_modified              # legacy init touched by some installers
-  - ssh_login_hook_dropped         # operators set up .ssh/rc legitimately
-  - ld_so_conf_modified            # package installs (e.g. /etc/ld.so.conf.d/*)
-  - tamper_passwd                  # has system-tool allowlist but Plesk uses
-  - tamper_shadow                  # non-listed tools (psa-related)
-  - ssh_key_added_root             # ops legitimately add keys
-  - web_server_spawns_shell        # Plesk + certbot hooks spawn shells
-  - uid0_no_transition             # systemd-run --uid 0, sudo edge cases
   # Memory-execution primitives ─────────────────────────────────
   - mem_mprotect_rwx
   - mem_canary_fail

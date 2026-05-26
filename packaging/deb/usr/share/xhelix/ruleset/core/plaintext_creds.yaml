@@ -1,0 +1,67 @@
+# Plaintext credential reads — fanotify FAN_OPEN_PERM on a curated
+# path list of common credential files (~/.aws/credentials, .npmrc,
+# .git-credentials, kube/docker tokens, SSH private keys, etc.).
+#
+# Detection mode by default: every open emits an event with the full
+# reader lineage; rule fires. Enforce mode (credbroker.plaintext.enforce:
+# true) additionally denies the open when the reader's comm/image is
+# not on the allowlist.
+---
+id: credbroker.plaintext_read
+desc: A watched plaintext credential file was opened — reader lineage recorded
+severity: warn
+mitre: [T1552.001, T1003]
+match: |
+  event.sensor == "credbroker" &&
+  "sealed_path" in event.tags &&
+  "lineage_chain" in event.tags
+tags: [credential_access, plaintext, detect_only]
+remediation: |
+  Triage the reader lineage (event.tags["lineage_chain"]). Legitimate
+  readers are tools like aws-cli, gcloud, kubectl, npm, git, ssh —
+  these are in the default reader allowlist. ANY other reader
+  (curl from a php-fpm webshell, a find/grep loop, an editor plugin,
+  a process from /tmp) is by-construction suspicious.
+
+  To turn alerts into kernel-side blocks, set in xhelix.yaml:
+    credbroker:
+      plaintext:
+        enforce: true
+  Then restart xhelix. Non-allowlisted reads of these files will be
+  denied at FAN_OPEN_PERM time (synchronous kernel hold + -EPERM).
+test_id: PT-01
+---
+id: credbroker.plaintext_read_from_webserver
+desc: A plaintext credential file was opened by a process in a web-server lineage
+severity: high
+mitre: [T1552.001, T1190]
+match: |
+  event.sensor == "credbroker" &&
+  "sealed_path" in event.tags &&
+  "parent_comm" in event.tags &&
+  event.tags["parent_comm"] in ["nginx", "apache2", "httpd", "php-fpm", "caddy", "haproxy", "lighttpd"]
+tags: [credential_access, plaintext, post_exploitation, web]
+remediation: |
+  Web-server-rooted lineages have ZERO legitimate reason to open
+  credential files. This is post-RCE credential harvest (CVE-2025-49113
+  / Shai-Hulud / TeamTNT / Megalodon shape). Quarantine the lineage
+  immediately; investigate the web request that started it.
+test_id: PT-02
+---
+id: credbroker.plaintext_read_from_tmp
+desc: A plaintext credential file was opened by a binary running from /tmp
+severity: critical
+mitre: [T1552.001, T1059]
+match: |
+  event.sensor == "credbroker" &&
+  "sealed_path" in event.tags &&
+  (event.image.startsWith("/tmp/") ||
+   event.image.startsWith("/var/tmp/") ||
+   event.image.startsWith("/dev/shm/"))
+tags: [credential_access, plaintext, post_exploitation, dropper]
+remediation: |
+  A /tmp-resident binary touching credential files is a near-certain
+  malware indicator. Capture the binary (hash, full path), terminate
+  its lineage, audit recent file-writes from that PID's ancestors to
+  trace where the dropper came from.
+test_id: PT-03

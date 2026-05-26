@@ -1,0 +1,10 @@
+app: docker
+kind: service
+match:
+  exe_path:
+    - /usr/bin/dockerd
+    - /usr/bin/containerd
+    - /usr/bin/runc
+  cgroup_substring:
+    - "docker.service"
+    - "containerd.service"

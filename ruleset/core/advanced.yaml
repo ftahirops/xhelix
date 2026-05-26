@@ -83,7 +83,7 @@ mitre: [T1548.001]
 match: |
   event.sensor == "fim" &&
   event.tags["suid_set"] == "true" &&
-  event.tags["package_managed"] != "true"
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
 tags: [persistence, privilege_escalation]
 remediation: |
   SUID binaries are a classic persistence mechanism.

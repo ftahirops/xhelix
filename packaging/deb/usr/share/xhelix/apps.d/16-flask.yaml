@@ -1,0 +1,9 @@
+app: flask
+kind: web
+match:
+  argv_substring:
+    - "flask run"
+    - "flask --app"
+    - "FLASK_APP"
+  exe_regex:
+    - "^/usr/bin/(gunicorn|uwsgi|python)"

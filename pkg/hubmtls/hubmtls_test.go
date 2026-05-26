@@ -174,7 +174,10 @@ func TestUnauthorisedClientRejected(t *testing.T) {
 	serverCfg, _ := hubCA.ServerTLSConfig(serverCert, serverKey)
 	clientCfg, _ := ClientTLSConfig(hubCA.CertPEM, rogueCert, rogueKey, "localhost")
 
-	ln, _ := tls.Listen("tcp", "127.0.0.1:0", serverCfg)
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverCfg)
+	if err != nil {
+		t.Fatalf("tls.Listen: %v", err)
+	}
 	defer ln.Close()
 	go func() {
 		conn, err := ln.Accept()

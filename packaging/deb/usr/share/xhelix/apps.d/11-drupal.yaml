@@ -1,0 +1,12 @@
+app: drupal
+kind: web
+match:
+  cgroup_substring:
+    - "drupal"
+  argv_substring:
+    - "/sites/default/settings.php"
+    - "/core/includes/bootstrap.inc"
+    - "drush"
+  parent_image:
+    - "/usr/sbin/nginx"
+    - "/usr/sbin/apache2"
