@@ -18,40 +18,10 @@
 .idea/
 .claude/
 
-# Documentation (deliberately excluded from public push)
-# Exceptions: ARCHITECTURE.md + ROADMAP.md are the canonical design
-# references and ARE tracked. Everything else stays out.
+# Documentation — all .md files excluded from git tracking
+# (operator preference: docs are private; design/strategy/phase
+# reports live on disk only). No whitelist exceptions.
 *.md
-!ARCHITECTURE.md
-!ROADMAP.md
-!DEFENSE_PRIORITIES.md
-!ZERO_DAY_GUARDIAN.md
-!ENTERPRISE_ARCHITECTURE.md
-!SUPPLY_CHAIN_DEFENSE.md
-!CI_CD_GUARD.md
-!AUTO_ADVISOR.md
-!POST_COMPROMISE_DEFENSE.md
-!DATA_LEAK_FABRIC.md
-!BEHAVIORAL_DEFENSE.md
-!ERRORS.md
-!CLAUDE.md
-!CROWN_JEWEL_PROFILE.md
-!FULL_TAKEOVER_DETECTION.md
-!PHASE_1_RESULTS.md
-!PHASE_2_RESULTS.md
-!TEST_PLAN.md
-!DETECTION_GAPS.md
-!ALERTS_AND_FP_PLAN.md
-!REMOTE_ATTACK.md
-!DETECTION_COVERAGE_MATRIX.md
-!MIXED_TRAFFIC_RESULTS.md
-!RING_A_LAB.md
-!SOAK_HARNESS.md
-!CAUSAL_CHAIN_COVERAGE.md
-!CONTAINMENT_DESIGN.md
-!REFACTOR_ROADMAP.md
-!PROTECTED_SERVICES_TRAP.md
-!tests/redteam/README.md
 
 # Local state for development
 /var/
