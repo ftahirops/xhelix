@@ -1,0 +1,246 @@
+id,category,desc,detector,expect_rule,status,matched,noise,duration,started_at
+CRED-000,CRED,cat reads /root/.aws/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.031529426574707,2026-05-22T20:20:05.459652+00:00
+CRED-001,CRED,cat reads /root/.aws/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,10,8.037401676177979,2026-05-22T20:20:13.508517+00:00
+CRED-002,CRED,cat reads /root/.aws/config (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.02978229522705,2026-05-22T20:20:21.562665+00:00
+CRED-003,CRED,cat reads /root/.aws/config (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.039977312088013,2026-05-22T20:20:29.607801+00:00
+CRED-004,CRED,cat reads /root/.azure/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.026349782943726,2026-05-22T20:20:37.663458+00:00
+CRED-005,CRED,cat reads /root/.azure/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.03709077835083,2026-05-22T20:20:45.704144+00:00
+CRED-006,CRED,cat reads /root/.config/gcloud/credentials.db (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,8,8.02357029914856,2026-05-22T20:20:53.751735+00:00
+CRED-007,CRED,cat reads /root/.config/gcloud/credentials.db (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,2,1,8.038153409957886,2026-05-22T20:21:01.791028+00:00
+CRED-008,CRED,cat reads /root/.npmrc (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,9,0,8.016806840896606,2026-05-22T20:21:09.839282+00:00
+CRED-009,CRED,cat reads /root/.npmrc (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,3,1,8.040884733200073,2026-05-22T20:21:17.873421+00:00
+CRED-010,CRED,head reads /root/.aws/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.027445793151855,2026-05-22T20:21:25.931364+00:00
+CRED-011,CRED,head reads /root/.aws/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.0401771068573,2026-05-22T20:21:33.974403+00:00
+CRED-012,CRED,head reads /root/.aws/config (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.026946544647217,2026-05-22T20:21:42.031069+00:00
+CRED-013,CRED,head reads /root/.aws/config (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.039610147476196,2026-05-22T20:21:50.074617+00:00
+CRED-014,CRED,head reads /root/.azure/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.026796817779541,2026-05-22T20:21:58.127713+00:00
+CRED-015,CRED,head reads /root/.azure/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.040363311767578,2026-05-22T20:22:06.173711+00:00
+CRED-016,CRED,head reads /root/.config/gcloud/credentials.db (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,5,8.026534080505371,2026-05-22T20:22:14.229899+00:00
+CRED-017,CRED,head reads /root/.config/gcloud/credentials.db (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.038021087646484,2026-05-22T20:22:22.273734+00:00
+CRED-018,CRED,head reads /root/.npmrc (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.024772882461548,2026-05-22T20:22:30.328768+00:00
+CRED-019,CRED,head reads /root/.npmrc (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.036344051361084,2026-05-22T20:22:38.365756+00:00
+CRED-020,CRED,dd reads /root/.aws/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.026598453521729,2026-05-22T20:22:46.418985+00:00
+CRED-021,CRED,dd reads /root/.aws/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,5,8.041648149490356,2026-05-22T20:22:54.457421+00:00
+CRED-022,CRED,dd reads /root/.aws/config (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,5,8.021029233932495,2026-05-22T20:23:02.509598+00:00
+CRED-023,CRED,dd reads /root/.aws/config (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.03493595123291,2026-05-22T20:23:10.545031+00:00
+CRED-024,CRED,dd reads /root/.azure/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.027112007141113,2026-05-22T20:23:18.597644+00:00
+CRED-025,CRED,dd reads /root/.azure/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.039469480514526,2026-05-22T20:23:26.642374+00:00
+CRED-026,CRED,dd reads /root/.config/gcloud/credentials.db (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.02709412574768,2026-05-22T20:23:34.696120+00:00
+CRED-027,CRED,dd reads /root/.config/gcloud/credentials.db (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.038910150527954,2026-05-22T20:23:42.738783+00:00
+CRED-028,CRED,dd reads /root/.npmrc (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.025145292282104,2026-05-22T20:23:50.794051+00:00
+CRED-029,CRED,dd reads /root/.npmrc (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,9,8.043730020523071,2026-05-22T20:23:58.835155+00:00
+CRED-030,CRED,awk reads /root/.aws/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.030893564224243,2026-05-22T20:24:06.896742+00:00
+CRED-031,CRED,awk reads /root/.aws/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.042256593704224,2026-05-22T20:24:14.941180+00:00
+CRED-032,CRED,awk reads /root/.aws/config (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.02879285812378,2026-05-22T20:24:22.999738+00:00
+CRED-033,CRED,awk reads /root/.aws/config (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.042514324188232,2026-05-22T20:24:31.044604+00:00
+CRED-034,CRED,awk reads /root/.azure/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.026962757110596,2026-05-22T20:24:39.104105+00:00
+CRED-035,CRED,awk reads /root/.azure/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.041826963424683,2026-05-22T20:24:47.147321+00:00
+CRED-036,CRED,awk reads /root/.config/gcloud/credentials.db (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,8,8.032452583312988,2026-05-22T20:24:55.206480+00:00
+CRED-037,CRED,awk reads /root/.config/gcloud/credentials.db (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,5,8.039666652679443,2026-05-22T20:25:03.253471+00:00
+CRED-038,CRED,awk reads /root/.npmrc (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.027799129486084,2026-05-22T20:25:11.306298+00:00
+CRED-039,CRED,awk reads /root/.npmrc (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.0253746509552,2026-05-22T20:25:19.344087+00:00
+CRED-040,CRED,sed reads /root/.aws/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.025249719619751,2026-05-22T20:25:27.384172+00:00
+CRED-041,CRED,sed reads /root/.aws/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.038329124450684,2026-05-22T20:25:35.425126+00:00
+CRED-042,CRED,sed reads /root/.aws/config (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.029908418655396,2026-05-22T20:25:43.480113+00:00
+CRED-043,CRED,sed reads /root/.aws/config (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.039730548858643,2026-05-22T20:25:51.526743+00:00
+CRED-044,CRED,sed reads /root/.azure/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,8,8.022221088409424,2026-05-22T20:25:59.582323+00:00
+CRED-045,CRED,sed reads /root/.azure/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.03341555595398,2026-05-22T20:26:07.616042+00:00
+CRED-046,CRED,sed reads /root/.config/gcloud/credentials.db (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.0232515335083,2026-05-22T20:26:15.667409+00:00
+CRED-047,CRED,sed reads /root/.config/gcloud/credentials.db (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,3,1,8.033169507980347,2026-05-22T20:26:23.704453+00:00
+CRED-048,CRED,sed reads /root/.npmrc (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.028919696807861,2026-05-22T20:26:31.754126+00:00
+CRED-049,CRED,sed reads /root/.npmrc (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.04300045967102,2026-05-22T20:26:39.800723+00:00
+CRED-050,CRED,grep reads /root/.aws/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.025429725646973,2026-05-22T20:26:47.860383+00:00
+CRED-051,CRED,grep reads /root/.aws/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,2,5,8.037750005722046,2026-05-22T20:26:55.901801+00:00
+CRED-052,CRED,grep reads /root/.aws/config (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,6,8.024296522140503,2026-05-22T20:27:03.956843+00:00
+CRED-053,CRED,grep reads /root/.aws/config (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,2,8.033882141113281,2026-05-22T20:27:11.993708+00:00
+CRED-054,CRED,grep reads /root/.azure/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,4,8.02784514427185,2026-05-22T20:27:20.043469+00:00
+CRED-055,CRED,grep reads /root/.azure/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,2,8.033573865890503,2026-05-22T20:27:28.084098+00:00
+CRED-056,CRED,grep reads /root/.config/gcloud/credentials.db (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.02583646774292,2026-05-22T20:27:36.128610+00:00
+CRED-057,CRED,grep reads /root/.config/gcloud/credentials.db (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,2,8.040417432785034,2026-05-22T20:27:44.171439+00:00
+CRED-058,CRED,grep reads /root/.npmrc (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.029284715652466,2026-05-22T20:27:52.227422+00:00
+CRED-059,CRED,grep reads /root/.npmrc (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,12,8.041226148605347,2026-05-22T20:28:00.272609+00:00
+CRED-060,CRED,tail reads /root/.aws/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.02491283416748,2026-05-22T20:28:08.328844+00:00
+CRED-061,CRED,tail reads /root/.aws/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.035183668136597,2026-05-22T20:28:16.367480+00:00
+CRED-062,CRED,tail reads /root/.aws/config (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.02339768409729,2026-05-22T20:28:24.417797+00:00
+CRED-063,CRED,tail reads /root/.aws/config (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.040137767791748,2026-05-22T20:28:32.456959+00:00
+CRED-064,CRED,tail reads /root/.azure/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.030052423477173,2026-05-22T20:28:40.513513+00:00
+CRED-065,CRED,tail reads /root/.azure/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.039786577224731,2026-05-22T20:28:48.560083+00:00
+CRED-066,CRED,tail reads /root/.config/gcloud/credentials.db (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,8,8.025380849838257,2026-05-22T20:28:56.616854+00:00
+CRED-068,CRED,tail reads /root/.npmrc (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.027257919311523,2026-05-22T20:29:13.739686+00:00
+CRED-069,CRED,tail reads /root/.npmrc (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,5,8.038873195648193,2026-05-22T20:29:21.782442+00:00
+CRED-070,CRED,wc reads /root/.aws/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.027180194854736,2026-05-22T20:29:29.834854+00:00
+CRED-071,CRED,wc reads /root/.aws/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.041428804397583,2026-05-22T20:29:37.878058+00:00
+CRED-072,CRED,wc reads /root/.aws/config (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.028390645980835,2026-05-22T20:29:45.933415+00:00
+CRED-073,CRED,wc reads /root/.aws/config (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,6,8.040043115615845,2026-05-22T20:29:53.978265+00:00
+CRED-075,CRED,wc reads /root/.azure/credentials (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.035781383514404,2026-05-22T20:30:10.987904+00:00
+CRED-076,CRED,wc reads /root/.config/gcloud/credentials.db (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,5,8.025989770889282,2026-05-22T20:30:19.040929+00:00
+CRED-077,CRED,wc reads /root/.config/gcloud/credentials.db (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.0357666015625,2026-05-22T20:30:27.081640+00:00
+CRED-078,CRED,wc reads /root/.npmrc (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.02601408958435,2026-05-22T20:30:35.134749+00:00
+CRED-079,CRED,wc reads /root/.npmrc (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.032184839248657,2026-05-22T20:30:43.175318+00:00
+CRED-081,CRED,procfs read /proc/1/environ,procscrape,cred_proc_scrape,PASS,5,0,10.02655839920044,2026-05-22T20:30:51.222634+00:00
+CRED-082,CRED,procfs read /proc/$(pgrep -o sshd)/environ,procscrape,cred_proc_scrape,PASS,2,5,10.043676137924194,2026-05-22T20:31:01.265448+00:00
+CRED-083,CRED,procfs read /proc/$(pgrep -o systemd)/environ,procscrape,cred_proc_scrape,PASS,2,0,10.06122374534607,2026-05-22T20:31:11.324016+00:00
+CRED-085,CRED,procfs read /proc/1/maps,procscrape,cred_proc_scrape,PASS,1,0,10.024847269058228,2026-05-22T20:31:31.456254+00:00
+CRED-086,CRED,procfs read /proc/$(pgrep -o sshd)/maps,procscrape,cred_proc_scrape,PASS,1,0,10.060434579849243,2026-05-22T20:31:41.497153+00:00
+CRED-087,CRED,procfs read /proc/$(pgrep -o systemd)/maps,procscrape,cred_proc_scrape,PASS,4,0,10.061293840408325,2026-05-22T20:31:51.573775+00:00
+CRED-090,CRED,procfs read /proc/$(pgrep -o sshd)/mem,procscrape,cred_proc_scrape,PASS,1,4,10.036897897720337,2026-05-22T20:32:21.756697+00:00
+CRED-091,CRED,procfs read /proc/$(pgrep -o systemd)/mem,procscrape,cred_proc_scrape,PASS,1,0,10.061123132705688,2026-05-22T20:32:31.811940+00:00
+CRED-093,CRED,procfs read /proc/1/auxv,procscrape,cred_proc_scrape,PASS,5,2,10.02820611000061,2026-05-22T20:32:51.959470+00:00
+CRED-094,CRED,procfs read /proc/$(pgrep -o sshd)/auxv,procscrape,cred_proc_scrape,PASS,1,0,10.040260553359985,2026-05-22T20:33:02.003595+00:00
+CRED-095,CRED,procfs read /proc/$(pgrep -o systemd)/auxv,procscrape,cred_proc_scrape,PASS,1,5,10.058313846588135,2026-05-22T20:33:12.059001+00:00
+CRED-097,CRED,mass scrape 10 pids' /proc/*/environ,procscrape,cred_proc_scrape,PASS,21,0,15.055108070373535,2026-05-22T20:33:32.207295+00:00
+CRED-098,CRED,mass scrape 50 pids' /proc/*/environ,procscrape,cred_proc_scrape,PASS,105,4,15.157257795333862,2026-05-22T20:33:47.275217+00:00
+CRED-099,CRED,mass scrape 100 pids' /proc/*/environ,procscrape,cred_proc_scrape,PASS,201,5,15.235493898391724,2026-05-22T20:34:02.447017+00:00
+PERS-001,PERSISTENCE,write /etc/cron.d/test-0 (variant 0),fim,cron_new_unit,PASS,1,0,12.033559799194336,2026-05-22T20:34:17.702191+00:00
+PERS-002,PERSISTENCE,write /etc/cron.d/test-1 (variant 1),fim,cron_new_unit,PASS,1,0,12.035032987594604,2026-05-22T20:34:29.752502+00:00
+PERS-003,PERSISTENCE,write /etc/cron.d/test-2 (variant 2),fim,cron_new_unit,PASS,1,0,12.035958290100098,2026-05-22T20:34:41.804745+00:00
+PERS-004,PERSISTENCE,write /etc/cron.d/test-3 (variant 3),fim,cron_new_unit,PASS,3,4,12.034473657608032,2026-05-22T20:34:53.857239+00:00
+PERS-006,PERSISTENCE,write /etc/cron.hourly/test-5 (variant 0),fim,cron_new_unit|fim\.drift,PASS,1,0,12.03421688079834,2026-05-22T20:35:18.064978+00:00
+PERS-007,PERSISTENCE,write /etc/cron.hourly/test-6 (variant 1),fim,cron_new_unit|fim\.drift,PASS,1,0,12.02372145652771,2026-05-22T20:35:30.113490+00:00
+PERS-008,PERSISTENCE,write /etc/cron.hourly/test-7 (variant 2),fim,cron_new_unit|fim\.drift,PASS,1,0,12.03115463256836,2026-05-22T20:35:42.153097+00:00
+PERS-009,PERSISTENCE,write /etc/cron.hourly/test-8 (variant 3),fim,cron_new_unit|fim\.drift,PASS,2,4,12.03446888923645,2026-05-22T20:35:54.200725+00:00
+PERS-011,PERSISTENCE,write /etc/cron.daily/test-10 (variant 0),fim,cron_new_unit|fim\.drift,PASS,1,4,12.029906511306763,2026-05-22T20:36:06.406019+00:00
+PERS-012,PERSISTENCE,write /etc/cron.daily/test-11 (variant 1),fim,cron_new_unit|fim\.drift,PASS,1,0,12.030152559280396,2026-05-22T20:36:18.451948+00:00
+PERS-013,PERSISTENCE,write /etc/cron.daily/test-12 (variant 2),fim,cron_new_unit|fim\.drift,PASS,1,0,12.032665729522705,2026-05-22T20:36:30.499312+00:00
+PERS-014,PERSISTENCE,write /etc/cron.daily/test-13 (variant 3),fim,cron_new_unit|fim\.drift,PASS,2,0,12.029344081878662,2026-05-22T20:36:42.548203+00:00
+PERS-016,PERSISTENCE,write /etc/cron.weekly/test-15 (variant 0),fim,cron_new_unit|fim\.drift,PASS,1,6,12.027598857879639,2026-05-22T20:36:54.744089+00:00
+PERS-017,PERSISTENCE,write /etc/cron.weekly/test-16 (variant 1),fim,cron_new_unit|fim\.drift,PASS,1,4,12.020211696624756,2026-05-22T20:37:06.783651+00:00
+PERS-018,PERSISTENCE,write /etc/cron.weekly/test-17 (variant 2),fim,cron_new_unit|fim\.drift,PASS,4,0,12.036000490188599,2026-05-22T20:37:18.821030+00:00
+PERS-019,PERSISTENCE,write /etc/cron.weekly/test-18 (variant 3),fim,cron_new_unit|fim\.drift,PASS,2,2,12.029262065887451,2026-05-22T20:37:30.871568+00:00
+PERS-021,PERSISTENCE,write /var/spool/cron/crontabs/.testu20 (variant 0),fim,cron|user_crontab,PASS,4,0,12.02603554725647,2026-05-22T20:37:43.063013+00:00
+PERS-022,PERSISTENCE,write /var/spool/cron/crontabs/.testu21 (variant 1),fim,cron|user_crontab,PASS,4,2,12.025101900100708,2026-05-22T20:37:55.103230+00:00
+PERS-036,PERSISTENCE,write /etc/profile.d/test35.sh (variant 0),fim,profile_d_dropped,PASS,1,0,12.03321361541748,2026-05-22T20:40:44.083426+00:00
+PERS-037,PERSISTENCE,write /etc/profile.d/test36.sh (variant 1),fim,profile_d_dropped,PASS,1,10,12.031553268432617,2026-05-22T20:40:56.133830+00:00
+PERS-038,PERSISTENCE,write /etc/profile.d/test37.sh (variant 2),fim,profile_d_dropped,PASS,1,0,12.026990413665771,2026-05-22T20:41:08.176724+00:00
+PERS-039,PERSISTENCE,write /etc/profile.d/test38.sh (variant 3),fim,profile_d_dropped,PASS,2,0,12.029906988143921,2026-05-22T20:41:20.216967+00:00
+PERS-051,PERSISTENCE,write /lib/security/test50.so (variant 0),fim,pam_module_drop,PASS,1,0,12.030940055847168,2026-05-22T20:43:45.098444+00:00
+PERS-052,PERSISTENCE,write /lib/security/test51.so (variant 1),fim,pam_module_drop,PASS,1,9,12.0322847366333,2026-05-22T20:43:57.146329+00:00
+PERS-053,PERSISTENCE,write /lib/security/test52.so (variant 2),fim,pam_module_drop,PASS,1,0,12.032010555267334,2026-05-22T20:44:09.194355+00:00
+PERS-054,PERSISTENCE,write /lib/security/test53.so (variant 3),fim,pam_module_drop,PASS,1,0,12.031592845916748,2026-05-22T20:44:21.243140+00:00
+PERS-056,PERSISTENCE,write /etc/xdg/autostart/test55.desktop (variant 0),fim,xdg_autostart_dropped,PASS,1,0,12.030187368392944,2026-05-22T20:44:33.308244+00:00
+PERS-057,PERSISTENCE,write /etc/xdg/autostart/test56.desktop (variant 1),fim,xdg_autostart_dropped,PASS,1,0,12.03095269203186,2026-05-22T20:44:45.356126+00:00
+PERS-058,PERSISTENCE,write /etc/xdg/autostart/test57.desktop (variant 2),fim,xdg_autostart_dropped,PASS,1,12,12.027213335037231,2026-05-22T20:44:57.403449+00:00
+PERS-059,PERSISTENCE,write /etc/xdg/autostart/test58.desktop (variant 3),fim,xdg_autostart_dropped,PASS,1,0,12.028313875198364,2026-05-22T20:45:09.441182+00:00
+CRED-067,CRED,tail reads /root/.config/gcloud/credentials.db (from_tmp),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,1,8.04062819480896,2026-05-22T20:48:39.812406+00:00
+CRED-074,CRED,wc reads /root/.azure/credentials (direct),credbroker.plaintext,credbroker\.plaintext_read,PASS,1,0,8.028497695922852,2026-05-22T20:48:47.870469+00:00
+CRED-084,CRED,procfs read /proc/$(pgrep -of nginx | head -1)/environ,procscrape,cred_proc_scrape,PASS,4,2,8.066375732421875,2026-05-22T20:48:55.916780+00:00
+CRED-092,CRED,procfs read /proc/$(pgrep -of nginx | head -1)/mem,procscrape,cred_proc_scrape,PASS,2,4,8.039741039276123,2026-05-22T20:49:20.127410+00:00
+CRED-096,CRED,procfs read /proc/$(pgrep -of nginx | head -1)/auxv,procscrape,cred_proc_scrape,PASS,1,0,8.062298774719238,2026-05-22T20:49:28.180154+00:00
+PERS-005,PERSISTENCE,write /etc/cron.d/test-4 (variant 4),fim,cron_new_unit,PASS,1,1,12.032947540283203,2026-05-22T20:49:36.253258+00:00
+PERS-010,PERSISTENCE,write /etc/cron.hourly/test-9 (variant 4),fim,cron_new_unit|fim\.drift,PASS,1,0,12.038944244384766,2026-05-22T20:49:48.302623+00:00
+PERS-015,PERSISTENCE,write /etc/cron.daily/test-14 (variant 4),fim,cron_new_unit|fim\.drift,PASS,2,7,12.040499687194824,2026-05-22T20:50:00.355203+00:00
+PERS-024,PERSISTENCE,write /var/spool/cron/crontabs/.testu23 (variant 3),fim,cron|user_crontab,PASS,7,0,12.034660339355469,2026-05-22T20:50:36.525462+00:00
+PERS-025,PERSISTENCE,write /var/spool/cron/crontabs/.testu24 (variant 4),fim,cron|user_crontab,PASS,4,0,12.034888982772827,2026-05-22T20:50:48.576906+00:00
+PERS-040,PERSISTENCE,write /etc/profile.d/test39.sh (variant 4),fim,profile_d_dropped,PASS,1,4,12.036254405975342,2026-05-22T20:53:01.202345+00:00
+PERS-041,PERSISTENCE,write /etc/init.d/test40 (variant 0),fim,rc_local_modified|fim,PASS,3,0,12.034269571304321,2026-05-22T20:53:13.253044+00:00
+PERS-042,PERSISTENCE,write /etc/init.d/test41 (variant 1),fim,rc_local_modified|fim,PASS,3,0,12.032668590545654,2026-05-22T20:53:25.300991+00:00
+PERS-043,PERSISTENCE,write /etc/init.d/test42 (variant 2),fim,rc_local_modified|fim,PASS,3,0,12.040223360061646,2026-05-22T20:53:37.348663+00:00
+PERS-044,PERSISTENCE,write /etc/init.d/test43 (variant 3),fim,rc_local_modified|fim,PASS,5,6,12.04117202758789,2026-05-22T20:53:49.405506+00:00
+PERS-045,PERSISTENCE,write /etc/init.d/test44 (variant 4),fim,rc_local_modified|fim,PASS,3,4,12.028717517852783,2026-05-22T20:54:01.461911+00:00
+PERS-076,PERSISTENCE,authorized_keys append (variant 0),fim,ssh_key_added,PASS,2,0,12.043675422668457,2026-05-22T20:58:38.644755+00:00
+PERS-077,PERSISTENCE,authorized_keys append (variant 1),fim,ssh_key_added,PASS,2,7,12.036638975143433,2026-05-22T20:58:50.704388+00:00
+PERS-078,PERSISTENCE,authorized_keys append (variant 2),fim,ssh_key_added,PASS,2,4,12.044493198394775,2026-05-22T20:59:02.757568+00:00
+PERS-079,PERSISTENCE,authorized_keys append (variant 3),fim,ssh_key_added,PASS,2,0,12.044296741485596,2026-05-22T20:59:14.818275+00:00
+PERS-080,PERSISTENCE,authorized_keys append (variant 4),fim,ssh_key_added,PASS,2,0,12.036896467208862,2026-05-22T20:59:26.877651+00:00
+MEM-002,MEMORY,RWX mprotect python_two_step v1,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.059909343719482,2026-05-22T20:59:49.013096+00:00
+MEM-005,MEMORY,RWX mprotect python_two_step v4,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.068344354629517,2026-05-22T21:00:19.219332+00:00
+MEM-008,MEMORY,RWX mprotect python_two_step v7,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.06602144241333,2026-05-22T21:00:49.408221+00:00
+MEM-011,MEMORY,RWX mprotect python_two_step v10,ebpf.memory,mem_mprotect_rwx,PASS,1,5,10.06097149848938,2026-05-22T21:01:19.587318+00:00
+MEM-014,MEMORY,RWX mprotect python_two_step v13,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.064688682556152,2026-05-22T21:01:49.778913+00:00
+MEM-017,MEMORY,RWX mprotect python_two_step v16,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.06840467453003,2026-05-22T21:02:19.983462+00:00
+MEM-020,MEMORY,RWX mprotect python_two_step v19,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.061087846755981,2026-05-22T21:02:50.208151+00:00
+MEM-021,MEMORY,memfd execve memfd_python_truebin v0,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,7,10.041930437088013,2026-05-22T21:03:00.291285+00:00
+MEM-022,MEMORY,memfd execve memfd_python_lsbin v1,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.04055643081665,2026-05-22T21:03:10.347053+00:00
+MEM-023,MEMORY,memfd execve memfd_python_idbin v2,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.060595750808716,2026-05-22T21:03:20.404536+00:00
+MEM-024,MEMORY,memfd execve memfd_python_truebin v3,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.033143520355225,2026-05-22T21:03:30.479012+00:00
+MEM-025,MEMORY,memfd execve memfd_python_lsbin v4,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.062530755996704,2026-05-22T21:03:40.528796+00:00
+MEM-026,MEMORY,memfd execve memfd_python_idbin v5,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.058262586593628,2026-05-22T21:03:50.606229+00:00
+MEM-027,MEMORY,memfd execve memfd_python_truebin v6,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,2,9,10.062024354934692,2026-05-22T21:04:00.682110+00:00
+MEM-028,MEMORY,memfd execve memfd_python_lsbin v7,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.060634136199951,2026-05-22T21:04:10.760402+00:00
+MEM-029,MEMORY,memfd execve memfd_python_idbin v8,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.046618700027466,2026-05-22T21:04:20.838001+00:00
+MEM-030,MEMORY,memfd execve memfd_python_truebin v9,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.045560359954834,2026-05-22T21:04:30.902261+00:00
+MEM-031,MEMORY,memfd execve memfd_python_lsbin v10,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,3,10.04347276687622,2026-05-22T21:04:40.963719+00:00
+MEM-032,MEMORY,memfd execve memfd_python_idbin v11,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.063365697860718,2026-05-22T21:04:51.023737+00:00
+MEM-033,MEMORY,memfd execve memfd_python_truebin v12,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,9,10.061210870742798,2026-05-22T21:05:01.103193+00:00
+MEM-034,MEMORY,memfd execve memfd_python_lsbin v13,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.060500144958496,2026-05-22T21:05:11.181532+00:00
+MEM-035,MEMORY,memfd execve memfd_python_idbin v14,ebpf.spawn,memfd_run_pattern|from_memfd,PASS,1,0,10.061420440673828,2026-05-22T21:05:21.257534+00:00
+MEM-037,MEMORY,ptrace strace_attach v1,ebpf.proc,any_ptrace|ptrace,PASS,20,6,11.026818752288818,2026-05-22T21:06:01.365149+00:00
+CRED-088,CRED,procfs read /proc/$(pgrep -of nginx | head -1)/maps,procscrape,cred_proc_scrape,PASS,1,0,8.044751167297363,2026-05-22T21:12:41.836334+00:00
+CRED-089,CRED,procfs read /proc/1/mem,procscrape,cred_proc_scrape,PASS,1,0,8.02079153060913,2026-05-22T21:12:49.895259+00:00
+PERS-020,PERSISTENCE,write /etc/cron.weekly/test-19 (variant 4),fim,cron_new_unit|fim\.drift,PASS,1,6,12.03796935081482,2026-05-22T21:12:57.928809+00:00
+PERS-023,PERSISTENCE,write /var/spool/cron/crontabs/.testu22 (variant 2),fim,cron|user_crontab,PASS,4,6,12.027734518051147,2026-05-22T21:13:09.982242+00:00
+PERS-055,PERSISTENCE,write /lib/security/test54.so (variant 4),fim,pam_module_drop,PASS,1,0,12.045295476913452,2026-05-22T21:16:22.834747+00:00
+PERS-060,PERSISTENCE,write /etc/xdg/autostart/test59.desktop (variant 4),fim,xdg_autostart_dropped,PASS,1,0,12.036572694778442,2026-05-22T21:16:34.897549+00:00
+MEM-040,MEMORY,ptrace strace_attach v4,ebpf.proc,any_ptrace|ptrace,PASS,23,4,12.035489320755005,2026-05-22T21:22:50.715460+00:00
+MEM-043,MEMORY,ptrace strace_attach v7,ebpf.proc,any_ptrace|ptrace,PASS,23,0,12.032616138458252,2026-05-22T21:23:43.852201+00:00
+MEM-046,MEMORY,init_module syscall (variant 0),ebpf.module,kernel_module_load,PASS,1,0,10.064595699310303,2026-05-22T21:24:36.987249+00:00
+MEM-047,MEMORY,init_module syscall (variant 1),ebpf.module,kernel_module_load,PASS,1,0,10.053678512573242,2026-05-22T21:24:47.064498+00:00
+MEM-048,MEMORY,init_module syscall (variant 2),ebpf.module,kernel_module_load,PASS,1,8,10.072133541107178,2026-05-22T21:24:57.136951+00:00
+MEM-049,MEMORY,init_module syscall (variant 3),ebpf.module,kernel_module_load,PASS,1,6,10.063501358032227,2026-05-22T21:25:07.224495+00:00
+MEM-050,MEMORY,init_module syscall (variant 4),ebpf.module,kernel_module_load,PASS,1,0,10.063934326171875,2026-05-22T21:25:17.303336+00:00
+MEM-051,MEMORY,init_module syscall (variant 5),ebpf.module,kernel_module_load,PASS,1,5,10.067193269729614,2026-05-22T21:25:27.384698+00:00
+MEM-052,MEMORY,init_module syscall (variant 6),ebpf.module,kernel_module_load,PASS,1,0,10.067161083221436,2026-05-22T21:25:37.470258+00:00
+MEM-053,MEMORY,init_module syscall (variant 7),ebpf.module,kernel_module_load,PASS,1,0,10.062056064605713,2026-05-22T21:25:47.553029+00:00
+MEM-054,MEMORY,init_module syscall (variant 8),ebpf.module,kernel_module_load,PASS,1,0,10.046327114105225,2026-05-22T21:25:57.632690+00:00
+MEM-056,MEMORY,bpf() syscall (variant 0),ebpf.self,bpf_syscall_unexpected,PASS,346,351,10.04593825340271,2026-05-22T21:26:17.753477+00:00
+MEM-057,MEMORY,bpf() syscall (variant 1),ebpf.self,bpf_syscall_unexpected,PASS,28,28,10.039542436599731,2026-05-22T21:26:27.813983+00:00
+MEM-058,MEMORY,bpf() syscall (variant 2),ebpf.self,bpf_syscall_unexpected,PASS,182,182,10.042177677154541,2026-05-22T21:26:37.870188+00:00
+MEM-059,MEMORY,bpf() syscall (variant 3),ebpf.self,bpf_syscall_unexpected,PASS,1,1,10.063145875930786,2026-05-22T21:26:47.929580+00:00
+MEM-060,MEMORY,bpf() syscall (variant 4),ebpf.self,bpf_syscall_unexpected,PASS,1,10,10.066428899765015,2026-05-22T21:26:58.010891+00:00
+MEM-061,MEMORY,bpf() syscall (variant 5),ebpf.self,bpf_syscall_unexpected,PASS,346,346,10.05162262916565,2026-05-22T21:27:08.093431+00:00
+MEM-062,MEMORY,bpf() syscall (variant 6),ebpf.self,bpf_syscall_unexpected,PASS,28,28,10.035029649734497,2026-05-22T21:27:18.162502+00:00
+MEM-063,MEMORY,bpf() syscall (variant 7),ebpf.self,bpf_syscall_unexpected,PASS,182,182,10.045984745025635,2026-05-22T21:27:28.214036+00:00
+MEM-064,MEMORY,bpf() syscall (variant 8),ebpf.self,bpf_syscall_unexpected,PASS,1,1,10.06467080116272,2026-05-22T21:27:38.276486+00:00
+MEM-065,MEMORY,bpf() syscall (variant 9),ebpf.self,bpf_syscall_unexpected,PASS,1,1,10.061238050460815,2026-05-22T21:27:48.352117+00:00
+PERS-026,PERSISTENCE,write /var/spool/cron/crontabs/testu25 (variant 0),fim,cron_new_unit|user_crontab,PASS,4,0,12.039824962615967,2026-05-22T21:51:23.806180+00:00
+PERS-027,PERSISTENCE,write /var/spool/cron/crontabs/testu26 (variant 1),fim,cron_new_unit|user_crontab,PASS,4,0,12.033370733261108,2026-05-22T21:51:35.861148+00:00
+PERS-028,PERSISTENCE,write /var/spool/cron/crontabs/testu27 (variant 2),fim,cron_new_unit|user_crontab,PASS,4,5,12.034316778182983,2026-05-22T21:51:47.906299+00:00
+PERS-029,PERSISTENCE,write /var/spool/cron/crontabs/testu28 (variant 3),fim,cron_new_unit|user_crontab,PASS,8,3,12.037869215011597,2026-05-22T21:51:59.956233+00:00
+PERS-030,PERSISTENCE,write /var/spool/cron/crontabs/testu29 (variant 4),fim,cron_new_unit|user_crontab,PASS,4,0,12.038302183151245,2026-05-22T21:52:12.006628+00:00
+PERS-031,PERSISTENCE,write /etc/systemd/system/xtest30.service (variant 0),fim,systemd_unit_new,PASS,1,0,12.036789655685425,2026-05-22T21:52:24.062747+00:00
+PERS-032,PERSISTENCE,write /etc/systemd/system/xtest31.service (variant 1),fim,systemd_unit_new,PASS,1,0,12.037133693695068,2026-05-22T21:52:36.115956+00:00
+PERS-033,PERSISTENCE,write /etc/systemd/system/xtest32.service (variant 2),fim,systemd_unit_new,PASS,1,4,12.039955377578735,2026-05-22T21:52:48.169769+00:00
+PERS-034,PERSISTENCE,write /etc/systemd/system/xtest33.service (variant 3),fim,systemd_unit_new,PASS,2,6,12.04352068901062,2026-05-22T21:53:00.227575+00:00
+PERS-035,PERSISTENCE,write /etc/systemd/system/xtest34.service (variant 4),fim,systemd_unit_new,PASS,1,0,12.035515069961548,2026-05-22T21:53:12.284304+00:00
+PERS-046,PERSISTENCE,write /etc/init.d/test45 (variant 0),fim,fim\.drift|rc_local_modified,PASS,3,0,12.03671908378601,2026-05-22T21:53:24.335722+00:00
+PERS-047,PERSISTENCE,write /etc/init.d/test46 (variant 1),fim,fim\.drift|rc_local_modified,PASS,3,0,12.036906719207764,2026-05-22T21:53:36.388989+00:00
+PERS-048,PERSISTENCE,write /etc/init.d/test47 (variant 2),fim,fim\.drift|rc_local_modified,PASS,3,4,12.03750491142273,2026-05-22T21:53:48.440942+00:00
+PERS-049,PERSISTENCE,write /etc/init.d/test48 (variant 3),fim,fim\.drift|rc_local_modified,PASS,5,4,12.038193464279175,2026-05-22T21:54:00.494237+00:00
+PERS-050,PERSISTENCE,write /etc/init.d/test49 (variant 4),fim,fim\.drift|rc_local_modified,PASS,3,0,12.03965139389038,2026-05-22T21:54:12.547522+00:00
+PERS-061,PERSISTENCE,write /etc/xdg/autostart/test60.desktop (variant 0),fim,xdg_autostart_dropped|fim\.drift,PASS,1,0,12.03825831413269,2026-05-22T21:54:24.605830+00:00
+PERS-062,PERSISTENCE,write /etc/xdg/autostart/test61.desktop (variant 1),fim,xdg_autostart_dropped|fim\.drift,PASS,1,0,12.032441139221191,2026-05-22T21:54:36.657868+00:00
+PERS-063,PERSISTENCE,write /etc/xdg/autostart/test62.desktop (variant 2),fim,xdg_autostart_dropped|fim\.drift,PASS,1,0,12.039802312850952,2026-05-22T21:54:48.708023+00:00
+PERS-071,PERSISTENCE,authorized_keys append (variant 0),fim,ssh_key_added,PASS,2,0,12.043908596038818,2026-05-22T21:56:25.160376+00:00
+PERS-072,PERSISTENCE,authorized_keys append (variant 1),fim,ssh_key_added,PASS,2,0,12.040751218795776,2026-05-22T21:56:37.219338+00:00
+PERS-073,PERSISTENCE,authorized_keys append (variant 2),fim,ssh_key_added,PASS,2,0,12.047950506210327,2026-05-22T21:56:49.277454+00:00
+PERS-074,PERSISTENCE,authorized_keys append (variant 3),fim,ssh_key_added,PASS,3,9,12.042112350463867,2026-05-22T21:57:01.342389+00:00
+PERS-075,PERSISTENCE,authorized_keys append (variant 4),fim,ssh_key_added,PASS,2,0,12.038475036621094,2026-05-22T21:57:13.397121+00:00
+MEM-001,MEMORY,RWX mprotect python_two_step v0,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.06699800491333,2026-05-22T21:57:25.452938+00:00
+MEM-003,MEMORY,RWX mprotect c_mprotect v2,ebpf.memory,mem_mprotect_rwx,PASS,1,2,10.114313125610352,2026-05-22T21:57:35.535815+00:00
+MEM-004,MEMORY,RWX mprotect python_two_step v3,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.06726884841919,2026-05-22T21:57:45.667269+00:00
+MEM-006,MEMORY,RWX mprotect c_mprotect v5,ebpf.memory,mem_mprotect_rwx,PASS,1,7,10.099369525909424,2026-05-22T21:57:55.749490+00:00
+MEM-009,MEMORY,RWX mprotect c_mprotect v8,ebpf.memory,mem_mprotect_rwx,PASS,1,6,10.072781562805176,2026-05-22T21:58:15.928423+00:00
+MEM-010,MEMORY,RWX mprotect python_two_step v9,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.062319040298462,2026-05-22T21:58:26.016820+00:00
+MEM-012,MEMORY,RWX mprotect c_mprotect v11,ebpf.memory,mem_mprotect_rwx,PASS,1,2,10.104080200195312,2026-05-22T21:58:36.097877+00:00
+MEM-013,MEMORY,RWX mprotect python_two_step v12,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.063055515289307,2026-05-22T21:58:46.219042+00:00
+MEM-015,MEMORY,RWX mprotect c_mprotect v14,ebpf.memory,mem_mprotect_rwx,PASS,1,11,10.096702575683594,2026-05-22T21:58:56.299515+00:00
+MEM-016,MEMORY,RWX mprotect python_two_step v15,ebpf.memory,mem_mprotect_rwx,PASS,1,4,10.04311990737915,2026-05-22T21:59:06.413937+00:00
+MEM-019,MEMORY,RWX mprotect python_two_step v18,ebpf.memory,mem_mprotect_rwx,PASS,2,7,10.059325456619263,2026-05-22T21:59:26.560652+00:00
+MEM-055,MEMORY,init_module syscall (variant 9),ebpf.module,kernel_module_load,PASS,1,0,10.058342218399048,2026-05-22T22:01:50.920045+00:00
+C2-001,C2,bash/sh /dev/tcp reverse shell v0,ebpf.spawn,shell_with_socket_fd,PASS,1,8,8.042619943618774,2026-05-22T22:02:00.988983+00:00
+C2-002,C2,bash/sh /dev/tcp reverse shell v1,ebpf.spawn,shell_with_socket_fd,PASS,1,7,8.04370665550232,2026-05-22T22:02:09.044698+00:00
+C2-003,C2,bash/sh /dev/tcp reverse shell v2,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.049485921859741,2026-05-22T22:02:17.104586+00:00
+C2-005,C2,bash/sh /dev/tcp reverse shell v4,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.059276103973389,2026-05-22T22:02:33.216543+00:00
+C2-006,C2,bash/sh /dev/tcp reverse shell v5,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.047948360443115,2026-05-22T22:02:41.291000+00:00
+C2-007,C2,bash/sh /dev/tcp reverse shell v6,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.05583143234253,2026-05-22T22:02:49.356048+00:00
+C2-009,C2,bash/sh /dev/tcp reverse shell v8,ebpf.spawn,shell_with_socket_fd,PASS,1,7,8.052820682525635,2026-05-22T22:03:05.475454+00:00
+C2-010,C2,bash/sh /dev/tcp reverse shell v9,ebpf.spawn,shell_with_socket_fd,PASS,1,5,8.040962219238281,2026-05-22T22:03:13.547815+00:00
+C2-011,C2,bash/sh /dev/tcp reverse shell v10,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.052116632461548,2026-05-22T22:03:21.604698+00:00
+C2-013,C2,python socket revshell v0,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.101010799407959,2026-05-22T22:03:37.721030+00:00
+C2-014,C2,python socket revshell v1,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.08343505859375,2026-05-22T22:03:45.834272+00:00
+C2-015,C2,python socket revshell v2,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,9,8.089624166488647,2026-05-22T22:03:53.937604+00:00
+C2-016,C2,python socket revshell v3,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.101711750030518,2026-05-22T22:04:02.043760+00:00
+C2-017,C2,python socket revshell v4,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,8,8.099950075149536,2026-05-22T22:04:10.159853+00:00
+C2-018,C2,python socket revshell v5,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.098827600479126,2026-05-22T22:04:18.270154+00:00
+C2-019,C2,python socket revshell v6,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,9,8.105271816253662,2026-05-22T22:04:26.385559+00:00
+C2-020,C2,python socket revshell v7,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.10588788986206,2026-05-22T22:04:34.506076+00:00

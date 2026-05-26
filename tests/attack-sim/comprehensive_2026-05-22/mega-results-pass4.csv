@@ -1,0 +1,11 @@
+id,category,desc,detector,expect_rule,status,matched,noise,duration,started_at
+PERS-026,PERSISTENCE,write /etc/systemd/system/xtest25.service (variant 0),fim,systemd_unit_new,FAIL,0,0,12.036418676376343,2026-05-22T21:39:33.617083+00:00
+PERS-027,PERSISTENCE,write /etc/systemd/system/xtest26.service (variant 1),fim,systemd_unit_new,FAIL,0,0,12.040608644485474,2026-05-22T21:39:45.671053+00:00
+PERS-028,PERSISTENCE,write /etc/systemd/system/xtest27.service (variant 2),fim,systemd_unit_new,FAIL,0,13,12.038797378540039,2026-05-22T21:39:57.728211+00:00
+PERS-029,PERSISTENCE,write /etc/systemd/system/xtest28.service (variant 3),fim,systemd_unit_new,FAIL,0,0,12.037766218185425,2026-05-22T21:40:09.786431+00:00
+PERS-030,PERSISTENCE,write /etc/systemd/system/xtest29.service (variant 4),fim,systemd_unit_new,FAIL,0,0,12.041756629943848,2026-05-22T21:40:21.841091+00:00
+PERS-031,PERSISTENCE,write /etc/systemd/system/xtest30.timer (variant 0),fim,systemd_unit_new,FAIL,0,0,12.030646085739136,2026-05-22T21:40:33.897123+00:00
+PERS-032,PERSISTENCE,write /etc/systemd/system/xtest31.timer (variant 1),fim,systemd_unit_new,FAIL,0,0,12.038262367248535,2026-05-22T21:40:45.943101+00:00
+PERS-033,PERSISTENCE,write /etc/systemd/system/xtest32.timer (variant 2),fim,systemd_unit_new,FAIL,0,6,12.038906812667847,2026-05-22T21:40:57.998629+00:00
+PERS-034,PERSISTENCE,write /etc/systemd/system/xtest33.timer (variant 3),fim,systemd_unit_new,FAIL,0,0,12.037729978561401,2026-05-22T21:41:10.053679+00:00
+PERS-035,PERSISTENCE,write /etc/systemd/system/xtest34.timer (variant 4),fim,systemd_unit_new,FAIL,0,5,12.040808200836182,2026-05-22T21:41:22.108246+00:00

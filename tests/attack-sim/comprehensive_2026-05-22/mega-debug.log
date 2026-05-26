@@ -1,0 +1,453 @@
+[PERS-064] write /etc/xdg/autostart/test63.desktop (variant 3): matched=1 noise=7 status=PASS
+  rules in window: [('cred_proc_scrape', 4), ('xdg_autostart_dropped', 1), ('memfd_run_pattern', 1), ('cap.gained', 1), ('cron_new_unit', 1)]
+[PERS-065] write /etc/xdg/autostart/test64.desktop (variant 4): matched=1 noise=1 status=PASS
+  rules in window: [('lolbin.suspicious', 1), ('xdg_autostart_dropped', 1)]
+[PERS-066] write /etc/pam.d/test65 (variant 0): matched=0 noise=5 status=FAIL
+  rules in window: [('deleted_binary_running', 4), ('kallsyms_changed', 1)]
+[PERS-067] write /etc/pam.d/test66 (variant 1): matched=0 noise=0 status=FAIL
+  rules in window: []
+[PERS-068] write /etc/pam.d/test67 (variant 2): matched=0 noise=1 status=FAIL
+  rules in window: [('lolbin.suspicious', 1)]
+[PERS-069] write /etc/pam.d/test68 (variant 3): matched=0 noise=4 status=FAIL
+  rules in window: [('cred_proc_scrape', 3), ('cron_new_unit', 1)]
+[PERS-070] write /etc/pam.d/test69 (variant 4): matched=0 noise=1 status=FAIL
+  rules in window: [('lolbin.suspicious', 1)]
+[MEM-007] RWX mprotect python_two_step v6: matched=1 noise=5 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('mem_mprotect_rwx', 1), ('ungated', 1)]
+[MEM-018] RWX mprotect c_mprotect v17: matched=1 noise=2 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1), ('mem_mprotect_rwx', 1), ('ungated', 1)]
+[MEM-036] ptrace gdb_attach_detach v0: matched=0 noise=0 status=FAIL
+  rules in window: []
+[MEM-038] ptrace python_ptrace v2: matched=0 noise=3 status=FAIL
+  rules in window: [('cred_proc_scrape', 3)]
+[MEM-039] ptrace gdb_attach_detach v3: matched=0 noise=1 status=FAIL
+  rules in window: [('deleted_binary_running', 1)]
+[MEM-041] ptrace python_ptrace v5: matched=0 noise=0 status=FAIL
+  rules in window: []
+[MEM-042] ptrace gdb_attach_detach v6: matched=0 noise=0 status=FAIL
+  rules in window: []
+[MEM-044] ptrace python_ptrace v8: matched=0 noise=0 status=FAIL
+  rules in window: []
+[MEM-045] ptrace gdb_attach_detach v9: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-004] bash/sh /dev/tcp reverse shell v3: matched=0 noise=11 status=FAIL
+  rules in window: [('cred_proc_scrape', 5), ('revshell.detected', 2), ('lolbin.suspicious', 1), ('memfd_run_pattern', 1), ('cron_new_unit', 1), ('cap.gained', 1)]
+[C2-008] bash/sh /dev/tcp reverse shell v7: matched=0 noise=3 status=FAIL
+  rules in window: [('revshell.detected', 2), ('lolbin.suspicious', 1)]
+[C2-012] bash/sh /dev/tcp reverse shell v11: matched=0 noise=3 status=FAIL
+  rules in window: [('revshell.detected', 2), ('lolbin.suspicious', 1)]
+[C2-021] bare-IP TLS no SNI v0 port 14430: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-022] bare-IP TLS no SNI v1 port 14431: matched=0 noise=4 status=FAIL
+  rules in window: [('deleted_binary_running', 4)]
+[C2-023] bare-IP TLS no SNI v2 port 14432: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-024] bare-IP TLS no SNI v3 port 14433: matched=0 noise=5 status=FAIL
+  rules in window: [('cred_proc_scrape', 4), ('cron_new_unit', 1)]
+[C2-025] bare-IP TLS no SNI v4 port 14434: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-026] bare-IP TLS no SNI v5 port 14435: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-027] bare-IP TLS no SNI v6 port 14436: matched=0 noise=4 status=FAIL
+  rules in window: [('deleted_binary_running', 4)]
+[C2-028] bare-IP TLS no SNI v7 port 14437: matched=0 noise=3 status=FAIL
+  rules in window: [('cred_proc_scrape', 3)]
+[C2-029] bare-IP TLS no SNI v8 port 14438: matched=0 noise=5 status=FAIL
+  rules in window: [('cred_proc_scrape', 5)]
+[C2-030] bare-IP TLS no SNI v9 port 14439: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-031] DNS exfil burst 30 queries: matched=0 noise=4 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 3), ('process_spawn_burst', 1)]
+[C2-032] DNS exfil burst 40 queries: matched=0 noise=20 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 13), ('deleted_binary_running', 4), ('process_spawn_burst', 1), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[C2-033] DNS exfil burst 50 queries: matched=0 noise=3 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 2), ('process_spawn_burst', 1)]
+[C2-034] DNS exfil burst 60 queries: matched=0 noise=6 status=NO-RULE
+  rules in window: [('deleted_binary_running', 4), ('process_spawn_burst', 1), ('kallsyms_changed', 1)]
+[C2-035] DNS exfil burst 70 queries: matched=0 noise=5 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 3), ('process_spawn_burst', 1), ('cron_new_unit', 1)]
+[C2-036] DNS exfil burst 80 queries: matched=0 noise=5 status=NO-RULE
+  rules in window: [('deleted_binary_running', 4), ('process_spawn_burst', 1)]
+[C2-037] DNS exfil burst 90 queries: matched=0 noise=1 status=NO-RULE
+  rules in window: [('process_spawn_burst', 1)]
+[C2-038] DNS exfil burst 100 queries: matched=0 noise=3 status=NO-RULE
+  rules in window: [('process_spawn_burst', 1), ('memfd_run_pattern', 1), ('cred_proc_scrape', 1)]
+[C2-039] DNS exfil burst 110 queries: matched=0 noise=5 status=NO-RULE
+  rules in window: [('deleted_binary_running', 4), ('process_spawn_burst', 1)]
+[C2-040] DNS exfil burst 120 queries: matched=0 noise=1 status=NO-RULE
+  rules in window: [('process_spawn_burst', 1)]
+[C2-041] beacon 6cb @3s p14450: matched=0 noise=14 status=FAIL
+  rules in window: [('cred_proc_scrape', 6), ('deleted_binary_running', 4), ('cred_proc_scrape_environ_burst', 2), ('cron_new_unit', 1), ('kallsyms_changed', 1)]
+[C2-042] beacon 7cb @4s p14451: matched=0 noise=12 status=FAIL
+  rules in window: [('cred_proc_scrape', 4), ('deleted_binary_running', 4), ('memfd_run_pattern', 1), ('credbroker.plaintext_read', 1), ('cap.gained', 1), ('kallsyms_changed', 1)]
+[C2-043] SSH timeout after 75s: Command '['ssh', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes', '-o', 'ControlMaster=auto', '-o', 'ControlPath=/tmp/.mega_ssh_ctrl_3307612', '-o', 'ControlPersist=600', '65.108.246.67', 'OFF=$(stat -c %s /var/log/xhelix/alerts.jsonl 2>/dev/null || echo 0); for n in $(seq 1 8); do timeout 1 curl -s http://135.181.79.27:14452/b$n >/dev/null 2>&1; sleep 5; done; true > /dev/null 2>&1; sleep 45; tail -c +$((OFF+1)) /var/log/xhelix/alerts.jsonl 2>/dev/null']' timed out after 75 seconds
+[C2-043] beacon 8cb @5s p14452: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-044] beacon 9cb @3s p14453: matched=0 noise=11 status=FAIL
+  rules in window: [('deleted_binary_running', 6), ('cred_proc_scrape', 4), ('cron_new_unit', 1)]
+[C2-045] SSH timeout after 75s: Command '['ssh', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes', '-o', 'ControlMaster=auto', '-o', 'ControlPath=/tmp/.mega_ssh_ctrl_3307612', '-o', 'ControlPersist=600', '65.108.246.67', 'OFF=$(stat -c %s /var/log/xhelix/alerts.jsonl 2>/dev/null || echo 0); for n in $(seq 1 10); do timeout 1 curl -s http://135.181.79.27:14454/b$n >/dev/null 2>&1; sleep 4; done; true > /dev/null 2>&1; sleep 45; tail -c +$((OFF+1)) /var/log/xhelix/alerts.jsonl 2>/dev/null']' timed out after 75 seconds
+[C2-045] beacon 10cb @4s p14454: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-046] SSH timeout after 68s: Command '['ssh', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes', '-o', 'ControlMaster=auto', '-o', 'ControlPath=/tmp/.mega_ssh_ctrl_3307612', '-o', 'ControlPersist=600', '65.108.246.67', 'OFF=$(stat -c %s /var/log/xhelix/alerts.jsonl 2>/dev/null || echo 0); for n in $(seq 1 6); do timeout 1 curl -s http://135.181.79.27:14455/b$n >/dev/null 2>&1; sleep 5; done; true > /dev/null 2>&1; sleep 38; tail -c +$((OFF+1)) /var/log/xhelix/alerts.jsonl 2>/dev/null']' timed out after 68 seconds
+[C2-046] beacon 6cb @5s p14455: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-047] beacon 7cb @3s p14456: matched=0 noise=12 status=FAIL
+  rules in window: [('cred_proc_scrape', 4), ('deleted_binary_running', 4), ('memfd_run_pattern', 1), ('cap.gained', 1), ('cron_new_unit', 1), ('kallsyms_changed', 1)]
+[C2-048] SSH timeout after 70s: Command '['ssh', '-o', 'ConnectTimeout=10', '-o', 'BatchMode=yes', '-o', 'ControlMaster=auto', '-o', 'ControlPath=/tmp/.mega_ssh_ctrl_3307612', '-o', 'ControlPersist=600', '65.108.246.67', 'OFF=$(stat -c %s /var/log/xhelix/alerts.jsonl 2>/dev/null || echo 0); for n in $(seq 1 8); do timeout 1 curl -s http://135.181.79.27:14457/b$n >/dev/null 2>&1; sleep 4; done; true > /dev/null 2>&1; sleep 40; tail -c +$((OFF+1)) /var/log/xhelix/alerts.jsonl 2>/dev/null']' timed out after 70 seconds
+[C2-048] beacon 8cb @4s p14457: matched=0 noise=0 status=FAIL
+  rules in window: []
+[C2-049] raw socket variant 0: matched=0 noise=10 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 4), ('cred_proc_scrape_environ_burst', 4), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[C2-050] raw socket variant 1: matched=0 noise=5 status=NO-RULE
+  rules in window: [('credbroker.plaintext_read', 5)]
+[C2-051] raw socket variant 2: matched=0 noise=2316 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 1268), ('cred_proc_scrape_environ_burst', 1016), ('process_spawn_burst', 9), ('cap.gained', 8), ('memfd_run_pattern', 6), ('deleted_binary_running', 4), ('credbroker.plaintext_read', 3), ('contescape.detected', 2)]
+[C2-052] raw socket variant 3: matched=0 noise=11 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 8), ('process_spawn_burst', 1), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[C2-053] raw socket variant 4: matched=0 noise=0 status=NO-RULE
+  rules in window: []
+[C2-054] raw socket variant 5: matched=0 noise=31 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 24), ('deleted_binary_running', 4), ('process_spawn_burst', 3)]
+[C2-055] raw socket variant 6: matched=0 noise=0 status=NO-RULE
+  rules in window: []
+[C2-056] raw socket variant 7: matched=0 noise=0 status=NO-RULE
+  rules in window: []
+[C2-057] raw socket variant 8: matched=0 noise=0 status=NO-RULE
+  rules in window: []
+[C2-058] raw socket variant 9: matched=0 noise=0 status=NO-RULE
+  rules in window: []
+[C2-059] raw socket variant 10: matched=0 noise=6 status=NO-RULE
+  rules in window: [('cred_proc_scrape', 4), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[C2-060] raw socket variant 11: matched=0 noise=5 status=NO-RULE
+  rules in window: [('deleted_binary_running', 4), ('kallsyms_changed', 1)]
+[C2-061] raw socket variant 12: matched=0 noise=0 status=NO-RULE
+  rules in window: []
+[C2-062] raw socket variant 13: matched=0 noise=0 status=NO-RULE
+  rules in window: []
+[C2-063] raw socket variant 14: matched=0 noise=0 status=NO-RULE
+  rules in window: []
+[LEAK-001] curl POST 1KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-002] curl POST 3KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-003] curl POST 5KB exfil: matched=7 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 4), ('memfd_run_pattern', 1), ('cron_new_unit', 1), ('cap.gained', 1)]
+[LEAK-004] curl POST 7KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-005] curl POST 9KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-006] curl POST 11KB exfil: matched=6 noise=0 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('lolbin.suspicious', 2)]
+[LEAK-007] curl POST 13KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-008] curl POST 15KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-009] curl POST 17KB exfil: matched=4 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 3), ('cron_new_unit', 1)]
+[LEAK-010] curl POST 19KB exfil: matched=5 noise=0 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('kallsyms_changed', 1)]
+[LEAK-011] curl POST 21KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-012] curl POST 23KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-013] curl POST 25KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-014] curl POST 27KB exfil: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-015] curl POST 29KB exfil: matched=4 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 4)]
+[LEAK-016] tar+curl multi-stage exfil v0: matched=4 noise=0 status=PASS
+  rules in window: [('deleted_binary_running', 4)]
+[LEAK-017] tar+curl multi-stage exfil v1: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-018] tar+curl multi-stage exfil v2: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-019] tar+curl multi-stage exfil v3: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-020] tar+curl multi-stage exfil v4: matched=1 noise=0 status=PASS
+  rules in window: [('lolbin.suspicious', 1)]
+[LEAK-021] tar+curl multi-stage exfil v5: matched=25 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 19), ('memfd_run_pattern', 2), ('cap.gained', 2), ('credbroker.plaintext_read', 1), ('process_spawn_burst', 1)]
+[LEAK-022] tar+curl multi-stage exfil v6: matched=5 noise=0 status=PASS
+  rules in window: [('memfd_run_pattern', 2), ('lolbin.suspicious', 1), ('contescape.detected', 1), ('cap.gained', 1)]
+[LEAK-023] tar+curl multi-stage exfil v7: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-024] tar+curl multi-stage exfil v8: matched=6 noise=0 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('lolbin.suspicious', 2)]
+[LEAK-025] tar+curl multi-stage exfil v9: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-026] exfil /etc/passwd via curl POST: matched=0 noise=2 status=FAIL
+  rules in window: [('lolbin.suspicious', 1), ('cred_proc_scrape', 1)]
+[LEAK-027] exfil /etc/shadow via curl POST: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-028] exfil /etc/group via curl POST: matched=0 noise=22 status=FAIL
+  rules in window: [('cred_proc_scrape', 8), ('deleted_binary_running', 4), ('cap.gained', 4), ('memfd_run_pattern', 2), ('contescape.detected', 2), ('process_spawn_burst', 1), ('lolbin.suspicious', 1)]
+[LEAK-029] exfil /etc/sudoers via curl POST: matched=0 noise=1 status=FAIL
+  rules in window: [('lolbin.suspicious', 1)]
+[LEAK-030] exfil /etc/passwd via curl POST: matched=0 noise=1 status=FAIL
+  rules in window: [('cred_proc_scrape', 1)]
+[LEAK-031] exfil /etc/shadow via curl POST: matched=0 noise=19 status=FAIL
+  rules in window: [('cap.gained', 6), ('cred_proc_scrape', 6), ('memfd_run_pattern', 4), ('contescape.detected', 2), ('process_spawn_burst', 1)]
+[LEAK-032] exfil /etc/group via curl POST: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-033] exfil /etc/sudoers via curl POST: matched=1 noise=9 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('cred_proc_scrape', 3), ('lolbin.suspicious', 2), ('credbroker.plaintext_read', 1)]
+[LEAK-034] exfil /etc/passwd via curl POST: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-035] exfil /etc/shadow via curl POST: matched=0 noise=6 status=FAIL
+  rules in window: [('memfd_run_pattern', 2), ('cap.gained', 2), ('lolbin.suspicious', 1), ('contescape.detected', 1)]
+[LEAK-036] exfil /etc/group via curl POST: matched=0 noise=1 status=FAIL
+  rules in window: [('deleted_binary_running', 1)]
+[LEAK-037] exfil /etc/sudoers via curl POST: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-038] exfil /etc/passwd via curl POST: matched=0 noise=262 status=FAIL
+  rules in window: [('cred_proc_scrape', 78), ('bpf_syscall_unexpected', 66), ('ungated', 66), ('cred_proc_scrape_environ_burst', 24), ('process_spawn_burst', 11), ('cap.gained', 6), ('deleted_binary_running', 4), ('memfd_run_pattern', 3), ('contescape.detected', 2), ('lolbin.suspicious', 1)]
+[LEAK-039] exfil /etc/shadow via curl POST: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-040] exfil /etc/group via curl POST: matched=0 noise=76 status=FAIL
+  rules in window: [('cred_proc_scrape', 51), ('process_spawn_burst', 10), ('cap.gained', 5), ('deleted_binary_running', 4), ('memfd_run_pattern', 3), ('contescape.detected', 2), ('lolbin.suspicious', 1)]
+[LEAK-041] exfil /etc/sudoers via curl POST: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-042] exfil /etc/passwd via curl POST: matched=0 noise=6 status=FAIL
+  rules in window: [('cred_proc_scrape', 4), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[LEAK-043] exfil /etc/shadow via curl POST: matched=0 noise=5 status=FAIL
+  rules in window: [('deleted_binary_running', 4), ('kallsyms_changed', 1)]
+[LEAK-044] exfil /etc/group via curl POST: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-045] exfil /etc/sudoers via curl POST: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-046] db-style dump exfil v0: matched=19 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 12), ('memfd_run_pattern', 2), ('cap.gained', 2), ('cred_proc_scrape_environ_burst', 2), ('shell_with_socket_fd', 1)]
+[LEAK-047] db-style dump exfil v1: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-048] db-style dump exfil v2: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-049] db-style dump exfil v3: matched=13 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 6), ('deleted_binary_running', 4), ('lolbin.suspicious', 2), ('memfd_run_pattern', 1)]
+[LEAK-050] db-style dump exfil v4: matched=1 noise=0 status=PASS
+  rules in window: [('lolbin.suspicious', 1)]
+[LEAK-051] db-style dump exfil v5: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-052] db-style dump exfil v6: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-053] db-style dump exfil v7: matched=0 noise=0 status=FAIL
+  rules in window: []
+[LEAK-054] db-style dump exfil v8: matched=5 noise=0 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('kallsyms_changed', 1)]
+[LEAK-055] db-style dump exfil v9: matched=3 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 3)]
+[LEAK-056] environ self-leak v0: matched=2 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 1), ('cred_proc_scrape_environ_burst', 1)]
+[LEAK-057] environ self-leak v1: matched=2 noise=1 status=PASS
+  rules in window: [('lolbin.suspicious', 1), ('cred_proc_scrape', 1), ('cred_proc_scrape_environ_burst', 1)]
+[LEAK-058] environ self-leak v2: matched=2 noise=1 status=PASS
+  rules in window: [('lolbin.suspicious', 1), ('cred_proc_scrape', 1), ('cred_proc_scrape_environ_burst', 1)]
+[LEAK-059] environ self-leak v3: matched=2 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 1), ('cred_proc_scrape_environ_burst', 1)]
+[LEAK-060] environ self-leak v4: matched=2 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 1), ('cred_proc_scrape_environ_burst', 1)]
+[LEAK-061] environ self-leak v5: matched=6 noise=6 status=PASS
+  rules in window: [('cred_proc_scrape', 5), ('deleted_binary_running', 4), ('cred_proc_scrape_environ_burst', 1), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[LEAK-062] environ self-leak v6: matched=4 noise=4 status=PASS
+  rules in window: [('cred_proc_scrape', 3), ('memfd_run_pattern', 2), ('cap.gained', 2), ('cred_proc_scrape_environ_burst', 1)]
+[LEAK-063] environ self-leak v7: matched=15 noise=4 status=PASS
+  rules in window: [('cred_proc_scrape', 12), ('cred_proc_scrape_environ_burst', 3), ('process_spawn_burst', 2), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[LEAK-064] environ self-leak v8: matched=17 noise=1 status=PASS
+  rules in window: [('cred_proc_scrape', 12), ('cred_proc_scrape_environ_burst', 5), ('process_spawn_burst', 1)]
+[LEAK-065] environ self-leak v9: matched=2 noise=0 status=PASS
+  rules in window: [('cred_proc_scrape', 1), ('cred_proc_scrape_environ_burst', 1)]
+[EXP-001] tmp_true v0: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-002] tmp_true v1: matched=1 noise=11 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('cred_proc_scrape', 4), ('binary_runs_from_tmp', 1), ('memfd_run_pattern', 1), ('cap.gained', 1), ('cron_new_unit', 1)]
+[EXP-003] tmp_true v2: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-004] tmp_true v3: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-005] tmp_true v4: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-006] tmp_true v5: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-007] tmp_true v6: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-008] tmp_true v7: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-009] tmp_id v0: matched=1 noise=1 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1), ('deleted_binary_running', 1)]
+[EXP-010] tmp_id v1: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-011] tmp_id v2: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-012] tmp_id v3: matched=2 noise=4 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('binary_runs_from_tmp', 2)]
+[EXP-013] tmp_id v4: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-014] tmp_id v5: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-015] tmp_id v6: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-016] tmp_id v7: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-017] tmp_ls v0: matched=1 noise=10 status=PASS
+  rules in window: [('cred_proc_scrape', 4), ('deleted_binary_running', 4), ('binary_runs_from_tmp', 1), ('cron_new_unit', 1), ('kallsyms_changed', 1)]
+[EXP-018] tmp_ls v1: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-019] tmp_ls v2: matched=1 noise=17 status=PASS
+  rules in window: [('cred_proc_scrape', 12), ('cred_proc_scrape_environ_burst', 4), ('binary_runs_from_tmp', 1), ('process_spawn_burst', 1)]
+[EXP-020] tmp_ls v3: matched=1 noise=4 status=PASS
+  rules in window: [('cred_proc_scrape', 4), ('binary_runs_from_tmp', 1)]
+[EXP-021] tmp_ls v4: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-022] tmp_ls v5: matched=0 noise=15 status=FAIL
+  rules in window: [('process_spawn_burst', 11), ('deleted_binary_running', 4)]
+[EXP-023] tmp_ls v6: matched=2 noise=51 status=PASS
+  rules in window: [('cred_proc_scrape', 15), ('process_spawn_burst', 12), ('memfd_run_pattern', 12), ('cap.gained', 12), ('binary_runs_from_tmp', 2)]
+[EXP-024] tmp_ls v7: matched=1 noise=7 status=PASS
+  rules in window: [('cred_proc_scrape', 4), ('process_spawn_burst', 3), ('binary_runs_from_tmp', 1)]
+[EXP-025] vartmp_true v0: matched=1 noise=2 status=PASS
+  rules in window: [('process_spawn_burst', 2), ('binary_runs_from_tmp', 1)]
+[EXP-026] vartmp_true v1: matched=1 noise=2 status=PASS
+  rules in window: [('process_spawn_burst', 2), ('binary_runs_from_tmp', 1)]
+[EXP-027] vartmp_true v2: matched=1 noise=3 status=PASS
+  rules in window: [('process_spawn_burst', 3), ('binary_runs_from_tmp', 1)]
+[EXP-028] vartmp_true v3: matched=1 noise=7 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('process_spawn_burst', 2), ('binary_runs_from_tmp', 1), ('kallsyms_changed', 1)]
+[EXP-029] vartmp_true v4: matched=1 noise=1 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1), ('process_spawn_burst', 1)]
+[EXP-030] vartmp_true v5: matched=1 noise=2 status=PASS
+  rules in window: [('process_spawn_burst', 2), ('binary_runs_from_tmp', 1)]
+[EXP-031] vartmp_true v6: matched=1 noise=3 status=PASS
+  rules in window: [('process_spawn_burst', 3), ('binary_runs_from_tmp', 1)]
+[EXP-032] vartmp_true v7: matched=1 noise=5 status=PASS
+  rules in window: [('cred_proc_scrape', 3), ('process_spawn_burst', 2), ('binary_runs_from_tmp', 1)]
+[EXP-033] shm_true v0: matched=1 noise=4 status=PASS
+  rules in window: [('process_spawn_burst', 3), ('binary_runs_from_tmp', 1), ('shm.exec', 1)]
+[EXP-034] shm_true v1: matched=1 noise=3 status=PASS
+  rules in window: [('process_spawn_burst', 2), ('binary_runs_from_tmp', 1), ('shm.exec', 1)]
+[EXP-035] shm_true v2: matched=1 noise=9 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('binary_runs_from_tmp', 1), ('shm.exec', 1), ('process_spawn_burst', 1), ('memfd_run_pattern', 1), ('cap.gained', 1), ('cred_proc_scrape', 1)]
+[EXP-036] shm_true v3: matched=1 noise=1 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1), ('shm.exec', 1)]
+[EXP-037] shm_true v4: matched=1 noise=8 status=PASS
+  rules in window: [('cred_proc_scrape', 3), ('memfd_run_pattern', 2), ('cap.gained', 2), ('binary_runs_from_tmp', 1), ('shm.exec', 1)]
+[EXP-038] shm_true v5: matched=1 noise=1 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1), ('shm.exec', 1)]
+[EXP-039] shm_true v6: matched=1 noise=7 status=PASS
+  rules in window: [('cred_proc_scrape', 4), ('binary_runs_from_tmp', 1), ('shm.exec', 1), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[EXP-040] shm_true v7: matched=1 noise=23 status=PASS
+  rules in window: [('cred_proc_scrape', 8), ('memfd_run_pattern', 6), ('cap.gained', 6), ('cred_proc_scrape_environ_burst', 2), ('binary_runs_from_tmp', 1), ('shm.exec', 1)]
+[EXP-041] fake-nginx spawn shell: matched=1 noise=3 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1), ('process_spawn_burst', 1), ('cred_proc_scrape', 1), ('cred_proc_scrape_environ_burst', 1)]
+[EXP-042] fake-apache2 spawn shell: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-043] fake-httpd spawn shell: matched=2 noise=4 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('binary_runs_from_tmp', 2)]
+[EXP-044] fake-php-fpm spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-045] fake-caddy spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-046] fake-nginx spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-047] fake-apache2 spawn shell: matched=1 noise=14 status=PASS
+  rules in window: [('cred_proc_scrape', 8), ('memfd_run_pattern', 2), ('cap.gained', 2), ('binary_runs_from_tmp', 1), ('cron_new_unit', 1), ('process_spawn_burst', 1)]
+[EXP-048] fake-httpd spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-049] fake-php-fpm spawn shell: matched=1 noise=5 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('binary_runs_from_tmp', 1), ('kallsyms_changed', 1)]
+[EXP-050] fake-caddy spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-051] fake-nginx spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-052] fake-apache2 spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-053] fake-httpd spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-054] fake-php-fpm spawn shell: matched=1 noise=5 status=PASS
+  rules in window: [('cred_proc_scrape', 4), ('binary_runs_from_tmp', 1), ('memfd_run_pattern', 1)]
+[EXP-055] fake-caddy spawn shell: matched=1 noise=0 status=PASS
+  rules in window: [('binary_runs_from_tmp', 1)]
+[EXP-056] download_then_run v0: matched=0 noise=4 status=FAIL
+  rules in window: [('deleted_binary_running', 4)]
+[EXP-057] download_then_run v1: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-058] download_then_run v2: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-059] download_then_run v3: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-060] download_then_run v4: matched=0 noise=1 status=FAIL
+  rules in window: [('lolbin.suspicious', 1)]
+[EXP-061] download_then_run v5: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-062] download_then_run v6: matched=0 noise=6 status=FAIL
+  rules in window: [('cred_proc_scrape', 4), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[EXP-063] download_then_run v7: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-064] download_then_run v8: matched=0 noise=4 status=FAIL
+  rules in window: [('deleted_binary_running', 4)]
+[EXP-065] download_then_run v9: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-066] SUID binary v0: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-067] SUID binary v1: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-068] SUID binary v2: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-069] SUID binary v3: matched=0 noise=5 status=FAIL
+  rules in window: [('cred_proc_scrape', 3), ('credbroker.plaintext_read', 1), ('cron_new_unit', 1)]
+[EXP-070] SUID binary v4: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-071] SUID binary v5: matched=0 noise=2 status=FAIL
+  rules in window: [('deleted_binary_running', 2)]
+[EXP-072] SUID binary v6: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-073] SUID binary v7: matched=0 noise=4 status=FAIL
+  rules in window: [('deleted_binary_running', 4)]
+[EXP-074] SUID binary v8: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-075] SUID binary v9: matched=0 noise=6 status=FAIL
+  rules in window: [('cred_proc_scrape', 4), ('memfd_run_pattern', 1), ('cap.gained', 1)]
+[EXP-076] honey cat v0: matched=1 noise=0 status=PASS
+  rules in window: [('credbroker.honey_touched', 1)]
+[EXP-077] honey head v1: matched=1 noise=0 status=PASS
+  rules in window: [('credbroker.honey_touched', 1)]
+[EXP-078] honey python_open v2: matched=1 noise=2 status=PASS
+  rules in window: [('credbroker.honey_touched', 1), ('kallsyms_changed', 1), ('deleted_binary_running', 1)]
+[EXP-079] honey dd v3: matched=0 noise=5 status=FAIL
+  rules in window: [('credbroker.plaintext_read', 5)]
+[EXP-080] honey od v4: matched=1 noise=0 status=PASS
+  rules in window: [('credbroker.honey_touched', 1)]
+[EXP-081] honey cat v5: matched=1 noise=4 status=PASS
+  rules in window: [('deleted_binary_running', 4), ('credbroker.honey_touched', 1)]
+[EXP-082] honey head v6: matched=1 noise=0 status=PASS
+  rules in window: [('credbroker.honey_touched', 1)]
+[EXP-083] honey python_open v7: matched=1 noise=5 status=PASS
+  rules in window: [('cred_proc_scrape', 4), ('credbroker.honey_touched', 1), ('cron_new_unit', 1)]
+[EXP-084] honey dd v8: matched=0 noise=0 status=FAIL
+  rules in window: []
+[EXP-085] honey od v9: matched=1 noise=0 status=PASS
+  rules in window: [('credbroker.honey_touched', 1)]
+[FP-001] FP test: attack_fired=28 bg_only=28 actual_fp=0
+[FP-002] FP test: attack_fired=13 bg_only=13 actual_fp=0
+[FP-003] FP test: attack_fired=2 bg_only=2 actual_fp=0
+[FP-004] FP test: attack_fired=15 bg_only=15 actual_fp=0
+[FP-005] FP test: attack_fired=6 bg_only=6 actual_fp=0
+[FP-006] FP test: attack_fired=14 bg_only=14 actual_fp=0
+[FP-007] FP test: attack_fired=1 bg_only=1 actual_fp=0
+[FP-008] FP test: attack_fired=21 bg_only=20 actual_fp=1
+[FP-009] FP test: attack_fired=5 bg_only=5 actual_fp=0
+[FP-010] FP test: attack_fired=26 bg_only=26 actual_fp=0
+[FP-011] FP test: attack_fired=15 bg_only=15 actual_fp=0
+[FP-012] FP test: attack_fired=11 bg_only=11 actual_fp=0
+[FP-013] FP test: attack_fired=7 bg_only=7 actual_fp=0
+[FP-014] FP test: attack_fired=8 bg_only=8 actual_fp=0
+[FP-015] FP test: attack_fired=11 bg_only=11 actual_fp=0
+[FP-016] FP test: attack_fired=10 bg_only=10 actual_fp=0
+[FP-017] FP test: attack_fired=11 bg_only=11 actual_fp=0
+[FP-018] FP test: attack_fired=5 bg_only=5 actual_fp=0
+[FP-019] FP test: attack_fired=14 bg_only=14 actual_fp=0
+[FP-020] FP test: attack_fired=6 bg_only=5 actual_fp=1
+[FP-021] FP test: attack_fired=20 bg_only=20 actual_fp=0
+[FP-022] FP test: attack_fired=6 bg_only=6 actual_fp=0
+[FP-023] FP test: attack_fired=16 bg_only=16 actual_fp=0
+[FP-024] FP test: attack_fired=3 bg_only=3 actual_fp=0
+[FP-025] FP test: attack_fired=14 bg_only=14 actual_fp=0

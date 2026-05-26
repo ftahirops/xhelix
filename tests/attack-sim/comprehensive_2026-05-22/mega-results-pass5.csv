@@ -1,0 +1,93 @@
+id,category,desc,detector,expect_rule,status,matched,noise,duration,started_at
+PERS-026,PERSISTENCE,write /var/spool/cron/crontabs/testu25 (variant 0),fim,cron_new_unit|user_crontab,PASS,4,0,12.039824962615967,2026-05-22T21:51:23.806180+00:00
+PERS-027,PERSISTENCE,write /var/spool/cron/crontabs/testu26 (variant 1),fim,cron_new_unit|user_crontab,PASS,4,0,12.033370733261108,2026-05-22T21:51:35.861148+00:00
+PERS-028,PERSISTENCE,write /var/spool/cron/crontabs/testu27 (variant 2),fim,cron_new_unit|user_crontab,PASS,4,5,12.034316778182983,2026-05-22T21:51:47.906299+00:00
+PERS-029,PERSISTENCE,write /var/spool/cron/crontabs/testu28 (variant 3),fim,cron_new_unit|user_crontab,PASS,8,3,12.037869215011597,2026-05-22T21:51:59.956233+00:00
+PERS-030,PERSISTENCE,write /var/spool/cron/crontabs/testu29 (variant 4),fim,cron_new_unit|user_crontab,PASS,4,0,12.038302183151245,2026-05-22T21:52:12.006628+00:00
+PERS-031,PERSISTENCE,write /etc/systemd/system/xtest30.service (variant 0),fim,systemd_unit_new,PASS,1,0,12.036789655685425,2026-05-22T21:52:24.062747+00:00
+PERS-032,PERSISTENCE,write /etc/systemd/system/xtest31.service (variant 1),fim,systemd_unit_new,PASS,1,0,12.037133693695068,2026-05-22T21:52:36.115956+00:00
+PERS-033,PERSISTENCE,write /etc/systemd/system/xtest32.service (variant 2),fim,systemd_unit_new,PASS,1,4,12.039955377578735,2026-05-22T21:52:48.169769+00:00
+PERS-034,PERSISTENCE,write /etc/systemd/system/xtest33.service (variant 3),fim,systemd_unit_new,PASS,2,6,12.04352068901062,2026-05-22T21:53:00.227575+00:00
+PERS-035,PERSISTENCE,write /etc/systemd/system/xtest34.service (variant 4),fim,systemd_unit_new,PASS,1,0,12.035515069961548,2026-05-22T21:53:12.284304+00:00
+PERS-046,PERSISTENCE,write /etc/init.d/test45 (variant 0),fim,fim\.drift|rc_local_modified,PASS,3,0,12.03671908378601,2026-05-22T21:53:24.335722+00:00
+PERS-047,PERSISTENCE,write /etc/init.d/test46 (variant 1),fim,fim\.drift|rc_local_modified,PASS,3,0,12.036906719207764,2026-05-22T21:53:36.388989+00:00
+PERS-048,PERSISTENCE,write /etc/init.d/test47 (variant 2),fim,fim\.drift|rc_local_modified,PASS,3,4,12.03750491142273,2026-05-22T21:53:48.440942+00:00
+PERS-049,PERSISTENCE,write /etc/init.d/test48 (variant 3),fim,fim\.drift|rc_local_modified,PASS,5,4,12.038193464279175,2026-05-22T21:54:00.494237+00:00
+PERS-050,PERSISTENCE,write /etc/init.d/test49 (variant 4),fim,fim\.drift|rc_local_modified,PASS,3,0,12.03965139389038,2026-05-22T21:54:12.547522+00:00
+PERS-061,PERSISTENCE,write /etc/xdg/autostart/test60.desktop (variant 0),fim,xdg_autostart_dropped|fim\.drift,PASS,1,0,12.03825831413269,2026-05-22T21:54:24.605830+00:00
+PERS-062,PERSISTENCE,write /etc/xdg/autostart/test61.desktop (variant 1),fim,xdg_autostart_dropped|fim\.drift,PASS,1,0,12.032441139221191,2026-05-22T21:54:36.657868+00:00
+PERS-063,PERSISTENCE,write /etc/xdg/autostart/test62.desktop (variant 2),fim,xdg_autostart_dropped|fim\.drift,PASS,1,0,12.039802312850952,2026-05-22T21:54:48.708023+00:00
+PERS-064,PERSISTENCE,write /etc/xdg/autostart/test63.desktop (variant 3),fim,xdg_autostart_dropped|fim\.drift,FAIL,0,0,12.04011058807373,2026-05-22T21:55:00.765385+00:00
+PERS-065,PERSISTENCE,write /etc/xdg/autostart/test64.desktop (variant 4),fim,xdg_autostart_dropped|fim\.drift,FAIL,0,5,12.040771007537842,2026-05-22T21:55:12.822897+00:00
+PERS-066,PERSISTENCE,write /etc/pam.d/test65 (variant 0),fim,pam|fim\.drift|tamper,FAIL,0,0,12.041636943817139,2026-05-22T21:55:24.879967+00:00
+PERS-067,PERSISTENCE,write /etc/pam.d/test66 (variant 1),fim,pam|fim\.drift|tamper,FAIL,0,0,12.036451578140259,2026-05-22T21:55:36.939432+00:00
+PERS-068,PERSISTENCE,write /etc/pam.d/test67 (variant 2),fim,pam|fim\.drift|tamper,FAIL,0,0,12.040070295333862,2026-05-22T21:55:48.988366+00:00
+PERS-069,PERSISTENCE,write /etc/pam.d/test68 (variant 3),fim,pam|fim\.drift|tamper,FAIL,0,12,12.040640592575073,2026-05-22T21:56:01.044491+00:00
+PERS-070,PERSISTENCE,write /etc/pam.d/test69 (variant 4),fim,pam|fim\.drift|tamper,FAIL,0,0,12.041764259338379,2026-05-22T21:56:13.101345+00:00
+PERS-071,PERSISTENCE,authorized_keys append (variant 0),fim,ssh_key_added,PASS,2,0,12.043908596038818,2026-05-22T21:56:25.160376+00:00
+PERS-072,PERSISTENCE,authorized_keys append (variant 1),fim,ssh_key_added,PASS,2,0,12.040751218795776,2026-05-22T21:56:37.219338+00:00
+PERS-073,PERSISTENCE,authorized_keys append (variant 2),fim,ssh_key_added,PASS,2,0,12.047950506210327,2026-05-22T21:56:49.277454+00:00
+PERS-074,PERSISTENCE,authorized_keys append (variant 3),fim,ssh_key_added,PASS,3,9,12.042112350463867,2026-05-22T21:57:01.342389+00:00
+PERS-075,PERSISTENCE,authorized_keys append (variant 4),fim,ssh_key_added,PASS,2,0,12.038475036621094,2026-05-22T21:57:13.397121+00:00
+MEM-001,MEMORY,RWX mprotect python_two_step v0,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.06699800491333,2026-05-22T21:57:25.452938+00:00
+MEM-003,MEMORY,RWX mprotect c_mprotect v2,ebpf.memory,mem_mprotect_rwx,PASS,1,2,10.114313125610352,2026-05-22T21:57:35.535815+00:00
+MEM-004,MEMORY,RWX mprotect python_two_step v3,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.06726884841919,2026-05-22T21:57:45.667269+00:00
+MEM-006,MEMORY,RWX mprotect c_mprotect v5,ebpf.memory,mem_mprotect_rwx,PASS,1,7,10.099369525909424,2026-05-22T21:57:55.749490+00:00
+MEM-007,MEMORY,RWX mprotect python_two_step v6,ebpf.memory,mem_mprotect_rwx,FAIL,0,0,10.045521974563599,2026-05-22T21:58:05.865944+00:00
+MEM-009,MEMORY,RWX mprotect c_mprotect v8,ebpf.memory,mem_mprotect_rwx,PASS,1,6,10.072781562805176,2026-05-22T21:58:15.928423+00:00
+MEM-010,MEMORY,RWX mprotect python_two_step v9,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.062319040298462,2026-05-22T21:58:26.016820+00:00
+MEM-012,MEMORY,RWX mprotect c_mprotect v11,ebpf.memory,mem_mprotect_rwx,PASS,1,2,10.104080200195312,2026-05-22T21:58:36.097877+00:00
+MEM-013,MEMORY,RWX mprotect python_two_step v12,ebpf.memory,mem_mprotect_rwx,PASS,1,1,10.063055515289307,2026-05-22T21:58:46.219042+00:00
+MEM-015,MEMORY,RWX mprotect c_mprotect v14,ebpf.memory,mem_mprotect_rwx,PASS,1,11,10.096702575683594,2026-05-22T21:58:56.299515+00:00
+MEM-016,MEMORY,RWX mprotect python_two_step v15,ebpf.memory,mem_mprotect_rwx,PASS,1,4,10.04311990737915,2026-05-22T21:59:06.413937+00:00
+MEM-018,MEMORY,RWX mprotect c_mprotect v17,ebpf.memory,mem_mprotect_rwx,FAIL,0,0,10.07139539718628,2026-05-22T21:59:16.474381+00:00
+MEM-019,MEMORY,RWX mprotect python_two_step v18,ebpf.memory,mem_mprotect_rwx,PASS,2,7,10.059325456619263,2026-05-22T21:59:26.560652+00:00
+MEM-036,MEMORY,ptrace gdb_attach_detach v0,ebpf.proc,any_ptrace|ptrace,FAIL,0,0,11.031577825546265,2026-05-22T21:59:36.636808+00:00
+MEM-038,MEMORY,ptrace python_ptrace v2,ebpf.proc,any_ptrace|ptrace,FAIL,0,0,30.016850233078003,2026-05-22T21:59:47.679871+00:00
+MEM-039,MEMORY,ptrace gdb_attach_detach v3,ebpf.proc,any_ptrace|ptrace,FAIL,0,0,11.028012037277222,2026-05-22T22:00:17.713109+00:00
+MEM-041,MEMORY,ptrace python_ptrace v5,ebpf.proc,any_ptrace|ptrace,FAIL,0,0,30.021247386932373,2026-05-22T22:00:28.757808+00:00
+MEM-042,MEMORY,ptrace gdb_attach_detach v6,ebpf.proc,any_ptrace|ptrace,FAIL,0,4,11.02714991569519,2026-05-22T22:00:58.792426+00:00
+MEM-044,MEMORY,ptrace python_ptrace v8,ebpf.proc,any_ptrace|ptrace,FAIL,0,4,30.020728588104248,2026-05-22T22:01:09.836243+00:00
+MEM-045,MEMORY,ptrace gdb_attach_detach v9,ebpf.proc,any_ptrace|ptrace,FAIL,0,0,11.028295755386353,2026-05-22T22:01:39.873647+00:00
+MEM-055,MEMORY,init_module syscall (variant 9),ebpf.module,kernel_module_load,PASS,1,0,10.058342218399048,2026-05-22T22:01:50.920045+00:00
+C2-001,C2,bash/sh /dev/tcp reverse shell v0,ebpf.spawn,shell_with_socket_fd,PASS,1,8,8.042619943618774,2026-05-22T22:02:00.988983+00:00
+C2-002,C2,bash/sh /dev/tcp reverse shell v1,ebpf.spawn,shell_with_socket_fd,PASS,1,7,8.04370665550232,2026-05-22T22:02:09.044698+00:00
+C2-003,C2,bash/sh /dev/tcp reverse shell v2,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.049485921859741,2026-05-22T22:02:17.104586+00:00
+C2-004,C2,bash/sh /dev/tcp reverse shell v3,ebpf.spawn,shell_with_socket_fd,FAIL,0,3,8.02954363822937,2026-05-22T22:02:25.170522+00:00
+C2-005,C2,bash/sh /dev/tcp reverse shell v4,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.059276103973389,2026-05-22T22:02:33.216543+00:00
+C2-006,C2,bash/sh /dev/tcp reverse shell v5,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.047948360443115,2026-05-22T22:02:41.291000+00:00
+C2-007,C2,bash/sh /dev/tcp reverse shell v6,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.05583143234253,2026-05-22T22:02:49.356048+00:00
+C2-008,C2,bash/sh /dev/tcp reverse shell v7,ebpf.spawn,shell_with_socket_fd,FAIL,0,6,8.029866456985474,2026-05-22T22:02:57.428793+00:00
+C2-009,C2,bash/sh /dev/tcp reverse shell v8,ebpf.spawn,shell_with_socket_fd,PASS,1,7,8.052820682525635,2026-05-22T22:03:05.475454+00:00
+C2-010,C2,bash/sh /dev/tcp reverse shell v9,ebpf.spawn,shell_with_socket_fd,PASS,1,5,8.040962219238281,2026-05-22T22:03:13.547815+00:00
+C2-011,C2,bash/sh /dev/tcp reverse shell v10,ebpf.spawn,shell_with_socket_fd,PASS,1,3,8.052116632461548,2026-05-22T22:03:21.604698+00:00
+C2-012,C2,bash/sh /dev/tcp reverse shell v11,ebpf.spawn,shell_with_socket_fd,FAIL,0,3,8.03120231628418,2026-05-22T22:03:29.670906+00:00
+C2-013,C2,python socket revshell v0,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.101010799407959,2026-05-22T22:03:37.721030+00:00
+C2-014,C2,python socket revshell v1,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.08343505859375,2026-05-22T22:03:45.834272+00:00
+C2-015,C2,python socket revshell v2,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,9,8.089624166488647,2026-05-22T22:03:53.937604+00:00
+C2-016,C2,python socket revshell v3,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.101711750030518,2026-05-22T22:04:02.043760+00:00
+C2-017,C2,python socket revshell v4,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,8,8.099950075149536,2026-05-22T22:04:10.159853+00:00
+C2-018,C2,python socket revshell v5,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.098827600479126,2026-05-22T22:04:18.270154+00:00
+C2-019,C2,python socket revshell v6,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,9,8.105271816253662,2026-05-22T22:04:26.385559+00:00
+C2-020,C2,python socket revshell v7,ebpf.spawn,shell_with_socket_fd|suspicious_interpreter_network,PASS,1,3,8.10588788986206,2026-05-22T22:04:34.506076+00:00
+C2-021,C2,bare-IP TLS no SNI v0 port 14430,snicheck,tls_no_sni,FAIL,0,0,12.074678421020508,2026-05-22T22:04:42.622619+00:00
+C2-022,C2,bare-IP TLS no SNI v1 port 14431,snicheck,tls_no_sni,FAIL,0,5,12.075348615646362,2026-05-22T22:04:54.715690+00:00
+C2-023,C2,bare-IP TLS no SNI v2 port 14432,snicheck,tls_no_sni,FAIL,0,4,12.05362868309021,2026-05-22T22:05:06.808318+00:00
+C2-024,C2,bare-IP TLS no SNI v3 port 14433,snicheck,tls_no_sni,FAIL,0,0,12.084643363952637,2026-05-22T22:05:18.881003+00:00
+C2-025,C2,bare-IP TLS no SNI v4 port 14434,snicheck,tls_no_sni,FAIL,0,0,12.053869485855103,2026-05-22T22:05:30.978271+00:00
+C2-026,C2,bare-IP TLS no SNI v5 port 14435,snicheck,tls_no_sni,FAIL,0,0,12.077383279800415,2026-05-22T22:05:43.048502+00:00
+C2-027,C2,bare-IP TLS no SNI v6 port 14436,snicheck,tls_no_sni,FAIL,0,0,12.081852912902832,2026-05-22T22:05:55.142539+00:00
+C2-028,C2,bare-IP TLS no SNI v7 port 14437,snicheck,tls_no_sni,FAIL,0,0,12.074360609054565,2026-05-22T22:06:07.240852+00:00
+C2-029,C2,bare-IP TLS no SNI v8 port 14438,snicheck,tls_no_sni,FAIL,0,4,12.077518939971924,2026-05-22T22:06:19.331225+00:00
+C2-030,C2,bare-IP TLS no SNI v9 port 14439,snicheck,tls_no_sni,FAIL,0,0,12.048580408096313,2026-05-22T22:06:31.421858+00:00
+C2-031,C2,DNS exfil burst 30 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,7,20.91535449028015,2026-05-22T22:06:43.486404+00:00
+C2-032,C2,DNS exfil burst 40 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,6,21.19873023033142,2026-05-22T22:07:04.417984+00:00
+C2-033,C2,DNS exfil burst 50 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,1,21.448267459869385,2026-05-22T22:07:25.632884+00:00
+C2-034,C2,DNS exfil burst 60 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,9,21.654146194458008,2026-05-22T22:07:47.098214+00:00
+C2-035,C2,DNS exfil burst 70 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,1,22.022804737091064,2026-05-22T22:08:08.765503+00:00
+C2-036,C2,DNS exfil burst 80 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,1,22.258352041244507,2026-05-22T22:08:30.806276+00:00
+C2-037,C2,DNS exfil burst 90 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,11,22.553763389587402,2026-05-22T22:08:53.081499+00:00
+C2-038,C2,DNS exfil burst 100 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,1,22.899407625198364,2026-05-22T22:09:15.647540+00:00
+C2-039,C2,DNS exfil burst 110 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,6,23.284773588180542,2026-05-22T22:09:38.564727+00:00
+C2-040,C2,DNS exfil burst 120 queries,dnsexfil,dns_exfil|dga,NO-RULE,0,0,23.44703435897827,2026-05-22T22:10:01.866713+00:00
+C2-041,C2,beacon 6 callbacks @4s,beacon,beacon,FAIL,0,21,58.14154934883118,2026-05-22T22:10:25.329958+00:00

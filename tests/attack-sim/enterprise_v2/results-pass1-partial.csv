@@ -1,0 +1,340 @@
+id,category,subcategory,malicious,desc,detector,expect_rule,status,matched,noise,total,duration,started_at
+INJ-PVW-0001,INJ,process_vm_writev,1,"process_vm_writev into sleep_60 (16B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,9.00,2026-05-23T08:56:44.609152+00:00
+INJ-PVW-0002,INJ,process_vm_writev,1,"process_vm_writev into sleep_60 (16B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,2,2,8.45,2026-05-23T08:56:53.608488+00:00
+INJ-PVW-0003,INJ,process_vm_writev,1,"process_vm_writev into sleep_60 (64B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,4,4,8.44,2026-05-23T08:57:02.055144+00:00
+INJ-PVW-0004,INJ,process_vm_writev,1,"process_vm_writev into sleep_60 (64B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T08:57:10.497189+00:00
+INJ-PVW-0005,INJ,process_vm_writev,1,"process_vm_writev into sleep_60 (256B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T08:57:18.940504+00:00
+INJ-PVW-0006,INJ,process_vm_writev,1,"process_vm_writev into sleep_60 (256B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.46,2026-05-23T08:57:27.375857+00:00
+INJ-PVW-0007,INJ,process_vm_writev,1,"process_vm_writev into sleep_60 (1024B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T08:57:35.835410+00:00
+INJ-PVW-0008,INJ,process_vm_writev,1,"process_vm_writev into sleep_60 (1024B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T08:57:44.275365+00:00
+INJ-PVW-0009,INJ,process_vm_writev,1,"process_vm_writev into nc_l (16B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T08:57:52.719952+00:00
+INJ-PVW-0010,INJ,process_vm_writev,1,"process_vm_writev into nc_l (16B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,6,6,8.44,2026-05-23T08:58:01.171948+00:00
+INJ-PVW-0011,INJ,process_vm_writev,1,"process_vm_writev into nc_l (64B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T08:58:09.614529+00:00
+INJ-PVW-0012,INJ,process_vm_writev,1,"process_vm_writev into nc_l (64B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,6,6,8.43,2026-05-23T08:58:18.057142+00:00
+INJ-PVW-0013,INJ,process_vm_writev,1,"process_vm_writev into nc_l (256B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.46,2026-05-23T08:58:26.487188+00:00
+INJ-PVW-0014,INJ,process_vm_writev,1,"process_vm_writev into nc_l (256B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T08:58:34.944633+00:00
+INJ-PVW-0015,INJ,process_vm_writev,1,"process_vm_writev into nc_l (1024B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T08:58:43.394662+00:00
+INJ-PVW-0016,INJ,process_vm_writev,1,"process_vm_writev into nc_l (1024B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.43,2026-05-23T08:58:51.843044+00:00
+INJ-PVW-0017,INJ,process_vm_writev,1,"process_vm_writev into python_idle (16B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,7,7,8.45,2026-05-23T08:59:00.273742+00:00
+INJ-PVW-0018,INJ,process_vm_writev,1,"process_vm_writev into python_idle (16B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.43,2026-05-23T08:59:08.723903+00:00
+INJ-PVW-0019,INJ,process_vm_writev,1,"process_vm_writev into python_idle (64B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T08:59:17.151478+00:00
+INJ-PVW-0020,INJ,process_vm_writev,1,"process_vm_writev into python_idle (64B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T08:59:25.600467+00:00
+INJ-PVW-0021,INJ,process_vm_writev,1,"process_vm_writev into python_idle (256B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T08:59:34.045377+00:00
+INJ-PVW-0022,INJ,process_vm_writev,1,"process_vm_writev into python_idle (256B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T08:59:42.492492+00:00
+INJ-PVW-0023,INJ,process_vm_writev,1,"process_vm_writev into python_idle (1024B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T08:59:50.937984+00:00
+INJ-PVW-0024,INJ,process_vm_writev,1,"process_vm_writev into python_idle (1024B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,28,28,8.45,2026-05-23T08:59:59.381043+00:00
+INJ-PVW-0025,INJ,process_vm_writev,1,"process_vm_writev into dd_zero (16B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T09:00:07.829891+00:00
+INJ-PVW-0026,INJ,process_vm_writev,1,"process_vm_writev into dd_zero (16B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T09:00:16.285674+00:00
+INJ-PVW-0027,INJ,process_vm_writev,1,"process_vm_writev into dd_zero (64B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.43,2026-05-23T09:00:24.725228+00:00
+INJ-PVW-0028,INJ,process_vm_writev,1,"process_vm_writev into dd_zero (64B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T09:00:33.159565+00:00
+INJ-PVW-0029,INJ,process_vm_writev,1,"process_vm_writev into dd_zero (256B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T09:00:41.601261+00:00
+INJ-PVW-0030,INJ,process_vm_writev,1,"process_vm_writev into dd_zero (256B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T09:00:50.047735+00:00
+INJ-PVW-0031,INJ,process_vm_writev,1,"process_vm_writev into dd_zero (1024B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,6,6,8.43,2026-05-23T09:00:58.488374+00:00
+INJ-PVW-0032,INJ,process_vm_writev,1,"process_vm_writev into dd_zero (1024B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T09:01:06.913558+00:00
+INJ-PVW-0033,INJ,process_vm_writev,1,"process_vm_writev into yes_high (16B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T09:01:15.364324+00:00
+INJ-PVW-0034,INJ,process_vm_writev,1,"process_vm_writev into yes_high (16B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T09:01:23.814398+00:00
+INJ-PVW-0035,INJ,process_vm_writev,1,"process_vm_writev into yes_high (64B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T09:01:32.254834+00:00
+INJ-PVW-0036,INJ,process_vm_writev,1,"process_vm_writev into yes_high (64B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T09:01:40.707082+00:00
+INJ-PVW-0037,INJ,process_vm_writev,1,"process_vm_writev into yes_high (256B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.44,2026-05-23T09:01:49.146246+00:00
+INJ-PVW-0038,INJ,process_vm_writev,1,"process_vm_writev into yes_high (256B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,6,6,8.43,2026-05-23T09:01:57.589473+00:00
+INJ-PVW-0039,INJ,process_vm_writev,1,"process_vm_writev into yes_high (1024B, v0)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.43,2026-05-23T09:02:06.014868+00:00
+INJ-PVW-0040,INJ,process_vm_writev,1,"process_vm_writev into yes_high (1024B, v1)",ebpf.proc,any_ptrace|ptrace_sensitive|process_vm,FAIL,0,0,0,8.45,2026-05-23T09:02:14.445049+00:00
+INJ-PT-0041,INJ,ptrace,1,ptrace ptrace_attach_detach v0,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:02:22.891277+00:00
+INJ-PT-0042,INJ,ptrace,1,ptrace ptrace_attach_detach v1,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.46,2026-05-23T09:02:31.338890+00:00
+INJ-PT-0043,INJ,ptrace,1,ptrace ptrace_attach_detach v2,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.44,2026-05-23T09:02:39.794191+00:00
+INJ-PT-0044,INJ,ptrace,1,ptrace ptrace_attach_detach v3,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.44,2026-05-23T09:02:48.239063+00:00
+INJ-PT-0045,INJ,ptrace,1,ptrace ptrace_attach_detach v4,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,2,2,8.42,2026-05-23T09:02:56.683361+00:00
+INJ-PT-0046,INJ,ptrace,1,ptrace ptrace_seize v0,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,4,4,8.44,2026-05-23T09:03:05.103876+00:00
+INJ-PT-0047,INJ,ptrace,1,ptrace ptrace_seize v1,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:03:13.546510+00:00
+INJ-PT-0048,INJ,ptrace,1,ptrace ptrace_seize v2,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,6,6,8.45,2026-05-23T09:03:21.991840+00:00
+INJ-PT-0049,INJ,ptrace,1,ptrace ptrace_seize v3,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.44,2026-05-23T09:03:30.438820+00:00
+INJ-PT-0050,INJ,ptrace,1,ptrace ptrace_seize v4,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.43,2026-05-23T09:03:38.875847+00:00
+INJ-PT-0051,INJ,ptrace,1,ptrace ptrace_getregs v0,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:03:47.310820+00:00
+INJ-PT-0052,INJ,ptrace,1,ptrace ptrace_getregs v1,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,2,2,8.44,2026-05-23T09:03:55.758331+00:00
+INJ-PT-0053,INJ,ptrace,1,ptrace ptrace_getregs v2,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,4,4,8.44,2026-05-23T09:04:04.197851+00:00
+INJ-PT-0054,INJ,ptrace,1,ptrace ptrace_getregs v3,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:04:12.638559+00:00
+INJ-PT-0055,INJ,ptrace,1,ptrace ptrace_getregs v4,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.42,2026-05-23T09:04:21.088531+00:00
+INJ-PT-0056,INJ,ptrace,1,ptrace ptrace_singlestep v0,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.44,2026-05-23T09:04:29.511130+00:00
+INJ-PT-0057,INJ,ptrace,1,ptrace ptrace_singlestep v1,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:04:37.954628+00:00
+INJ-PT-0058,INJ,ptrace,1,ptrace ptrace_singlestep v2,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.44,2026-05-23T09:04:46.405109+00:00
+INJ-PT-0059,INJ,ptrace,1,ptrace ptrace_singlestep v3,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,3,3,8.45,2026-05-23T09:04:54.849378+00:00
+INJ-PT-0060,INJ,ptrace,1,ptrace ptrace_singlestep v4,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,4,4,8.42,2026-05-23T09:05:03.295231+00:00
+INJ-PT-0061,INJ,ptrace,1,ptrace ptrace_cont v0,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:05:11.712163+00:00
+INJ-PT-0062,INJ,ptrace,1,ptrace ptrace_cont v1,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.44,2026-05-23T09:05:20.164238+00:00
+INJ-PT-0063,INJ,ptrace,1,ptrace ptrace_cont v2,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:05:28.601194+00:00
+INJ-PT-0064,INJ,ptrace,1,ptrace ptrace_cont v3,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:05:37.051273+00:00
+INJ-PT-0065,INJ,ptrace,1,ptrace ptrace_cont v4,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:05:45.503569+00:00
+INJ-DLOPEN-0066,INJ,dlopen_memfd,1,dlopen from memfd v0,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,3,3,8.13,2026-05-23T09:05:53.949487+00:00
+INJ-DLOPEN-0067,INJ,dlopen_memfd,1,dlopen from memfd v1,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,4,4,8.13,2026-05-23T09:06:02.082868+00:00
+INJ-DLOPEN-0068,INJ,dlopen_memfd,1,dlopen from memfd v2,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.13,2026-05-23T09:06:10.211100+00:00
+INJ-DLOPEN-0069,INJ,dlopen_memfd,1,dlopen from memfd v3,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.13,2026-05-23T09:06:18.341622+00:00
+INJ-DLOPEN-0070,INJ,dlopen_memfd,1,dlopen from memfd v4,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.15,2026-05-23T09:06:26.470586+00:00
+INJ-DLOPEN-0071,INJ,dlopen_memfd,1,dlopen from memfd v5,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.15,2026-05-23T09:06:34.616288+00:00
+INJ-DLOPEN-0072,INJ,dlopen_memfd,1,dlopen from memfd v6,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.12,2026-05-23T09:06:42.763670+00:00
+INJ-DLOPEN-0073,INJ,dlopen_memfd,1,dlopen from memfd v7,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.14,2026-05-23T09:06:50.883886+00:00
+INJ-DLOPEN-0074,INJ,dlopen_memfd,1,dlopen from memfd v8,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,6,6,8.12,2026-05-23T09:06:59.021285+00:00
+INJ-DLOPEN-0075,INJ,dlopen_memfd,1,dlopen from memfd v9,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.14,2026-05-23T09:07:07.145548+00:00
+INJ-DLOPEN-0076,INJ,dlopen_memfd,1,dlopen from memfd v10,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.14,2026-05-23T09:07:15.285885+00:00
+INJ-DLOPEN-0077,INJ,dlopen_memfd,1,dlopen from memfd v11,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.15,2026-05-23T09:07:23.424065+00:00
+INJ-DLOPEN-0078,INJ,dlopen_memfd,1,dlopen from memfd v12,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.14,2026-05-23T09:07:31.571579+00:00
+INJ-DLOPEN-0079,INJ,dlopen_memfd,1,dlopen from memfd v13,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.14,2026-05-23T09:07:39.715503+00:00
+INJ-DLOPEN-0080,INJ,dlopen_memfd,1,dlopen from memfd v14,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.12,2026-05-23T09:07:47.852538+00:00
+INJ-DLOPEN-0081,INJ,dlopen_memfd,1,dlopen from memfd v15,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,2,2,8.14,2026-05-23T09:07:55.969747+00:00
+INJ-DLOPEN-0082,INJ,dlopen_memfd,1,dlopen from memfd v16,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,4,4,8.11,2026-05-23T09:08:04.109847+00:00
+INJ-DLOPEN-0083,INJ,dlopen_memfd,1,dlopen from memfd v17,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.12,2026-05-23T09:08:12.217715+00:00
+INJ-DLOPEN-0084,INJ,dlopen_memfd,1,dlopen from memfd v18,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,6,6,8.15,2026-05-23T09:08:20.337168+00:00
+INJ-DLOPEN-0085,INJ,dlopen_memfd,1,dlopen from memfd v19,ebpf.proc,memfd|from_memfd|memfd_run_pattern,FAIL,0,0,0,8.12,2026-05-23T09:08:28.484686+00:00
+INJ-TJACK-0086,INJ,threadjack,1,threadjack via ptrace setregs v0,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.44,2026-05-23T09:08:36.607558+00:00
+INJ-TJACK-0087,INJ,threadjack,1,threadjack via ptrace setregs v1,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.44,2026-05-23T09:08:45.047834+00:00
+INJ-TJACK-0088,INJ,threadjack,1,threadjack via ptrace setregs v2,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,2,2,8.45,2026-05-23T09:08:53.483411+00:00
+INJ-TJACK-0089,INJ,threadjack,1,threadjack via ptrace setregs v3,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,4,4,8.44,2026-05-23T09:09:01.933828+00:00
+INJ-TJACK-0090,INJ,threadjack,1,threadjack via ptrace setregs v4,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.42,2026-05-23T09:09:10.371100+00:00
+INJ-TJACK-0091,INJ,threadjack,1,threadjack via ptrace setregs v5,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:09:18.792833+00:00
+INJ-TJACK-0092,INJ,threadjack,1,threadjack via ptrace setregs v6,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.43,2026-05-23T09:09:27.247257+00:00
+INJ-TJACK-0093,INJ,threadjack,1,threadjack via ptrace setregs v7,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:09:35.680068+00:00
+INJ-TJACK-0094,INJ,threadjack,1,threadjack via ptrace setregs v8,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.45,2026-05-23T09:09:44.130427+00:00
+INJ-TJACK-0095,INJ,threadjack,1,threadjack via ptrace setregs v9,ebpf.proc,any_ptrace|ptrace_sensitive,FAIL,0,0,0,8.43,2026-05-23T09:09:52.581006+00:00
+INJ-HOLLOW-0096,INJ,hollowing,1,process hollowing pattern v0,ebpf.proc,any_ptrace|memfd|web_server_spawns,PASS,1,8,9,8.15,2026-05-23T09:10:01.016115+00:00
+INJ-HOLLOW-0097,INJ,hollowing,1,process hollowing pattern v1,ebpf.proc,any_ptrace|memfd|web_server_spawns,FAIL,0,0,0,8.15,2026-05-23T09:10:09.162233+00:00
+INJ-HOLLOW-0098,INJ,hollowing,1,process hollowing pattern v2,ebpf.proc,any_ptrace|memfd|web_server_spawns,FAIL,0,0,0,8.14,2026-05-23T09:10:17.313476+00:00
+INJ-HOLLOW-0099,INJ,hollowing,1,process hollowing pattern v3,ebpf.proc,any_ptrace|memfd|web_server_spawns,FAIL,0,0,0,8.14,2026-05-23T09:10:25.454660+00:00
+INJ-HOLLOW-0100,INJ,hollowing,1,process hollowing pattern v4,ebpf.proc,any_ptrace|memfd|web_server_spawns,FAIL,0,0,0,8.13,2026-05-23T09:10:33.590344+00:00
+INJ-HOLLOW-0101,INJ,hollowing,1,process hollowing pattern v5,ebpf.proc,any_ptrace|memfd|web_server_spawns,FAIL,0,0,0,8.14,2026-05-23T09:10:41.720585+00:00
+INJ-HOLLOW-0102,INJ,hollowing,1,process hollowing pattern v6,ebpf.proc,any_ptrace|memfd|web_server_spawns,FAIL,0,0,0,8.14,2026-05-23T09:10:49.860514+00:00
+INJ-HOLLOW-0103,INJ,hollowing,1,process hollowing pattern v7,ebpf.proc,any_ptrace|memfd|web_server_spawns,FAIL,0,7,7,8.14,2026-05-23T09:10:58.002215+00:00
+INJ-B-0104,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v0,control,(?!.*),PASS,0,0,0,5.52,2026-05-23T09:11:06.143656+00:00
+INJ-B-0105,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v1,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:11:11.668107+00:00
+INJ-B-0106,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v2,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:11:17.198134+00:00
+INJ-B-0107,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v3,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:11:22.731084+00:00
+INJ-B-0108,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v4,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:11:28.262123+00:00
+INJ-B-0109,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v5,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:11:33.789502+00:00
+INJ-B-0110,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v6,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:11:39.316062+00:00
+INJ-B-0111,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v7,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:11:44.847294+00:00
+INJ-B-0112,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v8,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:11:50.378458+00:00
+INJ-B-0113,INJ,benign_spawn,0,benign: spawn sleep + kill (no injection) v9,control,(?!.*),PASS,0,2,2,5.53,2026-05-23T09:11:55.909625+00:00
+INJ-B-0114,INJ,benign_dlopen,0,benign: dlopen libm.so directly v0,control,(?!.*),PASS,0,4,4,5.04,2026-05-23T09:12:01.436829+00:00
+INJ-B-0115,INJ,benign_dlopen,0,benign: dlopen libm.so directly v1,control,(?!.*),PASS,0,0,0,5.04,2026-05-23T09:12:06.473880+00:00
+INJ-B-0116,INJ,benign_dlopen,0,benign: dlopen libm.so directly v2,control,(?!.*),PASS,0,0,0,5.04,2026-05-23T09:12:11.517050+00:00
+INJ-B-0117,INJ,benign_dlopen,0,benign: dlopen libm.so directly v3,control,(?!.*),PASS,0,0,0,5.06,2026-05-23T09:12:16.552532+00:00
+INJ-B-0118,INJ,benign_dlopen,0,benign: dlopen libm.so directly v4,control,(?!.*),PASS,0,0,0,5.07,2026-05-23T09:12:21.613203+00:00
+INJ-B-0119,INJ,benign_dlopen,0,benign: dlopen libm.so directly v5,control,(?!.*),PASS,0,0,0,5.06,2026-05-23T09:12:26.678975+00:00
+INJ-B-0120,INJ,benign_dlopen,0,benign: dlopen libm.so directly v6,control,(?!.*),PASS,0,0,0,5.07,2026-05-23T09:12:31.741887+00:00
+INJ-B-0121,INJ,benign_dlopen,0,benign: dlopen libm.so directly v7,control,(?!.*),PASS,0,0,0,5.06,2026-05-23T09:12:36.807384+00:00
+INJ-B-0122,INJ,benign_dlopen,0,benign: dlopen libm.so directly v8,control,(?!.*),PASS,0,0,0,5.06,2026-05-23T09:12:41.869361+00:00
+INJ-B-0123,INJ,benign_dlopen,0,benign: dlopen libm.so directly v9,control,(?!.*),PASS,0,0,0,5.05,2026-05-23T09:12:46.929208+00:00
+INJ-B-0124,INJ,benign_gdb_self,0,benign: gdb script on own child v0,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:12:51.974506+00:00
+INJ-B-0125,INJ,benign_gdb_self,0,benign: gdb script on own child v1,control,(?!.*),PASS,0,2,2,5.53,2026-05-23T09:12:57.503448+00:00
+INJ-B-0126,INJ,benign_gdb_self,0,benign: gdb script on own child v2,control,(?!.*),PASS,0,4,4,5.53,2026-05-23T09:13:03.036485+00:00
+INJ-B-0127,INJ,benign_gdb_self,0,benign: gdb script on own child v3,control,(?!.*),PASS,0,0,0,5.52,2026-05-23T09:13:08.567111+00:00
+INJ-B-0128,INJ,benign_gdb_self,0,benign: gdb script on own child v4,control,(?!.*),PASS,0,0,0,5.53,2026-05-23T09:13:14.089634+00:00
+RKIT-LDPRE-0001,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v0,fim,ld_so_preload_modified,PASS,3,6,9,17.03,2026-05-23T09:13:19.618807+00:00
+RKIT-LDPRE-0002,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v1,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:13:36.650838+00:00
+RKIT-LDPRE-0003,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v2,fim,ld_so_preload_modified,PASS,3,6,9,17.03,2026-05-23T09:13:53.684015+00:00
+RKIT-LDPRE-0004,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v3,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:14:10.713806+00:00
+RKIT-LDPRE-0005,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v4,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:14:27.748635+00:00
+RKIT-LDPRE-0006,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v5,fim,ld_so_preload_modified,PASS,3,3,6,17.03,2026-05-23T09:14:44.780304+00:00
+RKIT-LDPRE-0007,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v6,fim,ld_so_preload_modified,PASS,3,4,7,17.03,2026-05-23T09:15:01.810393+00:00
+RKIT-LDPRE-0008,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v7,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:15:18.838248+00:00
+RKIT-LDPRE-0009,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v8,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:15:35.870786+00:00
+RKIT-LDPRE-0010,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v9,fim,ld_so_preload_modified,PASS,3,6,9,17.03,2026-05-23T09:15:52.900274+00:00
+RKIT-LDPRE-0011,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v10,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:16:09.934224+00:00
+RKIT-LDPRE-0012,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v11,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:16:26.965896+00:00
+RKIT-LDPRE-0013,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v12,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:16:43.999273+00:00
+RKIT-LDPRE-0014,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v13,fim,ld_so_preload_modified,PASS,3,10,13,17.03,2026-05-23T09:17:01.031361+00:00
+RKIT-LDPRE-0015,RKIT,ld_so_preload_write,1,/etc/ld.so.preload rootkit install v14,fim,ld_so_preload_modified,PASS,3,0,3,17.03,2026-05-23T09:17:18.065433+00:00
+RKIT-LDPRE-0016,RKIT,ld_preload_env,1,LD_PRELOAD env injection v0,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,0,0,6.03,2026-05-23T09:17:35.097844+00:00
+RKIT-LDPRE-0017,RKIT,ld_preload_env,1,LD_PRELOAD env injection v1,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,0,0,6.03,2026-05-23T09:17:41.125833+00:00
+RKIT-LDPRE-0018,RKIT,ld_preload_env,1,LD_PRELOAD env injection v2,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,0,0,6.02,2026-05-23T09:17:47.153123+00:00
+RKIT-LDPRE-0019,RKIT,ld_preload_env,1,LD_PRELOAD env injection v3,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,0,0,6.02,2026-05-23T09:17:53.176486+00:00
+RKIT-LDPRE-0020,RKIT,ld_preload_env,1,LD_PRELOAD env injection v4,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,2,2,6.02,2026-05-23T09:17:59.194974+00:00
+RKIT-LDPRE-0021,RKIT,ld_preload_env,1,LD_PRELOAD env injection v5,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,4,4,6.02,2026-05-23T09:18:05.214665+00:00
+RKIT-LDPRE-0022,RKIT,ld_preload_env,1,LD_PRELOAD env injection v6,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,0,0,6.03,2026-05-23T09:18:11.235774+00:00
+RKIT-LDPRE-0023,RKIT,ld_preload_env,1,LD_PRELOAD env injection v7,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,0,0,6.03,2026-05-23T09:18:17.263821+00:00
+RKIT-LDPRE-0024,RKIT,ld_preload_env,1,LD_PRELOAD env injection v8,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,6,6,6.03,2026-05-23T09:18:23.290691+00:00
+RKIT-LDPRE-0025,RKIT,ld_preload_env,1,LD_PRELOAD env injection v9,rules.proc,suspicious_interpreter_network|ld_preload,FAIL,0,0,0,6.03,2026-05-23T09:18:29.318240+00:00
+RKIT-COMM-0026,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""sshd"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:18:35.344998+00:00
+RKIT-COMM-0027,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""sshd"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:18:41.919427+00:00
+RKIT-COMM-0028,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""systemd"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:18:48.488963+00:00
+RKIT-COMM-0029,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""systemd"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,2,2,6.57,2026-05-23T09:18:55.062682+00:00
+RKIT-COMM-0030,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""init"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,4,4,6.58,2026-05-23T09:19:01.635709+00:00
+RKIT-COMM-0031,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""init"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:19:08.215547+00:00
+RKIT-COMM-0032,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""kthreadd"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.55,2026-05-23T09:19:14.788173+00:00
+RKIT-COMM-0033,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""kthreadd"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.58,2026-05-23T09:19:21.342269+00:00
+RKIT-COMM-0034,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""kworker/0:0"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.58,2026-05-23T09:19:27.918786+00:00
+RKIT-COMM-0035,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""kworker/0:0"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:19:34.499207+00:00
+RKIT-COMM-0036,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""systemd-network"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.55,2026-05-23T09:19:41.065749+00:00
+RKIT-COMM-0037,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""systemd-network"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.55,2026-05-23T09:19:47.615408+00:00
+RKIT-COMM-0038,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""dbus-daemon"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.55,2026-05-23T09:19:54.166156+00:00
+RKIT-COMM-0039,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""dbus-daemon"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,8,8,6.58,2026-05-23T09:20:00.713041+00:00
+RKIT-COMM-0040,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""rsyslogd"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.55,2026-05-23T09:20:07.289054+00:00
+RKIT-COMM-0041,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""rsyslogd"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,1,1,6.55,2026-05-23T09:20:13.836331+00:00
+RKIT-COMM-0042,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""cron"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:20:20.385266+00:00
+RKIT-COMM-0043,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""cron"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:20:26.958435+00:00
+RKIT-COMM-0044,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""auditd"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.55,2026-05-23T09:20:33.532204+00:00
+RKIT-COMM-0045,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""auditd"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.56,2026-05-23T09:20:40.083019+00:00
+RKIT-COMM-0046,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""agetty"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:20:46.640780+00:00
+RKIT-COMM-0047,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""agetty"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:20:53.214132+00:00
+RKIT-COMM-0048,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""login"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,6,6,6.58,2026-05-23T09:20:59.787111+00:00
+RKIT-COMM-0049,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""login"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,1,1,6.57,2026-05-23T09:21:06.365082+00:00
+RKIT-COMM-0050,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""python3"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.58,2026-05-23T09:21:12.936687+00:00
+RKIT-COMM-0051,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""python3"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:21:19.512590+00:00
+RKIT-COMM-0052,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""bash"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:21:26.080874+00:00
+RKIT-COMM-0053,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""bash"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.58,2026-05-23T09:21:32.651175+00:00
+RKIT-COMM-0054,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""sh"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.58,2026-05-23T09:21:39.227263+00:00
+RKIT-COMM-0055,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""sh"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:21:45.807032+00:00
+RKIT-COMM-0056,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""nginx"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.55,2026-05-23T09:21:52.381172+00:00
+RKIT-COMM-0057,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""nginx"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,6,6,6.55,2026-05-23T09:21:58.930149+00:00
+RKIT-COMM-0058,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""apache2"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:22:05.481714+00:00
+RKIT-COMM-0059,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""apache2"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:22:12.056346+00:00
+RKIT-COMM-0060,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""php-fpm"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:22:18.626415+00:00
+RKIT-COMM-0061,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""php-fpm"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:22:25.194575+00:00
+RKIT-COMM-0062,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""mariadbd"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:22:31.767021+00:00
+RKIT-COMM-0063,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""mariadbd"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:22:38.340290+00:00
+RKIT-COMM-0064,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""redis-server"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:22:44.915106+00:00
+RKIT-COMM-0065,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""redis-server"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.57,2026-05-23T09:22:51.486186+00:00
+RKIT-COMM-0066,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""mysqld"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,2,2,6.58,2026-05-23T09:22:58.054727+00:00
+RKIT-COMM-0067,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""mysqld"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,4,4,6.57,2026-05-23T09:23:04.631023+00:00
+RKIT-COMM-0068,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""[kthread]"") v0",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,0,0,6.55,2026-05-23T09:23:11.197239+00:00
+RKIT-COMM-0069,RKIT,prctl_set_name,1,"prctl(PR_SET_NAME, ""[kthread]"") v1",ebpf.proc,web_server_spawns|hidden_process|baseline_known,FAIL,0,6,6,6.57,2026-05-23T09:23:17.743908+00:00
+RKIT-ARGV0-0070,RKIT,argv0_rewrite,1,argv[0]=/usr/sbin/sshd v0,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:24.314471+00:00
+RKIT-ARGV0-0071,RKIT,argv0_rewrite,1,argv[0]=[kworker/u8:1] v1,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:24.637825+00:00
+RKIT-ARGV0-0072,RKIT,argv0_rewrite,1,argv[0]=/usr/lib/systemd/systemd v2,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:24.961095+00:00
+RKIT-ARGV0-0073,RKIT,argv0_rewrite,1,argv[0]=/usr/bin/dbus-daemon v3,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:25.277823+00:00
+RKIT-ARGV0-0074,RKIT,argv0_rewrite,1,argv[0]=/usr/sbin/cron v4,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:25.599522+00:00
+RKIT-ARGV0-0075,RKIT,argv0_rewrite,1,argv[0]=/usr/sbin/sshd v5,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:25.918725+00:00
+RKIT-ARGV0-0076,RKIT,argv0_rewrite,1,argv[0]=[kworker/u8:1] v6,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:26.241663+00:00
+RKIT-ARGV0-0077,RKIT,argv0_rewrite,1,argv[0]=/usr/lib/systemd/systemd v7,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:26.558369+00:00
+RKIT-ARGV0-0078,RKIT,argv0_rewrite,1,argv[0]=/usr/bin/dbus-daemon v8,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:26.881197+00:00
+RKIT-ARGV0-0079,RKIT,argv0_rewrite,1,argv[0]=/usr/sbin/cron v9,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:27.201149+00:00
+RKIT-ARGV0-0080,RKIT,argv0_rewrite,1,argv[0]=/usr/sbin/sshd v10,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:27.522019+00:00
+RKIT-ARGV0-0081,RKIT,argv0_rewrite,1,argv[0]=[kworker/u8:1] v11,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:27.843562+00:00
+RKIT-ARGV0-0082,RKIT,argv0_rewrite,1,argv[0]=/usr/lib/systemd/systemd v12,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:28.167592+00:00
+RKIT-ARGV0-0083,RKIT,argv0_rewrite,1,argv[0]=/usr/bin/dbus-daemon v13,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:28.490032+00:00
+RKIT-ARGV0-0084,RKIT,argv0_rewrite,1,argv[0]=/usr/sbin/cron v14,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.33,2026-05-23T09:23:28.814409+00:00
+RKIT-ARGV0-0085,RKIT,argv0_rewrite,1,argv[0]=/usr/sbin/sshd v15,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:29.146102+00:00
+RKIT-ARGV0-0086,RKIT,argv0_rewrite,1,argv[0]=[kworker/u8:1] v16,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:29.469458+00:00
+RKIT-ARGV0-0087,RKIT,argv0_rewrite,1,argv[0]=/usr/lib/systemd/systemd v17,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:29.792105+00:00
+RKIT-ARGV0-0088,RKIT,argv0_rewrite,1,argv[0]=/usr/bin/dbus-daemon v18,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:30.114714+00:00
+RKIT-ARGV0-0089,RKIT,argv0_rewrite,1,argv[0]=/usr/sbin/cron v19,ebpf.proc,web_server_spawns|hidden_process,FAIL,0,0,0,0.32,2026-05-23T09:23:30.438201+00:00
+RKIT-SETNS-0090,RKIT,setns,1,setns into pid 1 namespaces v0,ebpf.ns,unshare|container_escape|setns,FAIL,0,0,0,8.04,2026-05-23T09:23:30.756434+00:00
+RKIT-SETNS-0091,RKIT,setns,1,setns into pid 1 namespaces v1,ebpf.ns,unshare|container_escape|setns,FAIL,0,0,0,8.04,2026-05-23T09:23:38.792248+00:00
+RKIT-SETNS-0092,RKIT,setns,1,setns into pid 1 namespaces v2,ebpf.ns,unshare|container_escape|setns,FAIL,0,0,0,8.04,2026-05-23T09:23:46.827500+00:00
+RKIT-SETNS-0093,RKIT,setns,1,setns into pid 1 namespaces v3,ebpf.ns,unshare|container_escape|setns,FAIL,0,3,3,8.03,2026-05-23T09:23:54.862872+00:00
+RKIT-SETNS-0094,RKIT,setns,1,setns into pid 1 namespaces v4,ebpf.ns,unshare|container_escape|setns,FAIL,0,4,4,8.03,2026-05-23T09:24:02.896322+00:00
+RKIT-SETNS-0095,RKIT,setns,1,setns into pid 1 namespaces v5,ebpf.ns,unshare|container_escape|setns,FAIL,0,0,0,8.03,2026-05-23T09:24:10.928126+00:00
+RKIT-SETNS-0096,RKIT,setns,1,setns into pid 1 namespaces v6,ebpf.ns,unshare|container_escape|setns,FAIL,0,0,0,8.03,2026-05-23T09:24:18.962541+00:00
+RKIT-SETNS-0097,RKIT,setns,1,setns into pid 1 namespaces v7,ebpf.ns,unshare|container_escape|setns,FAIL,0,0,0,8.03,2026-05-23T09:24:26.993217+00:00
+RKIT-SETNS-0098,RKIT,setns,1,setns into pid 1 namespaces v8,ebpf.ns,unshare|container_escape|setns,FAIL,0,0,0,8.03,2026-05-23T09:24:35.025681+00:00
+RKIT-SETNS-0099,RKIT,setns,1,setns into pid 1 namespaces v9,ebpf.ns,unshare|container_escape|setns,FAIL,0,0,0,8.03,2026-05-23T09:24:43.058548+00:00
+RKIT-CHROOT-0100,RKIT,chroot_escape,1,chroot+chdir escape pattern v0,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,0,0,6.03,2026-05-23T09:24:51.091228+00:00
+RKIT-CHROOT-0101,RKIT,chroot_escape,1,chroot+chdir escape pattern v1,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,4,4,6.04,2026-05-23T09:24:57.125359+00:00
+RKIT-CHROOT-0102,RKIT,chroot_escape,1,chroot+chdir escape pattern v2,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,4,4,6.03,2026-05-23T09:25:03.162335+00:00
+RKIT-CHROOT-0103,RKIT,chroot_escape,1,chroot+chdir escape pattern v3,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,0,0,6.03,2026-05-23T09:25:09.196830+00:00
+RKIT-CHROOT-0104,RKIT,chroot_escape,1,chroot+chdir escape pattern v4,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,0,0,6.03,2026-05-23T09:25:15.228801+00:00
+RKIT-CHROOT-0105,RKIT,chroot_escape,1,chroot+chdir escape pattern v5,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,0,0,6.03,2026-05-23T09:25:21.254490+00:00
+RKIT-CHROOT-0106,RKIT,chroot_escape,1,chroot+chdir escape pattern v6,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,0,0,6.03,2026-05-23T09:25:27.286207+00:00
+RKIT-CHROOT-0107,RKIT,chroot_escape,1,chroot+chdir escape pattern v7,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,0,0,6.03,2026-05-23T09:25:33.321143+00:00
+RKIT-CHROOT-0108,RKIT,chroot_escape,1,chroot+chdir escape pattern v8,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,0,0,6.04,2026-05-23T09:25:39.354752+00:00
+RKIT-CHROOT-0109,RKIT,chroot_escape,1,chroot+chdir escape pattern v9,ebpf.ns,chroot|container_escape|pivot_root,FAIL,0,0,0,6.03,2026-05-23T09:25:45.391957+00:00
+RKIT-PROCHIDE-0110,RKIT,proc_hiding,1,hidden-process readdir bypass v0,procscrape,hidden_process|cred_proc_scrape,FAIL,0,0,0,30.02,2026-05-23T09:25:51.423296+00:00
+RKIT-PROCHIDE-0111,RKIT,proc_hiding,1,hidden-process readdir bypass v1,procscrape,hidden_process|cred_proc_scrape,FAIL,0,0,0,30.02,2026-05-23T09:26:21.442149+00:00
+RKIT-PROCHIDE-0112,RKIT,proc_hiding,1,hidden-process readdir bypass v2,procscrape,hidden_process|cred_proc_scrape,FAIL,0,0,0,30.02,2026-05-23T09:26:51.464140+00:00
+RKIT-PROCHIDE-0113,RKIT,proc_hiding,1,hidden-process readdir bypass v3,procscrape,hidden_process|cred_proc_scrape,FAIL,0,0,0,30.02,2026-05-23T09:27:21.482892+00:00
+RKIT-PROCHIDE-0114,RKIT,proc_hiding,1,hidden-process readdir bypass v4,procscrape,hidden_process|cred_proc_scrape,FAIL,0,0,0,30.02,2026-05-23T09:27:51.503658+00:00
+RKIT-PROCHIDE-0115,RKIT,proc_hiding,1,hidden-process readdir bypass v5,procscrape,hidden_process|cred_proc_scrape,FAIL,0,0,0,30.02,2026-05-23T09:28:21.523397+00:00
+RKIT-PROCHIDE-0116,RKIT,proc_hiding,1,hidden-process readdir bypass v6,procscrape,hidden_process|cred_proc_scrape,FAIL,0,0,0,30.01,2026-05-23T09:28:51.543331+00:00
+RKIT-PROCHIDE-0117,RKIT,proc_hiding,1,hidden-process readdir bypass v7,procscrape,hidden_process|cred_proc_scrape,FAIL,0,0,0,30.02,2026-05-23T09:29:21.557148+00:00
+RKIT-B-0118,RKIT,benign_apt_update,0,benign: apt-list (no LD_PRELOAD evil) v0,control,(?!.*),PASS,0,0,0,5.36,2026-05-23T09:29:51.576894+00:00
+RKIT-B-0119,RKIT,benign_apt_update,0,benign: apt-list (no LD_PRELOAD evil) v1,control,(?!.*),FAIL,1,4,4,5.34,2026-05-23T09:29:56.935747+00:00
+RKIT-B-0120,RKIT,benign_apt_update,0,benign: apt-list (no LD_PRELOAD evil) v2,control,(?!.*),PASS,0,4,4,5.37,2026-05-23T09:30:02.279327+00:00
+RKIT-B-0121,RKIT,benign_apt_update,0,benign: apt-list (no LD_PRELOAD evil) v3,control,(?!.*),PASS,0,0,0,5.35,2026-05-23T09:30:07.649876+00:00
+RKIT-B-0122,RKIT,benign_apt_update,0,benign: apt-list (no LD_PRELOAD evil) v4,control,(?!.*),PASS,0,0,0,5.37,2026-05-23T09:30:12.998370+00:00
+RKIT-B-0123,RKIT,benign_admin_inspect,0,benign: ps aux | grep + stat /proc v0,control,(?!.*),PASS,0,1,1,5.11,2026-05-23T09:30:18.371687+00:00
+RKIT-B-0124,RKIT,benign_admin_inspect,0,benign: ps aux | grep + stat /proc v1,control,(?!.*),PASS,0,1,1,5.10,2026-05-23T09:30:23.483745+00:00
+RKIT-B-0125,RKIT,benign_admin_inspect,0,benign: ps aux | grep + stat /proc v2,control,(?!.*),PASS,0,1,1,5.10,2026-05-23T09:30:28.585397+00:00
+RKIT-B-0126,RKIT,benign_admin_inspect,0,benign: ps aux | grep + stat /proc v3,control,(?!.*),PASS,0,1,1,5.12,2026-05-23T09:30:33.688556+00:00
+RKIT-B-0127,RKIT,benign_admin_inspect,0,benign: ps aux | grep + stat /proc v4,control,(?!.*),PASS,0,1,1,5.12,2026-05-23T09:30:38.810466+00:00
+RKIT-B-0128,RKIT,benign_exec_a,0,benign: exec -a with legitimate name v0,control,(?!.*),PASS,0,0,0,5.03,2026-05-23T09:30:43.930623+00:00
+RKIT-B-0129,RKIT,benign_exec_a,0,benign: exec -a with legitimate name v1,control,(?!.*),PASS,0,0,0,5.03,2026-05-23T09:30:48.957968+00:00
+RKIT-B-0130,RKIT,benign_exec_a,0,benign: exec -a with legitimate name v2,control,(?!.*),PASS,0,0,0,5.03,2026-05-23T09:30:53.983886+00:00
+RKIT-B-0131,RKIT,benign_exec_a,0,benign: exec -a with legitimate name v3,control,(?!.*),PASS,0,2,2,5.03,2026-05-23T09:30:59.014456+00:00
+RKIT-B-0132,RKIT,benign_exec_a,0,benign: exec -a with legitimate name v4,control,(?!.*),PASS,0,4,4,5.03,2026-05-23T09:31:04.045502+00:00
+C2-DOH-0001,C2,doh,1,DoH query via cloudflare v0,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.06,2026-05-23T09:31:09.075031+00:00
+C2-DOH-0002,C2,doh,1,DoH query via cloudflare v1,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.05,2026-05-23T09:31:15.132780+00:00
+C2-DOH-0003,C2,doh,1,DoH query via cloudflare v2,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.06,2026-05-23T09:31:21.182425+00:00
+C2-DOH-0004,C2,doh,1,DoH query via cloudflare v3,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.05,2026-05-23T09:31:27.241232+00:00
+C2-DOH-0005,C2,doh,1,DoH query via cloudflare2 v0,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.06,2026-05-23T09:31:33.295313+00:00
+C2-DOH-0006,C2,doh,1,DoH query via cloudflare2 v1,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.05,2026-05-23T09:31:39.353249+00:00
+C2-DOH-0007,C2,doh,1,DoH query via cloudflare2 v2,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.06,2026-05-23T09:31:45.406517+00:00
+C2-DOH-0008,C2,doh,1,DoH query via cloudflare2 v3,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.06,2026-05-23T09:31:51.463541+00:00
+C2-DOH-0009,C2,doh,1,DoH query via google v0,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,2,2,6.05,2026-05-23T09:31:57.524435+00:00
+C2-DOH-0010,C2,doh,1,DoH query via google v1,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,4,4,6.05,2026-05-23T09:32:03.574792+00:00
+C2-DOH-0011,C2,doh,1,DoH query via google v2,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.05,2026-05-23T09:32:09.622274+00:00
+C2-DOH-0012,C2,doh,1,DoH query via google v3,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.05,2026-05-23T09:32:15.668315+00:00
+C2-DOH-0013,C2,doh,1,DoH query via google2 v0,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.05,2026-05-23T09:32:21.713865+00:00
+C2-DOH-0014,C2,doh,1,DoH query via google2 v1,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.06,2026-05-23T09:32:27.760582+00:00
+C2-DOH-0015,C2,doh,1,DoH query via google2 v2,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.06,2026-05-23T09:32:33.819498+00:00
+C2-DOH-0016,C2,doh,1,DoH query via google2 v3,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,1,1,6.05,2026-05-23T09:32:39.877885+00:00
+C2-DOH-0017,C2,doh,1,DoH query via quad9 v0,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.05,2026-05-23T09:32:45.930100+00:00
+C2-DOH-0018,C2,doh,1,DoH query via quad9 v1,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.05,2026-05-23T09:32:51.981357+00:00
+C2-DOH-0019,C2,doh,1,DoH query via quad9 v2,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,2,2,6.05,2026-05-23T09:32:58.035819+00:00
+C2-DOH-0020,C2,doh,1,DoH query via quad9 v3,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,4,4,6.05,2026-05-23T09:33:04.087000+00:00
+C2-DOH-0021,C2,doh,1,DoH query via nextdns v0,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.10,2026-05-23T09:33:10.141198+00:00
+C2-DOH-0022,C2,doh,1,DoH query via nextdns v1,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.10,2026-05-23T09:33:16.236741+00:00
+C2-DOH-0023,C2,doh,1,DoH query via nextdns v2,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,6,6,6.10,2026-05-23T09:33:22.332252+00:00
+C2-DOH-0024,C2,doh,1,DoH query via nextdns v3,snicheck,doh|dns_over_https|outbound_to_known_bad,FAIL,0,0,0,6.10,2026-05-23T09:33:28.428294+00:00
+C2-WS-0025,C2,websocket,1,WebSocket upgrade C2 v0,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.05,2026-05-23T09:33:34.529526+00:00
+C2-WS-0026,C2,websocket,1,WebSocket upgrade C2 v1,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.04,2026-05-23T09:33:40.576940+00:00
+C2-WS-0027,C2,websocket,1,WebSocket upgrade C2 v2,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.04,2026-05-23T09:33:46.621433+00:00
+C2-WS-0028,C2,websocket,1,WebSocket upgrade C2 v3,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,1,1,6.04,2026-05-23T09:33:52.666196+00:00
+C2-WS-0029,C2,websocket,1,WebSocket upgrade C2 v4,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,2,2,6.04,2026-05-23T09:33:58.705047+00:00
+C2-WS-0030,C2,websocket,1,WebSocket upgrade C2 v5,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,4,4,6.04,2026-05-23T09:34:04.749003+00:00
+C2-WS-0031,C2,websocket,1,WebSocket upgrade C2 v6,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.03,2026-05-23T09:34:10.791215+00:00
+C2-WS-0032,C2,websocket,1,WebSocket upgrade C2 v7,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.04,2026-05-23T09:34:16.822998+00:00
+C2-WS-0033,C2,websocket,1,WebSocket upgrade C2 v8,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,1,1,6.04,2026-05-23T09:34:22.861865+00:00
+C2-WS-0034,C2,websocket,1,WebSocket upgrade C2 v9,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.04,2026-05-23T09:34:28.903589+00:00
+C2-WS-0035,C2,websocket,1,WebSocket upgrade C2 v10,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.04,2026-05-23T09:34:34.940737+00:00
+C2-WS-0036,C2,websocket,1,WebSocket upgrade C2 v11,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.04,2026-05-23T09:34:40.983345+00:00
+C2-WS-0037,C2,websocket,1,WebSocket upgrade C2 v12,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.04,2026-05-23T09:34:47.025992+00:00
+C2-WS-0038,C2,websocket,1,WebSocket upgrade C2 v13,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,0,0,6.03,2026-05-23T09:34:53.068219+00:00
+C2-WS-0039,C2,websocket,1,WebSocket upgrade C2 v14,rules.proc,websocket|suspicious_interpreter_network,FAIL,0,3,3,6.04,2026-05-23T09:34:59.103277+00:00
+C2-WEBHOOK-0040,C2,webhook,1,webhook C2 via slack v0,snicheck,webhook|outbound_to_known_bad,FAIL,0,4,4,6.03,2026-05-23T09:35:05.146368+00:00
+C2-WEBHOOK-0041,C2,webhook,1,webhook C2 via slack v1,snicheck,webhook|outbound_to_known_bad,FAIL,0,1,1,6.04,2026-05-23T09:35:11.180751+00:00
+C2-WEBHOOK-0042,C2,webhook,1,webhook C2 via slack v2,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:35:17.217340+00:00
+C2-WEBHOOK-0043,C2,webhook,1,webhook C2 via slack v3,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:35:23.262199+00:00
+C2-WEBHOOK-0044,C2,webhook,1,webhook C2 via discord v0,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.03,2026-05-23T09:35:29.306476+00:00
+C2-WEBHOOK-0045,C2,webhook,1,webhook C2 via discord v1,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:35:35.341083+00:00
+C2-WEBHOOK-0046,C2,webhook,1,webhook C2 via discord v2,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:35:41.381358+00:00
+C2-WEBHOOK-0047,C2,webhook,1,webhook C2 via discord v3,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:35:47.422532+00:00
+C2-WEBHOOK-0048,C2,webhook,1,webhook C2 via telegram v0,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.02,2026-05-23T09:35:53.465184+00:00
+C2-WEBHOOK-0049,C2,webhook,1,webhook C2 via telegram v1,snicheck,webhook|outbound_to_known_bad,FAIL,0,7,7,6.03,2026-05-23T09:35:59.490267+00:00
+C2-WEBHOOK-0050,C2,webhook,1,webhook C2 via telegram v2,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.03,2026-05-23T09:36:05.515674+00:00
+C2-WEBHOOK-0051,C2,webhook,1,webhook C2 via telegram v3,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.03,2026-05-23T09:36:11.542985+00:00
+C2-WEBHOOK-0052,C2,webhook,1,webhook C2 via ms_teams v0,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:36:17.569079+00:00
+C2-WEBHOOK-0053,C2,webhook,1,webhook C2 via ms_teams v1,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:36:23.612941+00:00
+C2-WEBHOOK-0054,C2,webhook,1,webhook C2 via ms_teams v2,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.03,2026-05-23T09:36:29.655200+00:00
+C2-WEBHOOK-0055,C2,webhook,1,webhook C2 via ms_teams v3,snicheck,webhook|outbound_to_known_bad,FAIL,0,1,1,6.03,2026-05-23T09:36:35.687422+00:00
+C2-WEBHOOK-0056,C2,webhook,1,webhook C2 via pagerduty v0,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:36:41.717855+00:00
+C2-WEBHOOK-0057,C2,webhook,1,webhook C2 via pagerduty v1,snicheck,webhook|outbound_to_known_bad,FAIL,0,1,1,6.04,2026-05-23T09:36:47.757884+00:00
+C2-WEBHOOK-0058,C2,webhook,1,webhook C2 via pagerduty v2,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:36:53.799724+00:00
+C2-WEBHOOK-0059,C2,webhook,1,webhook C2 via pagerduty v3,snicheck,webhook|outbound_to_known_bad,FAIL,0,6,6,6.04,2026-05-23T09:36:59.843045+00:00
+C2-WEBHOOK-0060,C2,webhook,1,webhook C2 via opsgenie v0,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:37:05.885236+00:00
+C2-WEBHOOK-0061,C2,webhook,1,webhook C2 via opsgenie v1,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:37:11.928735+00:00
+C2-WEBHOOK-0062,C2,webhook,1,webhook C2 via opsgenie v2,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:37:17.968504+00:00
+C2-WEBHOOK-0063,C2,webhook,1,webhook C2 via opsgenie v3,snicheck,webhook|outbound_to_known_bad,FAIL,0,0,0,6.04,2026-05-23T09:37:24.010311+00:00
+C2-GIST-0064,C2,gist_deaddrop,1,gist dead-drop pattern v0,snicheck,github|gist|outbound,FAIL,0,0,0,6.04,2026-05-23T09:37:30.050471+00:00
+C2-GIST-0065,C2,gist_deaddrop,1,gist dead-drop pattern v1,snicheck,github|gist|outbound,FAIL,0,0,0,6.04,2026-05-23T09:37:36.091448+00:00
+C2-GIST-0066,C2,gist_deaddrop,1,gist dead-drop pattern v2,snicheck,github|gist|outbound,FAIL,0,0,0,6.04,2026-05-23T09:37:42.130748+00:00
+C2-GIST-0067,C2,gist_deaddrop,1,gist dead-drop pattern v3,snicheck,github|gist|outbound,FAIL,0,0,0,6.04,2026-05-23T09:37:48.175271+00:00
+C2-GIST-0068,C2,gist_deaddrop,1,gist dead-drop pattern v4,snicheck,github|gist|outbound,FAIL,0,0,0,6.04,2026-05-23T09:37:54.213407+00:00
+C2-GIST-0069,C2,gist_deaddrop,1,gist dead-drop pattern v5,snicheck,github|gist|outbound,FAIL,0,6,6,6.04,2026-05-23T09:38:00.256460+00:00
+C2-GIST-0070,C2,gist_deaddrop,1,gist dead-drop pattern v6,snicheck,github|gist|outbound,FAIL,0,0,0,6.04,2026-05-23T09:38:06.300693+00:00
+C2-GIST-0071,C2,gist_deaddrop,1,gist dead-drop pattern v7,snicheck,github|gist|outbound,FAIL,0,0,0,6.04,2026-05-23T09:38:12.343906+00:00
+C2-GIST-0072,C2,gist_deaddrop,1,gist dead-drop pattern v8,snicheck,github|gist|outbound,FAIL,0,6,6,6.04,2026-05-23T09:38:18.385448+00:00
+C2-GIST-0073,C2,gist_deaddrop,1,gist dead-drop pattern v9,snicheck,github|gist|outbound,FAIL,0,0,0,6.04,2026-05-23T09:38:24.427880+00:00
+C2-LONGBEACON-0074,C2,long_beacon,1,long-period beacon (60s) v0,beacon,beacon,ERROR,0,0,0,102.10,2026-05-23T09:38:30.469270+00:00
+C2-LONGBEACON-0075,C2,long_beacon,1,long-period beacon (60s) v1,beacon,beacon,ERROR,0,0,0,102.09,2026-05-23T09:40:12.573001+00:00
+C2-LONGBEACON-0076,C2,long_beacon,1,long-period beacon (60s) v2,beacon,beacon,ERROR,0,0,0,102.11,2026-05-23T09:41:54.661825+00:00
+C2-LONGBEACON-0077,C2,long_beacon,1,long-period beacon (60s) v3,beacon,beacon,ERROR,0,0,0,102.10,2026-05-23T09:43:36.767498+00:00
+C2-LONGBEACON-0078,C2,long_beacon,1,long-period beacon (60s) v4,beacon,beacon,ERROR,0,0,0,102.09,2026-05-23T09:45:18.871620+00:00
+C2-LONGBEACON-0079,C2,long_beacon,1,long-period beacon (120s) v0,beacon,beacon,ERROR,0,0,0,162.10,2026-05-23T09:47:00.965792+00:00
