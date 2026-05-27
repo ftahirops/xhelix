@@ -76,6 +76,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/response"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/autobaseline"
+	"github.com/xhelix/xhelix/pkg/baselinegate"
 	"github.com/xhelix/xhelix/pkg/burstdet"
 	"github.com/xhelix/xhelix/pkg/credbroker"
 	"github.com/xhelix/xhelix/pkg/runtimeallow"
@@ -769,6 +770,31 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		log.Info("firerate operator overrides loaded", "count", len(cfg.Firerate))
 	}
 	_ = fireLimiter // stats surface (xhelixctl firerate) lands in H.3.1
+
+	// Phase L1 — baseline-aware alert gate. Consults the
+	// `baseline_known` tag stamped by pipeline.Handle to suppress
+	// or downgrade alerts the autobaseline has already accepted as
+	// normal for this host. Rules on AlwaysFire bypass.
+	bgatePolicy := baselinegate.Policy{
+		SuppressKnown:  cfg.BaselineGate.SuppressKnown,
+		DowngradeKnown: cfg.BaselineGate.DowngradeKnown,
+	}
+	if len(cfg.BaselineGate.AlwaysFire) > 0 {
+		bgatePolicy.AlwaysFire = map[string]struct{}{}
+		for _, r := range cfg.BaselineGate.AlwaysFire {
+			bgatePolicy.AlwaysFire[r] = struct{}{}
+		}
+	}
+	bgate := baselinegate.New(bgatePolicy)
+	log.Info("baseline gate ready",
+		"suppress_known", cfg.BaselineGate.SuppressKnown,
+		"downgrade_known", cfg.BaselineGate.DowngradeKnown,
+		"always_fire_size", func() int {
+			if len(cfg.BaselineGate.AlwaysFire) > 0 {
+				return len(cfg.BaselineGate.AlwaysFire)
+			}
+			return len(baselinegate.DefaultAlwaysFire())
+		}())
 	// Declared early so emit's closure (assigned later) can capture
 	// them; their actual instances are created further down.
 	var dedupe *alertdedupe.Engine
@@ -955,6 +981,26 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		// per-rule suppressed counter so operators see the noisy rule.
 		if !fireLimiter.Allow(a.RuleID, time.Now()) {
 			return
+		}
+		// Phase L1 baseline-aware gate. Decides per-alert based on
+		// the `baseline_known` tag the pipeline already stamps.
+		knownTag := ""
+		if a.Event.Tags != nil {
+			knownTag = a.Event.Tags["baseline_known"]
+		}
+		switch bgate.Decide(a.RuleID, knownTag == "true") {
+		case baselinegate.ActionSuppress:
+			bgate.RecordSuppress(a.RuleID)
+			return
+		case baselinegate.ActionDowngrade:
+			bgate.RecordDowngrade(a.RuleID)
+			if a.Event.Tags == nil {
+				a.Event.Tags = map[string]string{}
+			}
+			a.Event.Tags["baseline_suppressed"] = "downgraded"
+			if a.Event.Severity > model.SeverityInfo {
+				a.Event.Severity = model.SeverityInfo
+			}
 		}
 		// Evidence bucket aggregation — rolls up repeated alerts
 		// per (rule_id, kind, exe_sha, target_class, cgroup,

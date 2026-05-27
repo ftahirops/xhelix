@@ -79,6 +79,16 @@ type Config struct {
 	// effectively disable the cap for that rule.
 	Firerate map[string]FirerateRulePolicy `yaml:"firerate"`
 
+	// BaselineGate — Phase L1. When autobaseline tags an event as
+	// baseline_known (the host has done this same action before in
+	// observation window) the gate decides whether the alert still
+	// fires, gets downgraded, or is fully suppressed. Default:
+	// downgrade. AlwaysFire rule list defaults to safe set in
+	// pkg/baselinegate.DefaultAlwaysFire (hard-deny invariants,
+	// revshell, IMDS, cron persistence, etc — these fire regardless
+	// of baseline).
+	BaselineGate BaselineGateConfig `yaml:"baseline_gate"`
+
 	// ForensicIngest — JSON-lines ingest path config (P-RF.9e).
 	// (Named ForensicIngest, not Forensic, because the existing
 	// Forensic field above is the /proc snapshot subsystem.)
@@ -472,6 +482,22 @@ type FirerateRulePolicy struct {
 	MaxFires int           `yaml:"max_fires"`
 	Window   time.Duration `yaml:"window"`
 	Cooldown time.Duration `yaml:"cooldown"`
+}
+
+// BaselineGateConfig controls the Phase L1 baseline-aware alert gate.
+// SuppressKnown wins over DowngradeKnown when both are true.
+type BaselineGateConfig struct {
+	// SuppressKnown: drop alerts whose event.tags[baseline_known]=true
+	// (unless rule is on AlwaysFire). Aggressive FP reduction.
+	SuppressKnown bool `yaml:"suppress_known"`
+	// DowngradeKnown: emit but tag `baseline_suppressed=downgraded`
+	// for visibility. Less aggressive than SuppressKnown.
+	DowngradeKnown bool `yaml:"downgrade_known"`
+	// AlwaysFire is a list of rule_ids that ignore baseline_known and
+	// always alert. Defaults to pkg/baselinegate.DefaultAlwaysFire
+	// when empty. Provide explicit list to OVERRIDE (not extend) the
+	// default — to extend, copy the default plus your additions.
+	AlwaysFire []string `yaml:"always_fire"`
 }
 
 // ContainmentConfig drives the T11/T12 9-step response ladder.
