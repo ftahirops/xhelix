@@ -85,6 +85,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/bpflsm"
 	"github.com/xhelix/xhelix/pkg/landlock"
 	"github.com/xhelix/xhelix/pkg/cdndetect"
+	"github.com/xhelix/xhelix/pkg/endpointscore"
 	"github.com/xhelix/xhelix/pkg/firerate"
 	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
@@ -1391,6 +1392,14 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Phase H.1 / H.3 operator surfaces.
 	apiSrv.RegisterHandler("firerate.stats", func(ctx context.Context, _ json.RawMessage) (any, error) {
 		return fireLimiter.SuppressedStats(), nil
+	})
+	apiSrv.RegisterHandler("endpointscore.current", func(ctx context.Context, _ json.RawMessage) (any, error) {
+		if foundation == nil || foundation.IncidentGraph == nil {
+			return endpointscore.EndpointScore{At: time.Now()}, nil
+		}
+		tr := foundation.IncidentGraph.SourceScoreTracker()
+		e := endpointscore.NewEngine(tr, nil)
+		return e.Evaluate(time.Now()), nil
 	})
 	apiSrv.RegisterHandler("flowstats.top", func(ctx context.Context, req json.RawMessage) (any, error) {
 		n := 20

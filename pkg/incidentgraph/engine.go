@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/xhelix/xhelix/pkg/sourcescore"
 )
 
 // memEngine is the in-memory Engine implementation. Per-incident
@@ -33,6 +36,11 @@ type memEngine struct {
 	// new evidence. Default 30 minutes per build spec — Phase H.2
 	// extends this to 24h for long-window detection.
 	activityWindow time.Duration
+
+	// scoreTracker (T08.1) is the per-source TTP-token bag exposed
+	// for operator-facing risk ranking. Populated on every alert
+	// that carries a SourceID and a known TTP tag. Nil-safe.
+	scoreTracker *sourcescore.Tracker
 }
 
 // maxEvidencePerIncident bounds the evidence ring per incident to
@@ -50,7 +58,15 @@ func NewEngine(activityWindow time.Duration) Engine {
 		bySource:       make(map[uint64]string),
 		byLineage:      make(map[uint64]string),
 		activityWindow: activityWindow,
+		scoreTracker:   sourcescore.NewTracker(),
 	}
+}
+
+// SourceScoreTracker returns the per-source TTP-token tracker
+// (T08.1). Operators query Snapshot() for a sorted risk leaderboard.
+// Nil-safe — never returns nil.
+func (e *memEngine) SourceScoreTracker() *sourcescore.Tracker {
+	return e.scoreTracker
 }
 
 // Observe records an event. Events ENRICH an existing incident on
@@ -91,6 +107,13 @@ func (e *memEngine) ObserveAlert(a Alert) {
 	}
 	if ttp := ttpForRule(a.RuleID); ttp != "" {
 		inc.TTPTags = appendUnique(inc.TTPTags, ttp)
+		// T08.1 — feed per-source TTP tracker. SourceID 0 means the
+		// alert wasn't anchored; skip (the score lookup is keyed on
+		// stringified source ID).
+		if e.scoreTracker != nil && a.SourceID != 0 {
+			e.scoreTracker.Add(strconv.FormatUint(a.SourceID, 10),
+				sourcescore.Token(ttp))
+		}
 	}
 	inc.UpdatedAt = a.At
 	// Re-classify intent every time TTP tags change.

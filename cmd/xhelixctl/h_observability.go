@@ -100,6 +100,48 @@ func newFlowStatsCmd() *cobra.Command {
 	return cmd
 }
 
+// newEndpointScoreCmd shows the host-level T10 chain-rollup score
+// pulled live from the daemon.
+func newEndpointScoreCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "endpointscore",
+		Short: "Show current endpoint risk score across the 5 canonical chains (T10)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial("/run/xhelix/xhelix.sock")
+			if err != nil {
+				return fmt.Errorf("dial daemon socket: %w", err)
+			}
+			defer c.Close()
+			var es struct {
+				Score    int
+				Chain    string
+				Severity string
+				Matches  []struct {
+					ChainID string
+					Score   int
+					Matched bool
+					Missing []string
+					Hit     []string
+				}
+				At string
+			}
+			if err := c.Call("endpointscore.current", nil, &es); err != nil {
+				return err
+			}
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "endpoint score: %d/100  severity=%s  top_chain=%s\n\n",
+				es.Score, es.Severity, es.Chain)
+			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "CHAIN\tSCORE\tMATCHED\tHIT\tMISSING")
+			for _, m := range es.Matches {
+				fmt.Fprintf(tw, "%s\t%d\t%v\t%v\t%v\n",
+					m.ChainID, m.Score, m.Matched, m.Hit, m.Missing)
+			}
+			return tw.Flush()
+		},
+	}
+}
+
 // suppress unused-import lint when context isn't referenced from a build
 // tag combination (defensive — the file always uses cobra).
 var _ = context.Background

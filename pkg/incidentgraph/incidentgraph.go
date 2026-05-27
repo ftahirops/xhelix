@@ -19,6 +19,8 @@ package incidentgraph
 
 import (
 	"time"
+
+	"github.com/xhelix/xhelix/pkg/sourcescore"
 )
 
 // IntentCategory enumerates the broad attack objectives an incident
@@ -140,6 +142,11 @@ type Engine interface {
 
 	// Size returns the count of open incidents (metrics helper).
 	Size() int
+
+	// SourceScoreTracker returns the per-source TTP-token tracker
+	// (T08.1). Nil-safe — implementations that don't track scores
+	// return nil and the caller's downstream Engine handles that.
+	SourceScoreTracker() *sourcescore.Tracker
 }
 
 // observableEvent is the minimal event view incidentgraph consumes.
