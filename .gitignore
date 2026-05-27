@@ -38,7 +38,7 @@ packaging/deb/usr/local/bin/xhelix-verify
 !docs/SCENARIOS.md
 !docs/XGENGUARDIAN_INTEGRATION_SPEC.md
 !docs/KILL_CHAIN_COVERAGE.md
-!docs/REAL_USE_CASES.html
+!docs/REAL_USE_CASES.md
 
 # Local state for development
 /var/
