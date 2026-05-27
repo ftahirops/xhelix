@@ -17,6 +17,7 @@ import (
 
 	"github.com/xhelix/xhelix/pkg/alert"
 	"github.com/xhelix/xhelix/pkg/enforce"
+	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/store"
@@ -37,6 +38,10 @@ type Config struct {
 	Quarantine  *enforce.Quarantine
 	Soak        *enforce.Soak
 	PanicSwitch *enforce.PanicSwitch
+	// IncidentStore is the audit-trail backing for Phase D.1. When
+	// non-nil, the web UI exposes /api/incidents and a basic
+	// browser view. Nil-safe — read endpoints return [] when absent.
+	IncidentStore *incidentgraph.Store
 }
 
 // Server is the HTTP dashboard.
@@ -72,6 +77,10 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("/api/quarantine", s.handleQuarantine)
 	mux.HandleFunc("/api/soak", s.handleSoak)
 	mux.HandleFunc("/api/panic", s.handlePanic)
+	// Phase D.2 incidents UI.
+	mux.HandleFunc("/api/incidents", s.handleIncidentsList)
+	mux.HandleFunc("/api/incidents/", s.handleIncidentDetail)
+	mux.HandleFunc("/incidents", s.handleIncidentsPage)
 	s.registerAdminRoutes(mux)
 	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 	s.mux = mux

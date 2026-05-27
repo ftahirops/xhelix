@@ -1,0 +1,24 @@
+# T09 — operator-extensible hard-deny invariants
+#
+# This file MERGES on top of the baked-in canonical set returned by
+# brp.DefaultInvariants(). The loader is additive only: you can add
+# new "always suspicious" actions and new per-role denied execs.
+# Weakening a baked-in invariant requires a deliberate code change.
+#
+# Deploy: copy or symlink to /etc/xhelix/brp/invariants.yaml and
+# restart the daemon. Inspect the merged active set with:
+#   xhelixctl brp invariants
+
+# Actions that are always treated as hard-deny regardless of role.
+# Defaults already include: ptrace_attach, memfd_exec, process_vm_writev.
+always_suspicious:
+  # - kexec_load        # uncomment if you never legitimately kexec
+  # - kernel_module_load
+
+# Per-role exec deny lists. Defaults already include nginx-*, apache-*,
+# and mysql-* roles forbidding /bin/sh, bash, dash, python, perl, ruby,
+# nc, ncat. Extend per your environment:
+denied_execs_by_role:
+  # custom-app-role:
+  #   - /opt/myapp/dropper-bin
+  #   - /tmp/.cache/known-bad

@@ -2631,6 +2631,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		Quarantine:  quarantine,
 		Soak:        soak,
 		PanicSwitch: panicSwitch,
+		IncidentStore: foundation.IncidentStore,
 	})
 	enterpriseSrv := startWebServer(ctx, log, cfg, webServer, sessionTracker, banner, ruleEngine, soak, &uiStats{
 		hot: hot, bus: bus, sessionTracker: sessionTracker, banner: banner,

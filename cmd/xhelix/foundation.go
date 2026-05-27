@@ -658,7 +658,20 @@ func buildBRP(ctx context.Context) (*brp.Matcher, *brp.Runtime) {
 	}
 	slog.Info("brp matcher ready",
 		"profiles", m.Size(), "trusted_signers", len(trust))
-	r := brp.NewRuntime(brp.DefaultInvariants())
+	// T09 — merge operator overlay (if present) on top of canonical
+	// defaults. Missing file is not an error; the loader returns
+	// defaults-only.
+	inv, err := brp.LoadInvariantsWithOverlay("/etc/xhelix/brp/invariants.yaml")
+	if err != nil {
+		slog.Warn("brp invariants overlay refused; falling back to defaults",
+			"err", err)
+		inv = brp.DefaultInvariants()
+	} else {
+		slog.Info("brp invariants ready",
+			"always_suspicious", len(inv.AlwaysSuspicious),
+			"roles", len(inv.DeniedExecsByRole))
+	}
+	r := brp.NewRuntime(inv)
 	return m, r
 }
 

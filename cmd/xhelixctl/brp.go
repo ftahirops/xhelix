@@ -53,6 +53,46 @@ config files into their derived ProfileKey, and explain runtime decisions.
 	cmd.AddCommand(newBRPKeygenCmd())
 	cmd.AddCommand(newBRPGenerateCmd())
 	cmd.AddCommand(newBRPEdgeCmd())
+	cmd.AddCommand(newBRPInvariantsCmd())
+	return cmd
+}
+
+// newBRPInvariantsCmd shows the active hard-deny invariant set,
+// merging the baked-in canonical defaults with the operator overlay
+// at /etc/xhelix/brp/invariants.yaml (T09).
+func newBRPInvariantsCmd() *cobra.Command {
+	var path string
+	cmd := &cobra.Command{
+		Use:   "invariants",
+		Short: "Show the active hard-deny invariant set (defaults + operator overlay)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			inv, err := brp.LoadInvariantsWithOverlay(path)
+			if err != nil {
+				return err
+			}
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "active hard-deny invariants (overlay: %s)\n\n", path)
+			fmt.Fprintf(w, "always_suspicious (%d):\n", len(inv.AlwaysSuspicious))
+			for _, s := range inv.AlwaysSuspicious {
+				fmt.Fprintf(w, "  - %s\n", s)
+			}
+			roles := make([]string, 0, len(inv.DeniedExecsByRole))
+			for r := range inv.DeniedExecsByRole {
+				roles = append(roles, r)
+			}
+			sort.Strings(roles)
+			fmt.Fprintf(w, "\ndenied_execs_by_role (%d roles):\n", len(roles))
+			for _, r := range roles {
+				fmt.Fprintf(w, "  %s:\n", r)
+				for _, e := range inv.DeniedExecsByRole[r] {
+					fmt.Fprintf(w, "    - %s\n", e)
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&path, "overlay", "/etc/xhelix/brp/invariants.yaml",
+		"path to operator overlay YAML (missing file = defaults only)")
 	return cmd
 }
 
