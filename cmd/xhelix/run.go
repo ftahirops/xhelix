@@ -750,12 +750,24 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// below. DefaultPolicy (30/min) applies to any rule without a
 	// custom budget. Suppression count is exposed via
 	// `xhelixctl firerate stats`.
-	fireLimiter := firerate.NewLimiter(map[string]firerate.Policy{
+	// Built-in baseline policy + operator overrides from cfg.Firerate.
+	firerateMap := map[string]firerate.Policy{
 		// Long-window threshold rules already self-suppress via their
 		// own cooldown; cap further at 6/hour to keep the chain log
 		// readable if the cooldown is short.
 		"h2.slow_egress_fanout_24h": {MaxFires: 6, Window: time.Hour, Cooldown: 10 * time.Minute},
-	})
+	}
+	for ruleID, pol := range cfg.Firerate {
+		firerateMap[ruleID] = firerate.Policy{
+			MaxFires: pol.MaxFires,
+			Window:   pol.Window,
+			Cooldown: pol.Cooldown,
+		}
+	}
+	fireLimiter := firerate.NewLimiter(firerateMap)
+	if len(cfg.Firerate) > 0 {
+		log.Info("firerate operator overrides loaded", "count", len(cfg.Firerate))
+	}
 	_ = fireLimiter // stats surface (xhelixctl firerate) lands in H.3.1
 	// Declared early so emit's closure (assigned later) can capture
 	// them; their actual instances are created further down.

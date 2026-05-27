@@ -73,6 +73,12 @@ type Config struct {
 	// Containment — T11/T12 9-step ladder. Default observe-only.
 	Containment ContainmentConfig `yaml:"containment"`
 
+	// Firerate — operator overrides for the Phase H.3 per-rule
+	// fire-rate cap. Map of rule_id → policy. Rules not listed fall
+	// back to DefaultPolicy (30/min). Entries with max_fires=0
+	// effectively disable the cap for that rule.
+	Firerate map[string]FirerateRulePolicy `yaml:"firerate"`
+
 	// ForensicIngest — JSON-lines ingest path config (P-RF.9e).
 	// (Named ForensicIngest, not Forensic, because the existing
 	// Forensic field above is the /proc snapshot subsystem.)
@@ -458,6 +464,14 @@ type HardeningConfig struct {
 type MemHardeningConfig struct {
 	MemoryLimitMB int64 `yaml:"memory_limit_mb"`
 	GCPercent     int   `yaml:"gc_percent"`
+}
+
+// FirerateRulePolicy maps directly into firerate.Policy. Window /
+// cooldown accept Go duration strings ("60s", "10m", etc.).
+type FirerateRulePolicy struct {
+	MaxFires int           `yaml:"max_fires"`
+	Window   time.Duration `yaml:"window"`
+	Cooldown time.Duration `yaml:"cooldown"`
 }
 
 // ContainmentConfig drives the T11/T12 9-step response ladder.
