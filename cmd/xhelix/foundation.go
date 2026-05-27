@@ -491,7 +491,8 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 			fc.LongWindow = st
 			slog.Info("longwindow ready", "path", path)
 			go fc.sweepLongWindow(parent)
-			go fc.runLongWindowPoller(parent)
+			// Poller is started by run.go after the alert bus is up so
+			// threshold breaches can be published as model.Alert.
 		}
 	}
 
@@ -553,14 +554,11 @@ func (fc *foundationContext) sweepLongWindow(ctx context.Context) {
 	}
 }
 
-// runLongWindowPoller evaluates the default H.2 threshold rules
-// every minute. Default rule: distinct destination IPs ≥ 20 per
-// image within 24h (slow C2 / fan-out beacon).
-func (fc *foundationContext) runLongWindowPoller(ctx context.Context) {
-	if fc.LongWindow == nil {
-		return
-	}
-	rules := []longwindow.Rule{
+// LongWindowRules returns the default H.2 threshold ruleset. Public
+// so run.go can use it when starting the poller against the alert
+// bus.
+func LongWindowRules() []longwindow.Rule {
+	return []longwindow.Rule{
 		{
 			ID:        "h2.slow_egress_fanout_24h",
 			Tag:       "egress_ip",
@@ -571,23 +569,6 @@ func (fc *foundationContext) runLongWindowPoller(ctx context.Context) {
 			Desc:      "Process reached ≥20 distinct destination IPs within 24h — slow C2 beacon or fan-out scan suspected.",
 		},
 	}
-	p := &longwindow.Poller{
-		Store: fc.LongWindow,
-		Rules: rules,
-		Tick:  time.Minute,
-		Log:   slog.Default(),
-		Emit: func(h longwindow.Hit) {
-			// Bus publish is wired by run.go (H.2.1); for now operators
-			// see the breach via the structured log line and the
-			// underlying SQLite journal.
-			slog.Warn("longwindow: threshold breach",
-				"rule", h.Rule.ID, "group", h.Group,
-				"count", h.Count, "window", h.Rule.Window.String())
-		},
-	}
-	stop := make(chan struct{})
-	go func() { <-ctx.Done(); close(stop) }()
-	p.Run(stop)
 }
 
 // sweepFlowStats prunes idle per-image entries from the rolling

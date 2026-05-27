@@ -401,6 +401,44 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Bus pump
 	go bus.Run(ctx)
 
+	// Phase H.2.1 — long-window threshold poller wired to the bus.
+	// Foundation owns the SQLite store + sweeper; here we start the
+	// per-minute evaluator with an Emit closure that publishes
+	// model.Alert into the bus so the full alert pipeline (chain
+	// log, response engine, sinks) sees threshold breaches.
+	if foundation != nil && foundation.LongWindow != nil {
+		go func() {
+			p := &longwindow.Poller{
+				Store: foundation.LongWindow,
+				Rules: LongWindowRules(),
+				Tick:  time.Minute,
+				Log:   log,
+				Emit: func(h longwindow.Hit) {
+					bus.Send(model.Alert{
+						RuleID: h.Rule.ID,
+						Reason: h.Rule.Desc,
+						Mode:   model.ModeDetect,
+						Event: model.Event{
+							Time:     h.At,
+							Sensor:   "longwindow",
+							Severity: model.SeverityHigh,
+							Image:    h.Group,
+							Tags: map[string]string{
+								"kind":   "long_window_threshold",
+								"image":  h.Group,
+								"count":  strconv.Itoa(h.Count),
+								"window": h.Rule.Window.String(),
+							},
+						},
+					})
+				},
+			}
+			stop := make(chan struct{})
+			go func() { <-ctx.Done(); close(stop) }()
+			p.Run(stop)
+		}()
+	}
+
 	// Enforcement plane
 	quarantine := enforce.NewQuarantine(enforce.DefaultSignalFn)
 	// soak constructed earlier alongside the bus sinks.
@@ -1349,6 +1387,24 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	log.Info("operator-UX APIs registered",
 		"protected_services", protectedRegistry.Count(),
 		"iocs", forensicStore.Len())
+
+	// Phase H.1 / H.3 operator surfaces.
+	apiSrv.RegisterHandler("firerate.stats", func(ctx context.Context, _ json.RawMessage) (any, error) {
+		return fireLimiter.SuppressedStats(), nil
+	})
+	apiSrv.RegisterHandler("flowstats.top", func(ctx context.Context, req json.RawMessage) (any, error) {
+		n := 20
+		if len(req) > 0 {
+			var p struct{ N int }
+			if err := json.Unmarshal(req, &p); err == nil && p.N > 0 {
+				n = p.N
+			}
+		}
+		if foundation == nil || foundation.FlowStats == nil {
+			return []flowstats.ImageBytes{}, nil
+		}
+		return foundation.FlowStats.TopOut(n, time.Now()), nil
+	})
 
 	// P-RF.9e: spawn the forensic JSON-lines ingestor when the
 	// operator opts in. The deception binaries (honey-sh /

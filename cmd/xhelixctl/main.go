@@ -42,6 +42,8 @@ func main() {
 	root.AddCommand(newAppidentCmd())
 	root.AddCommand(newSecrettaintCmd())
 	root.AddCommand(newIncidentsCmd())
+	root.AddCommand(newFireRateCmd())
+	root.AddCommand(newFlowStatsCmd())
 	root.AddCommand(newTopCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
