@@ -164,3 +164,19 @@ func parseUint32(s string) uint32 {
 	_, _ = fmt.Sscanf(s, "%d", &v)
 	return v
 }
+
+// parseUint parses decimal into uint64; 0 on error. Used by Phase H.1
+// to read net_bytes payload tags.
+func parseUint(s string) uint64 {
+	if s == "" {
+		return 0
+	}
+	var v uint64
+	_, _ = fmt.Sscanf(s, "%d", &v)
+	return v
+}
+
+// u64s renders a uint64 as a decimal string for tag stamping.
+func u64s(v uint64) string {
+	return fmt.Sprintf("%d", v)
+}

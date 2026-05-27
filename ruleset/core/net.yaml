@@ -75,3 +75,53 @@ remediation: |
   legitimate ops bot, add the destination to the role's BRP profile
   UpstreamHosts. Otherwise, treat as C2 fallback channel attempt.
 test_id: NET-J3
+---
+id: cdn_cloaking_bare_ip_tls
+desc: TLS connect to a known CDN range with no SNI. Real applications always send SNI to CDN edges (the edge needs SNI to route to the right virtual host). A bare-IP TLS handshake to Cloudflare/Fastly/CloudFront/etc. is the classic cloaked-C2 pattern. Phase H.4.
+severity: warn
+mitre: [T1090.004, T1071.001]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["kind"] == "net_connect" &&
+  event.tags["cdn_cloaking_reason"] == "bare_ip_tls_to_cdn"
+tags: [cdn_cloaking, command_and_control]
+remediation: |
+  A process initiated TLS to a CDN IP without SNI. This is rare in
+  legitimate code. Check the process: if it's a custom binary or
+  short-lived dropper, investigate as cloaked C2. If it's a
+  legitimate updater that uses bare-IP TLS by design, add the
+  binary's normal CDN destinations to its baseline.
+test_id: NET-H4-A
+---
+id: cdn_cloaking_sni_dns_mismatch
+desc: TLS SNI does not match any DNS qname the process recently resolved (within the per-process DNS-cache retention window) and the destination is a CDN edge. Classic domain-fronting signal — the process asks DNS for one name but sends SNI for another over a CDN that fronts both. Phase H.4.
+severity: high
+mitre: [T1090.004, T1071.001]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["kind"] == "net_connect" &&
+  event.tags["cdn_cloaking_reason"] == "sni_dns_mismatch"
+tags: [cdn_cloaking, domain_fronting, command_and_control]
+remediation: |
+  The process resolved one set of names but sent TLS SNI for a
+  different name to a CDN-fronted IP. Likely domain fronting. Pull
+  the recent DNS history for this process and the SNI value to
+  identify both the cover and the real C2 destination.
+test_id: NET-H4-B
+---
+id: high_volume_outbound_burst
+desc: A process moved more than 50MB outbound within the last minute. Per-image rolling counter (Phase H.1) — fires on the connect that follows the breach window so chain context (dst, sni) is captured. Tune the threshold per environment; the 50MB default targets short-lived dropper exfil, not legitimate batch uploads.
+severity: high
+mitre: [T1041, T1567]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["kind"] == "net_connect" &&
+  has(event.tags.flow_out_bytes_window) &&
+  int(event.tags["flow_out_bytes_window"]) > 52428800
+tags: [exfiltration, volume_breach]
+remediation: |
+  Process has exceeded 50MB outbound in 1m. Pull the per-image flow
+  stats (`xhelixctl flowstats top`), check destination + SNI, and
+  decide between legitimate batch upload (allowlist) vs exfiltration
+  (kill+quarantine via response engine).
+test_id: NET-H1

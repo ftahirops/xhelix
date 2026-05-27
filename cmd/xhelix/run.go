@@ -84,6 +84,9 @@ import (
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/bpflsm"
 	"github.com/xhelix/xhelix/pkg/landlock"
+	"github.com/xhelix/xhelix/pkg/cdndetect"
+	"github.com/xhelix/xhelix/pkg/firerate"
+	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/memhardening"
 	posturehost "github.com/xhelix/xhelix/pkg/posture/host"
@@ -702,6 +705,18 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// the variable; the closure assignment happens later in runDaemon
 	// once netban / response / threat-intel are wired.
 	var emit func(model.Alert)
+
+	// Phase H.3 per-rule fire-rate cap. Wrapped into the emit closure
+	// below. DefaultPolicy (30/min) applies to any rule without a
+	// custom budget. Suppression count is exposed via
+	// `xhelixctl firerate stats`.
+	fireLimiter := firerate.NewLimiter(map[string]firerate.Policy{
+		// Long-window threshold rules already self-suppress via their
+		// own cooldown; cap further at 6/hour to keep the chain log
+		// readable if the cooldown is short.
+		"h2.slow_egress_fanout_24h": {MaxFires: 6, Window: time.Hour, Cooldown: 10 * time.Minute},
+	})
+	_ = fireLimiter // stats surface (xhelixctl firerate) lands in H.3.1
 	// Declared early so emit's closure (assigned later) can capture
 	// them; their actual instances are created further down.
 	var dedupe *alertdedupe.Engine
@@ -884,6 +899,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 
 	// Hook the response engine + session tracker into the alert path.
 	emit = func(a model.Alert) {
+		// Phase H.3 fire-rate cap. Dropped alerts still surface in the
+		// per-rule suppressed counter so operators see the noisy rule.
+		if !fireLimiter.Allow(a.RuleID, time.Now()) {
+			return
+		}
 		// Evidence bucket aggregation — rolls up repeated alerts
 		// per (rule_id, kind, exe_sha, target_class, cgroup,
 		// origin_type, 1-min window). Done first so even alerts
@@ -2650,7 +2670,9 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.IncidentGraph,
 		foundation.SSHBrute,
 		foundation.PkgMgr,
-		foundation.LongWindow)
+		foundation.LongWindow,
+		foundation.CDNDNS,
+		foundation.FlowStats)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -2780,6 +2802,8 @@ func dispatch(
 	sshBrute *sshbrute.Detector,
 	pkgMgrStore *pkgmgr.Store,
 	longWindow *longwindow.Store,
+	cdnDNS *cdndetect.DNSCache,
+	flowStats *flowstats.Counters,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -2924,6 +2948,8 @@ func dispatch(
 		SSHBrute:         sshBrute,
 		PkgMgr:           pkgMgrStore,
 		LongWindow:       longWindow,
+		CDNDNS:           cdnDNS,
+		FlowStats:        flowStats,
 	}
 	p.Run(ctx, events)
 }

@@ -33,6 +33,8 @@ import (
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/cdndetect"
+	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
@@ -272,6 +274,18 @@ type Pipeline struct {
 	// threshold rules over hour/day windows (slow C2, distinct-IP
 	// fan-out, periodic egress). Nil-safe.
 	LongWindow *longwindow.Store
+
+	// CDNDNS is the Phase H.4 per-process recent-DNS cache feeding
+	// the CDN cloaking classifier. Pipeline notes every DNS qname
+	// here and consults it on net_connect to flag bare-IP TLS or
+	// SNI/DNS mismatch against known CDN ranges.
+	CDNDNS *cdndetect.DNSCache
+
+	// FlowStats is the Phase H.1 per-image rolling byte counter.
+	// Pipeline updates it on every net_bytes event and stamps
+	// `flow_out_bytes_window` / `flow_in_bytes_window` on every
+	// net_connect so CEL rules can fire on volume thresholds.
+	FlowStats *flowstats.Counters
 }
 
 // Handle processes one event end-to-end. The full per-event chain:
@@ -630,6 +644,37 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		feedConnstateBytes(p.ConnTable, ev)
 	}
 
+	// Phase H.1 per-image rolling byte counter. Nil-safe.
+	if p.FlowStats != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_bytes" {
+		img := ev.Image
+		if img == "" {
+			img = ev.Comm
+		}
+		if img != "" {
+			if b := parseUint(ev.Tags["bytes"]); b > 0 {
+				dir := flowstats.DirOut
+				if ev.Tags["dir"] == "in" {
+					dir = flowstats.DirIn
+				}
+				p.FlowStats.Add(img, dir, b, ev.Time)
+			}
+		}
+	}
+	// Stamp rolling totals on net_connect for CEL rule consumption.
+	if p.FlowStats != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_connect" {
+		img := ev.Image
+		if img == "" {
+			img = ev.Comm
+		}
+		if img != "" {
+			if ev.Tags == nil {
+				ev.Tags = map[string]string{}
+			}
+			ev.Tags["flow_out_bytes_window"] = u64s(p.FlowStats.Sum(img, flowstats.DirOut, ev.Time))
+			ev.Tags["flow_in_bytes_window"] = u64s(p.FlowStats.Sum(img, flowstats.DirIn, ev.Time))
+		}
+	}
+
 	// Procscrape allowlist verdict — tags cred_proc_scrape=true
 	// when an unallowlisted reader opened /proc/<other-pid>/{environ,
 	// maps,mem,auxv}. Runs before rule eval so rules can branch on
@@ -880,6 +925,41 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 	}
 
 	// Cloud-metadata abuse on outbound connects.
+	// Phase H.4 CDN cloaking detector. Two hooks:
+	//   (a) feed DNS qnames per-process into the cache, and
+	//   (b) on net_connect, classify (procKey, dst_ip, sni) against
+	//       CDN ranges; stamp `cdn_provider` and `cdn_cloaking_reason`
+	//       tags so CEL rules can fire.
+	if p.CDNDNS != nil {
+		if ev.Sensor == "netids" && ev.Tags["event_type"] == "dns" {
+			if qname := ev.Tags["dns_qname"]; qname != "" {
+				key := ev.Image
+				if key == "" {
+					key = ev.Comm
+				}
+				if key != "" {
+					p.CDNDNS.Note(key, qname, ev.Time)
+				}
+			}
+		}
+		if ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_connect" {
+			key := ev.Image
+			if key == "" {
+				key = ev.Comm
+			}
+			reason, prov := cdndetect.Classify(key, ev.Tags["dst_ip"], ev.Tags["sni"], p.CDNDNS, ev.Time)
+			if prov != cdndetect.ProviderUnknown {
+				if ev.Tags == nil {
+					ev.Tags = map[string]string{}
+				}
+				ev.Tags["cdn_provider"] = string(prov)
+				if reason != cdndetect.ReasonNone {
+					ev.Tags["cdn_cloaking_reason"] = string(reason)
+				}
+			}
+		}
+	}
+
 	// Phase H.2 long-window recorder. Logs (image, "egress_ip", dst_ip)
 	// for every net_connect so the long-window poller can fire on
 	// slow-burn fan-out (e.g. distinct dst IPs ≥ N over 24h per image).

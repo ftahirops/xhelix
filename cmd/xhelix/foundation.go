@@ -35,6 +35,8 @@ import (
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/cdndetect"
+	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
@@ -133,6 +135,11 @@ type foundationContext struct {
 	PkgMgr *pkgmgr.Store
 	// LongWindow is the disk-backed long-horizon event journal (Phase H.2).
 	LongWindow *longwindow.Store
+	// CDNDNS is the Phase H.4 per-process recent-DNS cache used by
+	// the CDN cloaking classifier.
+	CDNDNS *cdndetect.DNSCache
+	// FlowStats is the Phase H.1 per-image rolling byte counter.
+	FlowStats *flowstats.Counters
 
 	// DLCF subsystem (P7). May be nil if no catalog is configured.
 	Catalog   *catalog.Catalog
@@ -453,6 +460,23 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		}()
 	}
 
+	// CDN cloaking DNS cache (Phase H.4). 2-minute retention,
+	// 32 names per process — bounds memory while giving enough
+	// signal for domain-fronting detection.
+	{
+		fc.CDNDNS = cdndetect.NewDNSCache(2*time.Minute, 32)
+		slog.Info("cdndetect ready", "retention", "2m", "per_proc", 32)
+	}
+
+	// Per-image rolling byte counters (Phase H.1). 1-minute window
+	// at 5s buckets. Pipeline updates on net_bytes; net_connect
+	// events get stamped with current totals.
+	{
+		fc.FlowStats = flowstats.New(time.Minute, 5*time.Second)
+		slog.Info("flowstats ready", "window", "1m", "bucket", "5s")
+		go fc.sweepFlowStats(parent)
+	}
+
 	// Long-window event journal + threshold poller (Phase H.2).
 	// Disk-backed at /var/lib/xhelix/longwindow.db. Pipeline records
 	// per-net_connect (image, "egress_ip", dst_ip); a poller fires
@@ -564,6 +588,26 @@ func (fc *foundationContext) runLongWindowPoller(ctx context.Context) {
 	stop := make(chan struct{})
 	go func() { <-ctx.Done(); close(stop) }()
 	p.Run(stop)
+}
+
+// sweepFlowStats prunes idle per-image entries from the rolling
+// byte counters every 2 minutes.
+func (fc *foundationContext) sweepFlowStats(ctx context.Context) {
+	if fc.FlowStats == nil {
+		return
+	}
+	t := time.NewTicker(2 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if d := fc.FlowStats.Sweep(now); d > 0 {
+				slog.Info("flowstats: swept idle images", "dropped", d)
+			}
+		}
+	}
 }
 
 // sweepSSHBrute runs the per-source-IP cleanup once every 5 minutes.
