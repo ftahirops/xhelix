@@ -82,6 +82,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/vendorcatalog"
 	"github.com/xhelix/xhelix/pkg/vhostdiscovery"
 	"github.com/xhelix/xhelix/pkg/sbom"
+	"github.com/xhelix/xhelix/pkg/bpflsm"
 	"github.com/xhelix/xhelix/pkg/landlock"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
 	"github.com/xhelix/xhelix/pkg/selfseccomp"
@@ -241,6 +242,44 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		} else {
 			log.Info("landlock: mode=off (default); no filesystem restriction",
 				"hint", "set hardening.landlock.mode: dry-run in /etc/xhelix/xhelix.yaml to preview allowlist; then enforce after review")
+		}
+	}
+
+	// Phase I BPF-LSM synchronous deny. Default mode = "off".
+	// HARD prerequisite: kernel cmdline `lsm=...,bpf`. Probe() refuses
+	// to load if absent and returns an operator-actionable error.
+	// Fail-open: on any load/attach error, log + continue without
+	// BPF-LSM (daemon doesn't crash).
+	{
+		mode := bpflsm.ParseMode(cfg.Hardening.BPFLSM.Mode)
+		if mode != bpflsm.ModeOff {
+			progPath := cfg.Hardening.BPFLSM.ObjectPath
+			if progPath == "" {
+				progPath = "/usr/lib/xhelix/xhelix-lsm.o"
+			}
+			loader, err := bpflsm.Apply(progPath, mode, log)
+			if err != nil {
+				log.Error("bpflsm: install failed; continuing without BPF-LSM",
+					"mode", mode.String(), "err", err)
+			} else if loader != nil {
+				// Seed the deny map with operator-supplied paths.
+				for _, p := range cfg.Hardening.BPFLSM.DenyPaths {
+					if err := loader.DenyPath(p); err != nil {
+						log.Warn("bpflsm: seed deny path failed", "path", p, "err", err)
+					} else {
+						log.Info("bpflsm: deny path seeded", "path", p)
+					}
+				}
+				// Loader lives for daemon lifetime; cilium/ebpf
+				// closes the collection when GC'd. Explicit close
+				// path is via the operator CLI in a follow-on.
+				_ = loader
+			}
+		} else {
+			active, _ := bpflsm.Probe()
+			log.Info("bpflsm: mode=off (default); no synchronous deny",
+				"kernel_bpf_lsm_active", active,
+				"hint", "set hardening.bpflsm.mode: load in /etc/xhelix/xhelix.yaml to preview (requires kernel lsm=...,bpf)")
 		}
 	}
 

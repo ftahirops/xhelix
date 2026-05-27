@@ -440,6 +440,25 @@ type HardeningConfig struct {
 	// (Phase G.3). Default mode = "off"; promote to "dry-run" for
 	// preview then "enforce" to actually restrict.
 	Landlock LandlockConfig `yaml:"landlock"`
+	// BPFLSM controls the Phase I synchronous-deny BPF-LSM program.
+	// HARD prerequisite: kernel cmdline must include `bpf` in
+	// lsm=...; xhelix probes /sys/kernel/security/lsm at startup
+	// and refuses to load if absent. Default mode = "off".
+	BPFLSM BPFLSMConfig `yaml:"bpflsm"`
+}
+
+// BPFLSMConfig controls the daemon Phase I BPF-LSM program.
+type BPFLSMConfig struct {
+	// Mode is "off" | "load" | "enforce". Empty = "off".
+	// load: program loaded but NOT attached (operator preview)
+	// enforce: attached to security_bprm_check; synchronous deny live
+	Mode string `yaml:"mode"`
+	// DenyPaths is the initial deny-list seeded into the kernel map
+	// on startup. Operator can add/remove at runtime via xhelixctl.
+	DenyPaths []string `yaml:"deny_paths"`
+	// ObjectPath is where to find the compiled BPF-LSM object.
+	// Default: /usr/lib/xhelix/xhelix-lsm.o
+	ObjectPath string `yaml:"object_path"`
 }
 
 // SeccompConfig controls the daemon self-seccomp filter (Phase G.2).

@@ -33,6 +33,19 @@ ebpf:
 	  -o sensors/ebpf/progs/xhelix-progs.o
 	@file sensors/ebpf/progs/xhelix-progs.o
 
+# Compile the Phase I BPF-LSM program. Separate object so kernels
+# without BPF-LSM (or in dry-run / load-only mode) can use the main
+# xhelix-progs.o without pulling in LSM bindings.
+# Output: sensors/ebpf/progs/xhelix-lsm.o
+# Deploy path: /usr/lib/xhelix/xhelix-lsm.o
+ebpf-lsm:
+	clang -O2 -g -Wall -target bpf \
+	  -D__TARGET_ARCH_x86 \
+	  -I sensors/ebpf/progs \
+	  -c sensors/ebpf/progs/bpflsm.bpf.c \
+	  -o sensors/ebpf/progs/xhelix-lsm.o
+	@file sensors/ebpf/progs/xhelix-lsm.o
+
 build:
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(BIN) ./cmd/xhelix
 	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(CTL) ./cmd/xhelixctl
