@@ -1,6 +1,10 @@
 # xhelix
 
-**A single-binary Linux server EDR built on signed capability contracts, not signatures.**
+> **Linux server EDR with 0 false positives across 934,000 rule fires.**
+>
+> Your nginx wasn't supposed to spawn bash. xhelix proves it can't — with a signed contract and a forensic chain your auditor can verify offline.
+>
+> **One static binary. No SaaS. No ML black boxes. No CGo. Apache-2.0.**
 
 ```
                           ┌──────────────────────────────────────┐
