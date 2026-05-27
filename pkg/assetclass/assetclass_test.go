@@ -145,6 +145,18 @@ func TestClassifyHost(t *testing.T) {
 		{"", "accounts.google.com", 443, AssetIdentityProvider},
 		{"", "api.datadoghq.com", 443, AssetTelemetry},
 		{"", "hooks.slack.com", 443, AssetWebhook},
+		// Phase J.3 — messaging-platform fallback C2 indicators
+		{"", "api.telegram.org", 443, AssetMessagingPlatform},
+		{"", "core.telegram.org", 443, AssetMessagingPlatform},
+		{"", "gateway.discord.gg", 443, AssetMessagingPlatform},
+		{"", "api.wechat.com", 443, AssetMessagingPlatform},
+		{"", "open.rocket.chat", 443, AssetMessagingPlatform},
+		// Telegram CDN raw-IP ranges (no SNI required)
+		{"149.154.167.91", "", 443, AssetMessagingPlatform},
+		{"91.108.4.5", "", 443, AssetMessagingPlatform},
+		// discord.com itself (operator webhook flow) stays AssetWebhook
+		{"", "discord.com", 443, AssetWebhook},
+		{"", "slack.com", 443, AssetWebhook},
 
 		// Internal (private IP)
 		{"10.0.0.5", "", 443, AssetInternalSocket},

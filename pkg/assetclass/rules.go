@@ -204,9 +204,35 @@ func staticHostClass(ip, sni string, port uint16) Class {
 	case sniMatches(sni, "datadoghq.com", "newrelic.com", "splunk.com",
 		"sentry.io", "honeycomb.io", "lightstep.com"):
 		return AssetTelemetry
+	// Phase J.3: messaging-platform bot/gateway/REST endpoints get
+	// AssetMessagingPlatform — distinct from operator-driven webhook
+	// notifications. Match BEFORE the more permissive AssetWebhook
+	// patterns below.
+	case sniMatches(sni, "api.telegram.org", "core.telegram.org",
+		"gateway.discord.gg", "discordapp.io",
+		"botpress.com", "mattermost.io",
+		"api.groupme.com", "open.rocket.chat", "api.signal.org",
+		"api.line.me", "qq.com", "api.whatsapp.com",
+		"web.whatsapp.com", "api.wechat.com"):
+		return AssetMessagingPlatform
 	case sniMatches(sni, "discord.com", "slack.com", "hooks.slack.com",
 		"webhook.site"):
 		return AssetWebhook
+	}
+	// Telegram CDN IP ranges — even without SNI, raw IP to Telegram
+	// infrastructure tagged as messaging platform.
+	if ip != "" {
+		if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() != nil {
+			b := parsed.To4()
+			// 149.154.0.0/16 — Telegram CDN/MTProto
+			if b[0] == 149 && b[1] == 154 {
+				return AssetMessagingPlatform
+			}
+			// 91.108.0.0/16 — Telegram secondary range
+			if b[0] == 91 && b[1] == 108 {
+				return AssetMessagingPlatform
+			}
+		}
 	}
 	if ip != "" {
 		if parsed := net.ParseIP(ip); parsed != nil {

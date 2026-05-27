@@ -59,3 +59,19 @@ match: |
   event.tags["dst_is_private"] != "true"
 tags: [exfiltration]
 remediation: Databases should not phone the public internet. Investigate.
+---
+id: messaging_platform_egress
+desc: Outbound to a messaging-platform bot / gateway endpoint (Telegram bot API, Discord gateway, Mattermost bot, Signal/WhatsApp API). Distinct from operator-driven slack/discord webhook flows (those land on AssetWebhook). Phase J.3 — fallback C2 channel indicator.
+severity: warn
+mitre: [T1071.001, T1102]
+match: |
+  event.sensor == "ebpf.net" &&
+  event.tags["outbound"] == "true" &&
+  event.tags["asset_class"] == "messaging_platform"
+tags: [c2_fallback, command_and_control]
+remediation: |
+  Servers should not reach Telegram bot API, Discord gateway, or
+  Mattermost bot endpoints in normal operation. If this is a known
+  legitimate ops bot, add the destination to the role's BRP profile
+  UpstreamHosts. Otherwise, treat as C2 fallback channel attempt.
+test_id: NET-J3

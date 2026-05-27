@@ -654,6 +654,41 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		}
 	}
 
+	// Asset classification (Phase B.1 / J.3). Stamped BEFORE the
+	// rules engine so CEL rules can branch on `event.tags["asset_class"]`
+	// (e.g. messaging_platform_egress rule from Phase J.3). The
+	// per-event chain originally stamped asset_class much later in
+	// pipeline.Handle, after Rules.Eval — meaning rules never saw the
+	// tag. This block runs the same Resolver but at the right point.
+	// Idempotent — the later stamping block re-applies on the same
+	// event (no harm; same Resolver, same inputs, same result).
+	if p.AssetResolver != nil {
+		if ev.Tags == nil {
+			ev.Tags = map[string]string{}
+		}
+		role := ev.Tags["app_role"]
+		if path := ev.Tags["path"]; path != "" {
+			if c := p.AssetResolver.ClassifyPath(path, role); c != assetclass.ClassUnknown {
+				ev.Tags["asset_class"] = string(c)
+			}
+		} else if sock := ev.Tags["dst_socket"]; sock != "" {
+			if c := p.AssetResolver.ClassifySocket(sock); c != assetclass.ClassUnknown {
+				ev.Tags["asset_class"] = string(c)
+			}
+		} else if ip := ev.Tags["dst_ip"]; ip != "" {
+			sni := ev.Tags["sni"]
+			var port uint16
+			if portStr := ev.Tags["dst_port"]; portStr != "" {
+				if n, err := strconv.ParseUint(portStr, 10, 16); err == nil {
+					port = uint16(n)
+				}
+			}
+			if c := p.AssetResolver.ClassifyHost(ip, sni, port); c != assetclass.ClassUnknown {
+				ev.Tags["asset_class"] = string(c)
+			}
+		}
+	}
+
 	// Rules
 	if p.Rules != nil {
 		p.Rules.Eval(ctx, ev)

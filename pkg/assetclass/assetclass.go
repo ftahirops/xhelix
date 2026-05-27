@@ -48,6 +48,19 @@ const (
 	AssetGitHosting       Class = "git_hosting"
 	AssetIdentityProvider Class = "identity_provider"
 	AssetTelemetry        Class = "telemetry"
+	// AssetMessagingPlatform tags outbound destinations used as
+	// fallback / personal / bot-API endpoints for messaging platforms
+	// (Telegram bot API, Discord gateway, Mattermost bot endpoints,
+	// Rocket.Chat REST, Signal, WhatsApp API). Distinct from
+	// AssetWebhook (which tags the operator-driven notification flow —
+	// Slack incoming webhooks, Discord webhook posts — and is a
+	// frequent legitimate egress).
+	//
+	// Server-role BRP profiles should NOT list AssetMessagingPlatform
+	// destinations in UpstreamHosts; any outbound to this class from
+	// a profiled server role = high-signal C2-fallback indicator.
+	// Phase J.3.
+	AssetMessagingPlatform Class = "messaging_platform"
 	// AssetExternalAPI is the catch-all when no more specific class
 	// can be resolved. Resolvers MUST prefer specific classes
 	// (BlobStorage, Webhook, GitHosting, IdentityProvider, Telemetry)

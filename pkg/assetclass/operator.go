@@ -131,6 +131,7 @@ func parseClass(s string) (Class, bool) {
 		string(AssetDBEndpoint):       AssetDBEndpoint,
 		string(AssetBlobStorage):      AssetBlobStorage,
 		string(AssetWebhook):          AssetWebhook,
+		string(AssetMessagingPlatform): AssetMessagingPlatform,
 		string(AssetGitHosting):       AssetGitHosting,
 		string(AssetIdentityProvider): AssetIdentityProvider,
 		string(AssetTelemetry):        AssetTelemetry,

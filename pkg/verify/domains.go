@@ -364,7 +364,8 @@ func isWriteToPersistencePath(path string) bool {
 //	internal_socket         → +0.5
 //	external_api_peer       → +1.0   uncategorized external
 //	blob_storage            → +1.5   S3/GCS/Azure
-//	webhook                 → +1.5   Slack/Discord hooks
+//	webhook                 → +1.5   Slack/Discord operator webhooks
+//	messaging_platform      → +3.5   Telegram bot API / Discord gateway / Mattermost bot — C2 fallback
 //	git_hosting             → +1.0   GitHub/GitLab
 //	identity_provider       → +0.5   OAuth providers
 //	telemetry               → +0.5   Datadog/Sentry
@@ -394,6 +395,7 @@ func (AssetContext) Score(in Input) (float64, string) {
 		"external_api_peer":   1.0,
 		"blob_storage":        1.5,
 		"webhook":             1.5,
+		"messaging_platform":  3.5, // Phase J.3 — fallback C2 channel risk
 		"git_hosting":         1.0,
 		"identity_provider":   0.5,
 		"telemetry":           0.5,
