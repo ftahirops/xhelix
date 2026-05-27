@@ -1,8 +1,8 @@
 # xhelix
 
-> **Linux server EDR with 0 false positives across 934,000 rule fires.**
+> **Linux server EDR. Per-app behavioral contracts, signed event chain, observe-then-enforce by design.**
 >
-> Your nginx wasn't supposed to spawn bash. xhelix proves it can't — with a signed contract and a forensic chain your auditor can verify offline.
+> Your nginx wasn't supposed to spawn bash. xhelix records every spawn and lets you prove it didn't — with a signed contract and a forensic chain your auditor can verify offline.
 >
 > **One static binary. No SaaS. No ML black boxes. No CGo. Apache-2.0.**
 
@@ -201,7 +201,7 @@ CLASS  NAME            RULES  FIRES     FPS  FP_RATE  TARGET   OK
 3      soft_drift      21     928,347   0    0.0000   0.0500   yes
 ```
 
-**0 confirmed false positives across 934,237 rule fires.** All three FP classes well under their locked targets.
+> **Honest note on FP rates (2026-05-27).** The locked targets below are the design ceilings the soak gate enforces. They are not a guarantee on a fresh deploy. On a freshly-installed host without a learned baseline or hand-curated BRP profiles, expect a high natural FP rate from over-eager rules (`memfd_run_pattern`, `mem_mprotect_rwx`, `tls_no_sni`, `ungated`). Bringing FP rates inside the locked targets requires either (a) running observe-mode long enough for the autobaseline to learn this host's normal activity, or (b) signing BRP profiles for the apps this host actually runs. See `docs/INSTALL_TUNING.md` (forthcoming) for the calibration playbook.
 
 ### Per-rule clean-day tally
 
