@@ -120,7 +120,42 @@ func contentFor(target string, s Set) string {
 	return ""
 }
 
+// dangerousProductionPaths lists paths the decoyfs installer must NEVER
+// overwrite under any condition (even with the destructive-opt-in env
+// var). The Install() flow stages content into opts.Dir; if a caller
+// or test ever passes a system path as opts.Dir, this guard refuses.
+var dangerousProductionPaths = map[string]struct{}{
+	"/etc/shadow":       {},
+	"/etc/gshadow":      {},
+	"/etc/passwd":       {},
+	"/etc/group":        {},
+	"/etc/sudoers":      {},
+	"/etc/sudoers.d":    {},
+	"/etc/ssh/sshd_config": {},
+	"/root":             {},
+	"/root/.ssh":        {},
+	"/root/.ssh/id_rsa": {},
+	"/root/.ssh/id_rsa.pub": {},
+	"/root/.ssh/authorized_keys": {},
+	"/etc/.psa.shadow":  {},
+	"/etc/psa/.psa.shadow": {},
+}
+
+// refuseIfDangerous returns an error if path matches any of the
+// hard-protected production locations. Caller MUST check before
+// any write. This is the post-2026-05-27 incident safeguard.
+func refuseIfDangerous(path string) error {
+	if _, bad := dangerousProductionPaths[path]; bad {
+		return fmt.Errorf("decoyfs: REFUSING to write to protected production path %q "+
+			"(operator-mandated guard since 2026-05-27 SSH key + .psa.shadow disappearance investigation)", path)
+	}
+	return nil
+}
+
 func writeIfChanged(path string, body []byte, mode os.FileMode) error {
+	if err := refuseIfDangerous(path); err != nil {
+		return err
+	}
 	if existing, err := os.ReadFile(path); err == nil {
 		if len(existing) == len(body) && string(existing) == string(body) {
 			return nil // idempotent — no change
