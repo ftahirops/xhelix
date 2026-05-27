@@ -82,6 +82,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/vendorcatalog"
 	"github.com/xhelix/xhelix/pkg/vhostdiscovery"
 	"github.com/xhelix/xhelix/pkg/sbom"
+	"github.com/xhelix/xhelix/pkg/landlock"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
 	"github.com/xhelix/xhelix/pkg/selfseccomp"
 	"github.com/xhelix/xhelix/pkg/session"
@@ -218,6 +219,28 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		} else {
 			log.Info("selfseccomp: mode=off (default); no filter installed",
 				"hint", "set hardening.seccomp.mode: audit in /etc/xhelix/xhelix.yaml to start soak")
+		}
+	}
+
+	// Phase G.3 Linux Landlock filesystem ACL. Default mode = "off";
+	// operator promotes via hardening.landlock.mode in xhelix.yaml.
+	// Applied AFTER seccomp (which itself runs after G.1 prctls).
+	// Landlock is irreversible per-process in enforce mode — same
+	// self-DoS risk as G.2 seccomp enforce. Use dry-run first to
+	// preview the allowlist.
+	{
+		mode := landlock.ParseMode(cfg.Hardening.Landlock.Mode)
+		if mode != landlock.ModeOff {
+			p := landlock.DefaultPolicy()
+			p.ReadOnly = append(p.ReadOnly, cfg.Hardening.Landlock.ExtraReadOnly...)
+			p.ReadWrite = append(p.ReadWrite, cfg.Hardening.Landlock.ExtraReadWrite...)
+			if err := landlock.Apply(p, mode, log); err != nil {
+				log.Error("landlock: install failed; continuing without restriction",
+					"mode", mode.String(), "err", err)
+			}
+		} else {
+			log.Info("landlock: mode=off (default); no filesystem restriction",
+				"hint", "set hardening.landlock.mode: dry-run in /etc/xhelix/xhelix.yaml to preview allowlist; then enforce after review")
 		}
 	}
 

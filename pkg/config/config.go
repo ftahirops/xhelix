@@ -436,12 +436,34 @@ type HardeningConfig struct {
 	// any required syscall is denied). High self-DoS risk — do NOT
 	// enable enforce without audit-mode soak.
 	Seccomp SeccompConfig `yaml:"seccomp"`
+	// Landlock controls the daemon's Linux Landlock filesystem ACL
+	// (Phase G.3). Default mode = "off"; promote to "dry-run" for
+	// preview then "enforce" to actually restrict.
+	Landlock LandlockConfig `yaml:"landlock"`
 }
 
 // SeccompConfig controls the daemon self-seccomp filter (Phase G.2).
 type SeccompConfig struct {
 	// Mode is "off" | "audit" | "enforce". Empty = "off".
 	Mode string `yaml:"mode"`
+}
+
+// LandlockConfig controls the daemon filesystem-ACL via Linux Landlock
+// (Phase G.3). Default mode = "off" (no restriction). Operator promotes
+// to "dry-run" (log what would be allowed; no actual restriction) for
+// preview, then "enforce" (irreversible filesystem restriction —
+// daemon and all children can only read/write paths in the policy).
+// IMPORTANT: enforce mode is irreversible per-process; if the allowlist
+// is wrong, the daemon will fail to write its own state.
+type LandlockConfig struct {
+	// Mode is "off" | "dry-run" | "enforce". Empty = "off".
+	Mode string `yaml:"mode"`
+	// ExtraReadOnly extends the default read-only allowlist (operator-
+	// supplied paths added on top of DefaultPolicy().ReadOnly).
+	ExtraReadOnly []string `yaml:"extra_read_only"`
+	// ExtraReadWrite extends the default read-write allowlist.
+	// Use with care — every entry expands the daemon's write surface.
+	ExtraReadWrite []string `yaml:"extra_read_write"`
 }
 
 // EgressguardConfig controls the per-event egress decision plane.
