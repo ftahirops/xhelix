@@ -20,6 +20,8 @@ No agent/manager split. No kernel module. No SaaS dependency for local enforceme
 
 Detects post-compromise behavior — credential theft, C2 beaconing, dropped-binary execution, container escape, persistence implantation, capability gains, kernel rootkit attempts, SSH brute-force, DNS exfiltration — using eBPF process/file/network telemetry, file-integrity monitoring, identity correlation, a sequence correlator, signed Behavioral Reference Profiles, and a per-event verifier across 10 calibrated evidence domains.
 
+> **See [docs/SCENARIOS.md](docs/SCENARIOS.md) for 12 stage-by-stage walkthroughs** showing how xhelix handles real-world attacks: XZ Utils backdoor, SolarWinds Sunburst, 3CX trojan, Log4Shell, MOVEit CL0P, Capital One IMDS SSRF, cortex-c2, TeamTNT cryptominer, SSH brute + key implant, container escape, memory implants, PAM module replacement.
+
 ---
 
 ## Why xhelix exists
@@ -272,6 +274,12 @@ xhelix is in **multi-phase staged validation** on the development host. Producti
 **Engineering-validated. Operator-gated for prod canary.**
 
 ---
+
+## Real-world attack walkthroughs
+
+For 12 concrete stage-by-stage analyses of how xhelix handles named attacks — XZ Utils backdoor, SolarWinds Sunburst, 3CX trojan, Log4Shell, MOVEit, Capital One IMDS SSRF, cortex-c2, TeamTNT, SSH brute + key implant, container escape, memory implants, PAM replacement — see **[docs/SCENARIOS.md](docs/SCENARIOS.md)**.
+
+Each scenario covers: attack flow, what signature/anomaly EDRs miss, exact xhelix components that catch each stage, MITRE technique IDs, FP suppression notes, and the Class verdict.
 
 ## Where xhelix shines (ideal threat scenarios)
 

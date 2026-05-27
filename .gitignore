@@ -35,6 +35,7 @@ packaging/deb/usr/local/bin/xhelix-verify
 # stay private.
 *.md
 !/README.md
+!docs/SCENARIOS.md
 
 # Local state for development
 /var/
