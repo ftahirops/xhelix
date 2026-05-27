@@ -85,6 +85,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/bpflsm"
 	"github.com/xhelix/xhelix/pkg/landlock"
 	"github.com/xhelix/xhelix/pkg/cdndetect"
+	"github.com/xhelix/xhelix/pkg/containment"
 	"github.com/xhelix/xhelix/pkg/endpointscore"
 	"github.com/xhelix/xhelix/pkg/firerate"
 	"github.com/xhelix/xhelix/pkg/flowstats"
@@ -2642,6 +2643,81 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		PanicSwitch: panicSwitch,
 		IncidentStore: foundation.IncidentStore,
 	})
+	// T11 + T12 — 9-step containment ladder. Default observe-only;
+	// raises to enforce-tier only when the operator sets a higher
+	// `containment.max_step` in /etc/xhelix/xhelix.yaml. Evaluator
+	// runs every eval_interval (default 30s) pulling endpointscore
+	// and routing through Ladder.Handle.
+	if cfg.Containment.Enabled {
+		policy := buildContainmentPolicy(cfg.Containment)
+		acts := containment.Actions{
+			Alert: func(v containment.Verdict) error {
+				bus.Send(model.Alert{
+					RuleID: "containment.endpoint_breach",
+					Reason: fmt.Sprintf("endpoint score %d (chain=%s) breached alert threshold", v.Score, v.Chain),
+					Mode:   model.ModeDetect,
+					Event: model.Event{
+						Time:     v.At,
+						Sensor:   "containment",
+						Severity: model.SeverityHigh,
+						Image:    v.Image,
+						PID:      v.PID,
+						Tags: map[string]string{
+							"kind":   "endpoint_score_breach",
+							"chain":  v.Chain,
+							"score":  strconv.Itoa(v.Score),
+							"source": v.SourceID,
+						},
+					},
+				})
+				return nil
+			},
+			KillProc: func(v containment.Verdict) error {
+				if v.PID == 0 {
+					return fmt.Errorf("kill_proc with PID=0")
+				}
+				return quarantine.Kill(v.PID)
+			},
+			QuarantineFile: func(v containment.Verdict) error {
+				if v.PID == 0 {
+					return fmt.Errorf("quarantine_file with PID=0")
+				}
+				_, err := quarantine.Stop(v.PID, "", v.Image, "containment.endpoint_breach")
+				return err
+			},
+			BlockNet: func(v containment.Verdict) error {
+				if banner == nil {
+					return fmt.Errorf("netban not wired")
+				}
+				for _, ip := range v.DstIPs {
+					parsed := net.ParseIP(ip)
+					if parsed == nil {
+						continue
+					}
+					if err := banner.Ban(parsed, "containment.endpoint_breach", 15*time.Minute); err != nil {
+						log.Warn("containment.block_net: ban failed", "ip", ip, "err", err)
+					}
+				}
+				return nil
+			},
+			PanicSwitch: func(v containment.Verdict) error {
+				return panicSwitch.Arm()
+			},
+		}
+		ladder := containment.New(policy, acts, log)
+		evalInterval := cfg.Containment.EvalInterval
+		if evalInterval <= 0 {
+			evalInterval = 30 * time.Second
+		}
+		log.Info("containment ladder ready",
+			"enabled", true,
+			"max_step", policy.MaxStep.String(),
+			"eval_interval", evalInterval.String())
+		go runContainmentEvaluator(ctx, ladder, foundation, evalInterval, log)
+	} else {
+		log.Info("containment ladder disabled (default); set containment.enabled=true to activate observe mode")
+	}
+
 	enterpriseSrv := startWebServer(ctx, log, cfg, webServer, sessionTracker, banner, ruleEngine, soak, &uiStats{
 		hot: hot, bus: bus, sessionTracker: sessionTracker, banner: banner,
 	}, foundation.IncidentGraph)

@@ -70,6 +70,9 @@ type Config struct {
 	// Includes egressguard mode + protected-role allowlist.
 	Hardening HardeningConfig `yaml:"hardening"`
 
+	// Containment — T11/T12 9-step ladder. Default observe-only.
+	Containment ContainmentConfig `yaml:"containment"`
+
 	// ForensicIngest — JSON-lines ingest path config (P-RF.9e).
 	// (Named ForensicIngest, not Forensic, because the existing
 	// Forensic field above is the /proc snapshot subsystem.)
@@ -455,6 +458,26 @@ type HardeningConfig struct {
 type MemHardeningConfig struct {
 	MemoryLimitMB int64 `yaml:"memory_limit_mb"`
 	GCPercent     int   `yaml:"gc_percent"`
+}
+
+// ContainmentConfig drives the T11/T12 9-step response ladder.
+// Default is observe-only: max_step="alert" + sensible bands.
+// Raise max_step (one of: observe, alert, throttle, block_net,
+// kill_proc, quarantine_file, quarantine_dir, host_isolate,
+// panic_switch) and tune the per-step thresholds to enable
+// enforce-tier responses. Evaluator runs every eval_interval.
+type ContainmentConfig struct {
+	Enabled           bool          `yaml:"enabled"`
+	EvalInterval      time.Duration `yaml:"eval_interval"`
+	MaxStep           string        `yaml:"max_step"`
+	MinAlert          int           `yaml:"min_alert"`
+	MinThrottle       int           `yaml:"min_throttle"`
+	MinBlockNet       int           `yaml:"min_block_net"`
+	MinKillProc       int           `yaml:"min_kill_proc"`
+	MinQuarantineFile int           `yaml:"min_quarantine_file"`
+	MinQuarantineDir  int           `yaml:"min_quarantine_dir"`
+	MinHostIsolate    int           `yaml:"min_host_isolate"`
+	MinPanicSwitch    int           `yaml:"min_panic_switch"`
 }
 
 // BPFLSMConfig controls the daemon Phase I BPF-LSM program.
