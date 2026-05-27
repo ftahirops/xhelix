@@ -36,6 +36,7 @@ packaging/deb/usr/local/bin/xhelix-verify
 *.md
 !/README.md
 !docs/SCENARIOS.md
+!docs/XGENGUARDIAN_INTEGRATION_SPEC.md
 
 # Local state for development
 /var/
