@@ -13,7 +13,7 @@ DNS := xhelix-dnspoison
 WD  := xhelix-watchdog
 DIST := dist
 
-.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint sbom checksums verify-checksums govulncheck modverify supplychain
+.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint sbom checksums verify-checksums govulncheck modverify supplychain corpus corpus-mega corpus-check
 
 all: build
 
@@ -130,6 +130,38 @@ verify-checksums:
 # checksums. Wire into release flows.
 supplychain: modverify govulncheck sbom checksums
 	@echo "supplychain: all gates green"
+
+# --- T13: live-fire attack-simulation harness ---
+# Two-tier corpus: `corpus` runs the curated single-host harness
+# (~12 stages, ~30s); `corpus-mega` invokes the broader battery
+# (~70 scenarios, several minutes). BOTH require:
+#   * root (uid 0)         — for credential seeding + namespace ops
+#   * a running xhelix     — to actually see detection
+#   * /var/log/xhelix      — to read alerts.jsonl
+# `corpus-check` validates the preconditions without running anything.
+
+corpus-check:
+	@if [ "$$(id -u)" -ne 0 ]; then \
+	  echo "corpus: requires sudo (id=$$(id -u))"; exit 2; \
+	fi
+	@if ! systemctl is-active --quiet xhelix; then \
+	  echo "corpus: xhelix service not active — start it first"; exit 2; \
+	fi
+	@if [ ! -d /var/log/xhelix ]; then \
+	  echo "corpus: /var/log/xhelix missing"; exit 2; \
+	fi
+	@echo "corpus: preconditions ok"
+
+corpus: corpus-check
+	@echo "corpus: invoking tests/attack-sim/run-all.sh"
+	bash tests/attack-sim/run-all.sh
+
+corpus-mega: corpus-check
+	@if [ ! -f tests/attack-sim/comprehensive_2026-05-22/mega_battery.py ]; then \
+	  echo "corpus-mega: harness missing"; exit 2; \
+	fi
+	@echo "corpus-mega: invoking comprehensive battery"
+	cd tests/attack-sim/comprehensive_2026-05-22 && python3 mega_battery.py
 
 tidy:
 	go mod tidy
