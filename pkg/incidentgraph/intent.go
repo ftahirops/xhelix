@@ -76,6 +76,28 @@ func ttpForRule(ruleID string) string {
 		return "tmpfs_execution"
 	case "suid_drift":
 		return "suid_drift"
+
+	// CDN cloaking (Phase H.4)
+	case "cdn_cloaking_bare_ip_tls":
+		return "cdn_cloaking"
+	case "cdn_cloaking_sni_dns_mismatch":
+		return "domain_fronting"
+
+	// Volume exfil (Phase H.1)
+	case "high_volume_outbound_burst":
+		return "volume_breach"
+
+	// Messaging-platform fallback C2 (Phase J.3)
+	case "messaging_platform_egress":
+		return "c2_fallback"
+
+	// Long-window slow-burn (Phase H.2)
+	case "h2.slow_egress_fanout_24h":
+		return "c2_beacon"
+
+	// Endpoint-level containment trigger (Phase T11)
+	case "containment.endpoint_breach":
+		return "endpoint_breach"
 	}
 	return ""
 }

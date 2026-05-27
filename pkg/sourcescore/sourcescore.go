@@ -43,59 +43,80 @@ func Weight(t Token) int {
 }
 
 var weights = map[Token]int{
+	// === Abstract category tokens (kept for ergonomic chain templates) ===
 	// Foothold / discovery
-	"recon":             6,
-	"port_scan":         8,
-	"path_enum":         6,
-	"asset_discovery":   8,
-
+	"recon":            6,
+	"port_scan":        8,
+	"path_enum":        6,
+	"asset_discovery":  8,
 	// Execution
-	"shell_spawn":       30,
-	"interpreter_exec":  18,
-	"lolbin_exec":       22,
-	"dropped_binary":    28,
-	"living_off_land":   18,
-
+	"shell_spawn":      30,
+	"interpreter_exec": 18,
+	"lolbin_exec":      22,
+	"dropped_binary":   28,
+	"living_off_land":  18,
 	// Persistence
-	"persistence":       25,
-	"crontab_install":   24,
-	"systemd_install":   24,
-	"shell_rc_install":  20,
-
+	"persistence":      25,
+	"crontab_install":  24,
+	"systemd_install":  24,
+	"shell_rc_install": 20,
 	// Privilege escalation
-	"priv_esc":          35,
-	"setuid_drop":       30,
-	"sudo_misuse":       25,
-	"capability_grant":  22,
-
+	"priv_esc":         35,
+	"setuid_drop":      30,
+	"sudo_misuse":      25,
+	"capability_grant": 22,
 	// Defense evasion
 	"masquerade":        15,
 	"timestomp":         18,
 	"log_tamper":        25,
 	"selfprotect_evade": 22,
-
 	// Credential access
-	"cred_access":       30,
-	"shadow_read":       28,
-	"ssh_key_read":      26,
-	"token_read":        24,
-
+	"cred_access":  30,
+	"shadow_read":  28,
+	"ssh_key_read": 26,
+	"token_read":   24,
 	// Lateral movement
 	"lateral_attempt":   25,
 	"smb_login":         20,
 	"ssh_login_attempt": 14,
-
 	// Command and control
-	"c2_beacon":         35,
-	"cdn_cloaking":      28,
-	"domain_fronting":   30,
-	"c2_fallback":       18,
-
+	"c2_beacon":       35,
+	"cdn_cloaking":    28,
+	"domain_fronting": 30,
+	"c2_fallback":     18,
 	// Exfiltration / impact
-	"data_exfil":        40,
-	"volume_breach":     32,
-	"encryption_burst":  45,
-	"data_destruction":  50,
+	"data_exfil":       40,
+	"volume_breach":    32,
+	"encryption_burst": 45,
+	"data_destruction": 50,
+
+	// === Concrete tokens emitted by ttpForRule in pkg/incidentgraph ===
+	// These are the ACTUAL strings the daemon writes to incident TTPTags.
+	// Weights match nearest abstract category so chains keyed on either
+	// vocabulary score consistently.
+	"policy_violation":          25,
+	"protected_path_touch":      30,
+	"reverse_shell":             40,
+	"shell_with_socket":         32,
+	"web_role_shell_spawn":      45, // hard-deny class
+	"memfd_execution":           35,
+	"rwx_memory_alloc":          25,
+	"process_injection":         40,
+	"authorized_keys_modified":  28,
+	"cron_persistence":          24,
+	"ld_preload_drift":          25,
+	"pam_hijack":                32,
+	"dns_exfil":                 40,
+	"metadata_access":           35,
+	"egress_policy_violation":   22,
+	"capability_gain":           22,
+	"container_escape":          40,
+	"file_integrity_drift":      18,
+	"lolbin_use":                22,
+	"bpf_syscall_misuse":        20,
+	"tmpfs_execution":           20,
+	"suid_drift":                25,
+	"endpoint_breach":           50, // emitted by containment ladder itself
 }
 
 // Score returns an integer 0-100 derived from the token bag.

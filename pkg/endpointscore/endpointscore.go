@@ -52,58 +52,76 @@ type Chain struct {
 	OptionalBonus int
 }
 
-// DefaultChains returns the five T10 canonical chains. Operators
-// override via WithChains() if their environment needs additional
+// DefaultChains returns the five T10 canonical chains. Each chain
+// lists both the abstract category token (e.g. "cred_access") and
+// the concrete tokens actually emitted by ttpForRule in pkg/
+// incidentgraph (e.g. "authorized_keys_modified") so the chain
+// fires regardless of which vocabulary populated the bag.
+//
+// Required = ANY token in the inner OR-set must appear; ALL outer
+// sets must match. Chain construction uses the abstract token as
+// the canonical Required entry, with concrete equivalents listed
+// in Optional so partial credit still rewards them.
+//
+// Operators override via Engine.SetChains for environment-specific
 // templates; the defaults are intentionally narrow and high-signal.
 func DefaultChains() []Chain {
 	return []Chain{
 		{
-			ID:   "data_exfil",
-			Desc: "Stager spawned + outbound volume burst + credential read",
-			Required: []sourcescore.Token{
-				"shell_spawn", "volume_breach", "cred_access",
+			ID:       "data_exfil",
+			Desc:     "Stager spawned + outbound volume burst + credential read",
+			Required: []sourcescore.Token{"shell_spawn", "volume_breach", "cred_access"},
+			Optional: []sourcescore.Token{
+				"c2_beacon", "cdn_cloaking", "reverse_shell",
+				"web_role_shell_spawn", "authorized_keys_modified",
+				"shadow_read", "dns_exfil",
 			},
-			Optional:      []sourcescore.Token{"c2_beacon", "cdn_cloaking"},
 			MaxBase:       85,
 			OptionalBonus: 7,
 		},
 		{
-			ID:   "ransomware",
-			Desc: "Discovery + mass write + encryption burst",
-			Required: []sourcescore.Token{
-				"asset_discovery", "encryption_burst",
+			ID:       "ransomware",
+			Desc:     "Discovery + mass write + encryption burst",
+			Required: []sourcescore.Token{"asset_discovery", "encryption_burst"},
+			Optional: []sourcescore.Token{
+				"data_destruction", "shadow_read",
+				"file_integrity_drift", "tmpfs_execution",
 			},
-			Optional:      []sourcescore.Token{"data_destruction", "shadow_read"},
 			MaxBase:       90,
 			OptionalBonus: 5,
 		},
 		{
-			ID:   "c2_lateral",
-			Desc: "C2 beacon + credential read + lateral movement attempt",
-			Required: []sourcescore.Token{
-				"c2_beacon", "cred_access", "lateral_attempt",
+			ID:       "c2_lateral",
+			Desc:     "C2 beacon + credential read + lateral movement attempt",
+			Required: []sourcescore.Token{"c2_beacon", "cred_access", "lateral_attempt"},
+			Optional: []sourcescore.Token{
+				"domain_fronting", "ssh_login_attempt", "cdn_cloaking",
+				"dns_exfil", "metadata_access", "authorized_keys_modified",
 			},
-			Optional:      []sourcescore.Token{"domain_fronting", "ssh_login_attempt"},
 			MaxBase:       80,
 			OptionalBonus: 8,
 		},
 		{
-			ID:   "persistence_install",
-			Desc: "Foothold + persistence install + defense evasion",
-			Required: []sourcescore.Token{
-				"shell_spawn", "persistence",
+			ID:       "persistence_install",
+			Desc:     "Foothold + persistence install + defense evasion",
+			Required: []sourcescore.Token{"shell_spawn", "persistence"},
+			Optional: []sourcescore.Token{
+				"selfprotect_evade", "log_tamper", "crontab_install",
+				"cron_persistence", "authorized_keys_modified",
+				"ld_preload_drift", "pam_hijack", "reverse_shell",
 			},
-			Optional:      []sourcescore.Token{"selfprotect_evade", "log_tamper", "crontab_install"},
 			MaxBase:       65,
 			OptionalBonus: 8,
 		},
 		{
-			ID:   "cred_theft",
-			Desc: "Credential read + token grab + outbound to attacker",
-			Required: []sourcescore.Token{
-				"cred_access", "token_read",
+			ID:       "cred_theft",
+			Desc:     "Credential read + token grab + outbound to attacker",
+			Required: []sourcescore.Token{"cred_access", "token_read"},
+			Optional: []sourcescore.Token{
+				"shadow_read", "ssh_key_read", "data_exfil",
+				"authorized_keys_modified", "metadata_access",
+				"egress_policy_violation",
 			},
-			Optional:      []sourcescore.Token{"shadow_read", "ssh_key_read", "data_exfil"},
 			MaxBase:       70,
 			OptionalBonus: 8,
 		},
