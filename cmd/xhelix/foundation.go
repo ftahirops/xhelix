@@ -35,6 +35,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/integrity"
@@ -127,6 +128,8 @@ type foundationContext struct {
 	IncidentStore *incidentgraph.Store
 	// SSHBrute is the per-source-IP SSH auth-failure counter (Phase J.1).
 	SSHBrute *sshbrute.Detector
+	// PkgMgr tracks package-manager transaction windows (Phase K.2).
+	PkgMgr *pkgmgr.Store
 
 	// DLCF subsystem (P7). May be nil if no catalog is configured.
 	Catalog   *catalog.Catalog
@@ -416,6 +419,37 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		go fc.sweepIncidents(parent)
 	}
 
+	// Package-manager log monitor (Phase K.2). Tails apt/dpkg/dnf/snap
+	// log files; maintains active transaction windows so the pipeline
+	// can stamp `pkg_install_window=true` on events arriving during a
+	// transaction. This suppresses correlator chains like
+	// dropped_binary_lifecycle on legitimate apt-get install flows.
+	{
+		fc.PkgMgr = pkgmgr.New(slog.Default())
+		slog.Info("pkgmgr ready", "tailers", "apt+dpkg+dnf+snap")
+		go fc.sweepPkgMgr(parent)
+		go func() {
+			if err := pkgmgr.TailApt(parent, fc.PkgMgr, "/var/log/apt/history.log"); err != nil {
+				slog.Warn("pkgmgr: apt tailer exited", "err", err)
+			}
+		}()
+		go func() {
+			if err := pkgmgr.TailDpkg(parent, fc.PkgMgr, "/var/log/dpkg.log"); err != nil {
+				slog.Warn("pkgmgr: dpkg tailer exited", "err", err)
+			}
+		}()
+		go func() {
+			if err := pkgmgr.TailDnf(parent, fc.PkgMgr, "/var/log/dnf.rpm.log"); err != nil {
+				slog.Warn("pkgmgr: dnf tailer exited", "err", err)
+			}
+		}()
+		go func() {
+			if err := pkgmgr.TailSnap(parent, fc.PkgMgr, "/var/log/snapd.log"); err != nil {
+				slog.Warn("pkgmgr: snap tailer exited", "err", err)
+			}
+		}()
+	}
+
 	// SSH brute-force detector (Phase J.1). Defaults: 20 failures /
 	// 60s window / 5-min cooldown. Sweep stale per-source state
 	// every 5 min.
@@ -429,6 +463,25 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	}
 
 	return fc, nil
+}
+
+// sweepPkgMgr runs the package-manager window cleanup once per minute.
+// Keeps windows around for 5 minutes after they end so late-arriving
+// events still get the tag.
+func (fc *foundationContext) sweepPkgMgr(ctx context.Context) {
+	if fc.PkgMgr == nil {
+		return
+	}
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			fc.PkgMgr.Sweep(now, 5*time.Minute)
+		}
+	}
 }
 
 // sweepSSHBrute runs the per-source-IP cleanup once every 5 minutes.

@@ -37,6 +37,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/source"
@@ -2559,7 +2560,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.SecretTaint,
 		foundation.EgressGuard,
 		foundation.IncidentGraph,
-		foundation.SSHBrute)
+		foundation.SSHBrute,
+		foundation.PkgMgr)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -2687,6 +2689,7 @@ func dispatch(
 	egressGuard egressguard.Guard,
 	incidentGraph incidentgraph.Engine,
 	sshBrute *sshbrute.Detector,
+	pkgMgrStore *pkgmgr.Store,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -2829,6 +2832,7 @@ func dispatch(
 		EgressGuard:      egressGuard,
 		IncidentGraph:    incidentGraph,
 		SSHBrute:         sshBrute,
+		PkgMgr:           pkgMgrStore,
 	}
 	p.Run(ctx, events)
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/integrity"
@@ -244,6 +245,13 @@ type Pipeline struct {
 	// outcome=failure. Nil-safe.
 	SSHBrute *sshbrute.Detector
 
+	// PkgMgr tracks active package-manager transactions (apt / dpkg /
+	// dnf / snap). When IsActive(ev.Time) is true, the pipeline stamps
+	// `pkg_install_window=true` on the event so correlator chain rules
+	// (e.g. dropped_binary_lifecycle) can suppress on legitimate
+	// package installs. Phase K.2. Nil-safe.
+	PkgMgr *pkgmgr.Store
+
 	// IncidentGraph assembles correlated incidents from per-event and
 	// per-alert streams (Phase D.1). Pipeline calls Observe(event) at
 	// the tail of Handle; the daemon wraps Emit to call ObserveAlert.
@@ -291,6 +299,25 @@ type Pipeline struct {
 // Same order as before P-RF.7b. Any reordering changes behavior
 // and must be diff-tested against the golden corpus.
 func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
+	// Package-manager install-window tag (Phase K.2). Must stamp
+	// BEFORE rules + correlator so chain rules can suppress on
+	// legitimate apt/dpkg/dnf/snap transactions. Always stamp the
+	// key (true or false) — CEL errors on missing-key access, so
+	// correlator chains using `event.tags["pkg_install_window"]`
+	// depend on the key always being present. Nil-safe (no stamp
+	// when PkgMgr is unset, but downstream rules that reference the
+	// tag won't fire in that configuration).
+	if p.PkgMgr != nil {
+		if ev.Tags == nil {
+			ev.Tags = map[string]string{}
+		}
+		if p.PkgMgr.IsActive(ev.Time) {
+			ev.Tags["pkg_install_window"] = "true"
+		} else {
+			ev.Tags["pkg_install_window"] = "false"
+		}
+	}
+
 	// Runtime-allowlist tag enrichment (P-PS.25). Set
 	// event.tags["jit_allowlisted"] = "true" when the event's image
 	// OR parent_image matches a known userland runtime. Rules in

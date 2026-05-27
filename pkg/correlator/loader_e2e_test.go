@@ -47,9 +47,10 @@ func TestLoadFromDir_E2E_DroppedBinary(t *testing.T) {
 		Time:   now,
 		Sensor: "ebpf.net",
 		Tags: map[string]string{
-			"kind":      "net_connect",
-			"outbound":  "true",
-			"cgroup_id": "12345",
+			"kind":               "net_connect",
+			"outbound":           "true",
+			"cgroup_id":          "12345",
+			"pkg_install_window": "false", // Phase K.2 suppression key (CEL needs present key)
 		},
 	}
 	eng.Ingest(context.Background(), step0)
@@ -59,9 +60,10 @@ func TestLoadFromDir_E2E_DroppedBinary(t *testing.T) {
 		Time:   now.Add(time.Second),
 		Sensor: "ebpf.proc",
 		Tags: map[string]string{
-			"kind":      "proc_spawn",
-			"path":      "/tmp/.dropped/payload",
-			"cgroup_id": "12345",
+			"kind":               "proc_spawn",
+			"path":               "/tmp/.dropped/payload",
+			"cgroup_id":          "12345",
+			"pkg_install_window": "false",
 		},
 	}
 	eng.Ingest(context.Background(), step1)
