@@ -84,6 +84,8 @@ import (
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/bpflsm"
 	"github.com/xhelix/xhelix/pkg/landlock"
+	"github.com/xhelix/xhelix/pkg/memhardening"
+	posturehost "github.com/xhelix/xhelix/pkg/posture/host"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
 	"github.com/xhelix/xhelix/pkg/selfseccomp"
 	"github.com/xhelix/xhelix/pkg/session"
@@ -244,6 +246,29 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				"hint", "set hardening.landlock.mode: dry-run in /etc/xhelix/xhelix.yaml to preview allowlist; then enforce after review")
 		}
 	}
+
+	// Phase G.5 host posture snapshot. Read-only; logs score + any
+	// FAIL rows so operators see the hardening gap on every restart.
+	{
+		rep := posturehost.Inspect()
+		pass, warn, fail, unk := rep.Counts()
+		log.Info("host-posture: snapshot",
+			"score", rep.Score(),
+			"pass", pass, "warn", warn, "fail", fail, "unknown", unk)
+		for _, c := range rep.Checks {
+			if c.Status == posturehost.StatusFail {
+				log.Warn("host-posture: FAIL",
+					"check", c.Name, "value", c.Value,
+					"expected", c.Expected, "hint", c.Hint)
+			}
+		}
+	}
+
+	// Phase G.4 Go-runtime memory hardening. No-op if config zero-valued.
+	memhardening.Apply(memhardening.Config{
+		MemoryLimitMB: cfg.Hardening.MemHardening.MemoryLimitMB,
+		GCPercent:     cfg.Hardening.MemHardening.GCPercent,
+	}, log)
 
 	// Phase I BPF-LSM synchronous deny. Default mode = "off".
 	// HARD prerequisite: kernel cmdline `lsm=...,bpf`. Probe() refuses

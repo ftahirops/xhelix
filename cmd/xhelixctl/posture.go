@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xhelix/xhelix/pkg/autobaseline"
+	"github.com/xhelix/xhelix/pkg/posture/host"
 	"github.com/xhelix/xhelix/pkg/posture/modsig"
 	"github.com/xhelix/xhelix/pkg/vendorcatalog"
 	"github.com/xhelix/xhelix/sensors/lsmaudit"
@@ -51,6 +52,24 @@ func newPostureCmd() *cobra.Command {
 				fmt.Println("BPF LSM: NOT ENABLED (xhelix LSM hooks will be degraded)")
 			}
 			fmt.Printf("\nSummary: %s\n", st.Summary())
+			return nil
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "host",
+		Short: "Report host hardening posture (Phase G.5)",
+		Long: `Inspects host-level security knobs and reports a posture score 0-100.
+
+Read-only: never modifies host state. Each check returns
+PASS / WARN / FAIL / UNKNOWN with operator-actionable remediation
+for non-PASS rows.
+
+Checks: ASLR, kptr_restrict, dmesg_restrict, yama.ptrace_scope,
+unprivileged_bpf_disabled, unprivileged_userns_clone, fs.protected_*,
+sysrq, lockdown, module.sig_enforce, secureboot, BPF-LSM active,
+landlock available, /tmp tmpfs hardening.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Print(host.Inspect().FormatText())
 			return nil
 		},
 	})

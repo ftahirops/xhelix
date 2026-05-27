@@ -445,6 +445,16 @@ type HardeningConfig struct {
 	// lsm=...; xhelix probes /sys/kernel/security/lsm at startup
 	// and refuses to load if absent. Default mode = "off".
 	BPFLSM BPFLSMConfig `yaml:"bpflsm"`
+	// MemHardening tunes Go runtime memory ceiling + GC (Phase G.4).
+	// hardened_malloc doesn't apply to a CGO_ENABLED=0 binary;
+	// this is the equivalent intent through the Go runtime.
+	MemHardening MemHardeningConfig `yaml:"mem_hardening"`
+}
+
+// MemHardeningConfig — Go-runtime memory caps. See pkg/memhardening.
+type MemHardeningConfig struct {
+	MemoryLimitMB int64 `yaml:"memory_limit_mb"`
+	GCPercent     int   `yaml:"gc_percent"`
 }
 
 // BPFLSMConfig controls the daemon Phase I BPF-LSM program.

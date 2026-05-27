@@ -13,7 +13,7 @@ DNS := xhelix-dnspoison
 WD  := xhelix-watchdog
 DIST := dist
 
-.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint
+.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint sbom checksums verify-checksums govulncheck modverify supplychain
 
 all: build
 
@@ -47,13 +47,13 @@ ebpf-lsm:
 	@file sensors/ebpf/progs/xhelix-lsm.o
 
 build:
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(BIN) ./cmd/xhelix
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(CTL) ./cmd/xhelixctl
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(VFY) ./cmd/xhelix-verify
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(HSH) ./cmd/xhelix-honeysh
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(SNK) ./cmd/xhelix-sinkhole
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DNS) ./cmd/xhelix-dnspoison
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(WD)  ./cmd/xhelix-watchdog
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN) ./cmd/xhelix
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(CTL) ./cmd/xhelixctl
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(VFY) ./cmd/xhelix-verify
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(HSH) ./cmd/xhelix-honeysh
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(SNK) ./cmd/xhelix-sinkhole
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(DNS) ./cmd/xhelix-dnspoison
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(WD)  ./cmd/xhelix-watchdog
 
 race:
 	go test -race -count=1 ./...
@@ -87,6 +87,49 @@ rules-lint: build
 
 vet:
 	go vet ./...
+
+# --- Phase G.6: supply-chain hygiene ---
+# Verify module hashes match go.sum (catches tampered cached modules).
+modverify:
+	go mod verify
+
+# Govulncheck — known CVEs in our dependency tree. Soft-fail if tool
+# missing so a clean clone still builds; CI installs it explicitly.
+govulncheck:
+	@if command -v govulncheck >/dev/null 2>&1; then \
+	  govulncheck ./...; \
+	else \
+	  echo "govulncheck not installed; skipping (install: go install golang.org/x/vuln/cmd/govulncheck@latest)"; \
+	fi
+
+# Emit a Go-module dependency manifest. CycloneDX-grade SBOMs come
+# from cyclonedx-gomod; this in-tree target just captures the module
+# graph + versions so a release ships a deterministic record even
+# without an external SBOM tool installed.
+sbom:
+	@mkdir -p $(DIST)
+	@go list -m -json all > $(DIST)/sbom-modules.json
+	@go version > $(DIST)/sbom-build.txt
+	@echo "build_flags=-trimpath CGO_ENABLED=0" >> $(DIST)/sbom-build.txt
+	@echo "commit=$(COMMIT)" >> $(DIST)/sbom-build.txt
+	@echo "version=$(VERSION)" >> $(DIST)/sbom-build.txt
+	@echo "sbom: wrote $(DIST)/sbom-modules.json + $(DIST)/sbom-build.txt"
+
+# SHA-256 manifest of shipped binaries. Operators verify post-install.
+checksums: build
+	@mkdir -p $(DIST)
+	@sha256sum $(BIN) $(CTL) $(VFY) $(HSH) $(SNK) $(DNS) $(WD) > $(DIST)/SHA256SUMS
+	@echo "checksums: wrote $(DIST)/SHA256SUMS"
+	@cat $(DIST)/SHA256SUMS
+
+verify-checksums:
+	@test -f $(DIST)/SHA256SUMS || (echo "no $(DIST)/SHA256SUMS — run 'make checksums'"; exit 1)
+	sha256sum -c $(DIST)/SHA256SUMS
+
+# One-shot supply-chain gate: module integrity + vuln scan + SBOM +
+# checksums. Wire into release flows.
+supplychain: modverify govulncheck sbom checksums
+	@echo "supplychain: all gates green"
 
 tidy:
 	go mod tidy
