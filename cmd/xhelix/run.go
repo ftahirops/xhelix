@@ -2642,6 +2642,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		Soak:        soak,
 		PanicSwitch: panicSwitch,
 		IncidentStore: foundation.IncidentStore,
+		SourceStore:   foundation.SourceStore,
 	})
 	// T11 + T12 — 9-step containment ladder. Default observe-only;
 	// raises to enforce-tier only when the operator sets a higher

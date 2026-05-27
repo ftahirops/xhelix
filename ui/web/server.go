@@ -19,6 +19,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/model"
+	"github.com/xhelix/xhelix/pkg/source"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/store"
 	"github.com/xhelix/xhelix/sensors"
@@ -42,6 +43,10 @@ type Config struct {
 	// non-nil, the web UI exposes /api/incidents and a basic
 	// browser view. Nil-safe — read endpoints return [] when absent.
 	IncidentStore *incidentgraph.Store
+	// SourceStore is the per-anchor event journal (T04). When
+	// non-nil, the web UI mounts the existing graphRouter under
+	// /api/v1/source/ and serves the T04.5 /sources HTML page.
+	SourceStore *source.Store
 }
 
 // Server is the HTTP dashboard.
@@ -81,6 +86,13 @@ func NewServer(cfg Config) *Server {
 	mux.HandleFunc("/api/incidents", s.handleIncidentsList)
 	mux.HandleFunc("/api/incidents/", s.handleIncidentDetail)
 	mux.HandleFunc("/incidents", s.handleIncidentsPage)
+	// Phase T04.5 — correlation-graph browser. JSON for /api/v1/source/*
+	// is served by pkg/source's graphRouter (mounted by the daemon
+	// elsewhere); this is just the human-facing HTML shell.
+	mux.HandleFunc("/sources", s.handleSourcesPage)
+	if cfg.SourceStore != nil {
+		mux.Handle("/api/v1/source/", source.NewHTTPHandler(cfg.SourceStore))
+	}
 	s.registerAdminRoutes(mux)
 	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 	s.mux = mux

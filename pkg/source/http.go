@@ -52,6 +52,11 @@ func (g *graphRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/source/"), "/")
+	// /anchors — list recent anchors for T04.5 web UI. Limit via ?limit=N (default 100).
+	if len(parts) == 1 && parts[0] == "anchors" {
+		g.handleListAnchors(w, r)
+		return
+	}
 	if len(parts) < 2 {
 		writeJSONError(w, http.StatusNotFound, "missing route")
 		return
@@ -432,6 +437,27 @@ func writeJSONError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg, "code": code})
+}
+
+// handleListAnchors returns the most-recent anchors as JSON for the
+// T04.5 correlation-graph web UI. limit defaults to 100, capped at 500.
+func (g *graphRouter) handleListAnchors(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			if n > 500 {
+				n = 500
+			}
+			limit = n
+		}
+	}
+	anchors, err := g.store.List(r.Context(), limit)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(anchors)
 }
 
 // AllEventKinds returns the canonical list of EventKind values in
