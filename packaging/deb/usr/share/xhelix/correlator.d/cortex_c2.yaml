@@ -28,8 +28,13 @@ steps:
   # Step 0 — outbound network connect. The ebpf.net sensor stamps
   # `outbound=true` (not `dir`); audited 2026-05-26 against live event
   # tag shape in /var/lib/xhelix/hot.db.
+  #
+  # Phase K.2 suppression: exclude events arriving inside an active
+  # package-manager transaction window (apt/dpkg/dnf/snap). apt-get
+  # install legitimately fetches + writes + execs which would
+  # otherwise look identical to a dropper.
   - select: |
-      event.sensor == "ebpf.net" && event.tags["kind"] == "net_connect" && event.tags["outbound"] == "true"
+      event.sensor == "ebpf.net" && event.tags["kind"] == "net_connect" && event.tags["outbound"] == "true" && event.tags["pkg_install_window"] != "true"
     within: 5m
   # Step 1 — exec of a binary whose path starts with /tmp/ or
   # /var/tmp/ or /dev/shm/. Same lineage as the connect. Path-prefix
@@ -37,7 +42,7 @@ steps:
   # set fires; system / package paths are excluded by virtue of NOT
   # matching this prefix list.
   - select: |
-      event.sensor == "ebpf.proc" && event.tags["kind"] == "proc_spawn" && (event.tags["path"].startsWith("/tmp/") || event.tags["path"].startsWith("/var/tmp/") || event.tags["path"].startsWith("/dev/shm/"))
+      event.sensor == "ebpf.proc" && event.tags["kind"] == "proc_spawn" && (event.tags["path"].startsWith("/tmp/") || event.tags["path"].startsWith("/var/tmp/") || event.tags["path"].startsWith("/dev/shm/")) && event.tags["pkg_install_window"] != "true"
     within: 5m
 remediation: |
   Pattern: outbound fetch → non-package file write → exec from same
