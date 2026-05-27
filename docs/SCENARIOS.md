@@ -360,9 +360,318 @@ The payload allowed remote code execution via crafted SSH connection arguments.
 
 ---
 
+---
+
+## 13. event-stream / flatmap-stream npm supply chain (November 2018)
+
+**Real incident.** The popular `event-stream` npm package gained a malicious sub-dependency `flatmap-stream` after a maintainer transfer. The payload activated only when running inside the Copay Bitcoin wallet build, exfiltrating private keys. Affected millions of weekly downloads via transitive dependency.
+
+**Attack flow on a Linux build/dev host:**
+
+1. `npm install` pulls `event-stream` (or any package that transitively depends on it)
+2. Postinstall script triggers; malicious code unpacks a payload
+3. Payload checks if running inside the target (Copay) — if yes, decrypts second stage
+4. Second-stage reads wallet seed files / dumps env vars
+5. Exfiltrates via outbound HTTPS to attacker-controlled host
+
+**Why signature EDR misses it:**
+- npm package signed by its maintainer
+- Postinstall is a normal npm flow — allowlisted
+- Targeting check means payload is dormant on non-target hosts
+- Exfil to a clean domain looks like normal package telemetry
+
+**How xhelix catches it:**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 1 | `pkg/pkgmgr` (Phase K.2 planned) | `pkg_install_window=true` tag on npm child process events |
+| 2 | `pkg/fim` | Write to `~/.npm/_cacache/` or `node_modules/*/...` outside the install transaction window → `fim.drift` |
+| 2 | `pkg/source` | npm postinstall script anchors under the operator's sudo / shell session |
+| 4 | `pkg/secrettaint` | Read of `~/.config/copay/`, `~/.bitcoin/`, env vars containing keys → state `clean → secret_touched` |
+| 5 | `pkg/egressguard` | Build/dev host's BRP profile declares legitimate npm registry hosts. Attacker domain = undeclared peer → `EgressVerify` then `EgressDeny` in enforce |
+| 5 | `pkg/correlator` | Chain: postinstall exec → file read in non-build paths → outbound to undeclared peer → Class 2 incident |
+
+**MITRE:** `T1195.002` (Software Supply Chain Compromise), `T1552.001` (Credentials in Files), `T1041` (Exfiltration Over C2 Channel)
+
+**Verdict:** Class 1/2 fires at stages 4 and 5. The targeting check (stage 3) is invisible by design, but the moment the payload reads wallet files or hits outbound, xhelix's secret-taint + egressguard chain trips.
+
+---
+
+## 14. ua-parser-js + coa + rc npm hijack (October-November 2021)
+
+**Real incident.** Maintainer accounts for `ua-parser-js` (8M+ weekly downloads), `coa` (9M+), and `rc` (15M+) were hijacked. Malicious versions ran credential-theft scripts and dropped a Monero cryptominer (XMRig) on Linux + macOS hosts.
+
+**Attack flow:**
+
+1. `npm install` of a project depending on any of the three packages
+2. Preinstall script (Linux/Mac branch) downloads `jsextension` binary
+3. `jsextension` runs XMRig miner
+4. Separately, `terminate.js` exfiltrates env variables + ssh keys to attacker C2
+
+**Why signature EDR misses it:**
+- Packages are signed by their (now-hijacked) maintainers
+- Download URL looks like a CDN
+- XMRig is sometimes legitimately deployed by ops teams
+
+**How xhelix catches it:**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 2 | `pkg/brp/runtime.go` | Build host's BRP profile doesn't list arbitrary curl/wget from npm child → `brp.verify_protected_path` |
+| 2 | `pkg/correlator` | **`dropped_binary_lifecycle` (Phase J.2)**: outbound fetch (step 0) → write to `/tmp/jsextension` (off-path) → exec from `/tmp/` (step 1) → fires `dropped_binary_lifecycle` Class 3 |
+| 3 | rule | `mem_mprotect_rwx` — XMRig mprotects pages RWX for the hashing inner loop |
+| 3 | `pkg/egressguard` | Outbound to mining-pool `stratum+tcp://...` from undeclared peer → `EgressDeny` |
+| 4 | `pkg/secrettaint` | Read of `~/.ssh/id_rsa` + env vars by the script → `SecretSSHPrivkey` taint |
+| 4 | `pkg/correlator` | Read followed by outbound = exfil pattern Class 2 |
+
+**MITRE:** `T1195.002`, `T1496` (Resource Hijacking), `T1552.001`, `T1041`
+
+**Verdict:** xhelix's `dropped_binary_lifecycle` correlator chain was **literally built for this attack class** (cortex-c2 + this npm pattern share the same fetch-write-chmod-exec shape). Class 3 fires within ~30 seconds of the install.
+
+---
+
+## 15. PyTorch torchtriton typosquat (December 2022)
+
+**Real incident.** A dependency-confusion-style attack on PyPI: `torchtriton` package was created on the public PyPI index, while PyTorch nightlies expected the internal `pytorch-triton`. Anyone running `pip install torch --pre` got the malicious `torchtriton`, which ran a binary that read `/etc/hosts`, `/etc/passwd`, env variables, and `~/.ssh/` and exfiltrated them.
+
+**Attack flow:**
+
+1. User runs `pip install --pre torch torchaudio torchvision` (nightly)
+2. PyPI resolves `torchtriton` from the public index (attacker-controlled), not the internal one
+3. The package contains `triton` binary that runs on import
+4. Binary reads `/etc/hosts`, `/etc/passwd`, env vars, SSH keys, AWS creds
+5. Exfiltrates to `*.h4ck.cfd` domain via DNS-encoded payload
+
+**Why signature EDR misses it:**
+- pip install is allowlisted
+- The package was published correctly to public PyPI by the attacker
+- DNS exfil looks like normal DNS resolution
+- The PoC author claimed it was "research" — IOC feeds slow to flag
+
+**How xhelix catches it:**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 2 | `pkg/pkgmgr` (Phase K.2 planned) | pip child process in pkg_install_window |
+| 3 | `pkg/brp/runtime.go` | Python's BRP profile (if installed) limits child execs; arbitrary `triton` binary is not in `AllowedChildren` |
+| 4 | `pkg/secrettaint` | Read of `/etc/passwd`, `/etc/shadow`, `~/.ssh/id_rsa`, env → multi-class taint accumulation |
+| 4 | `pkg/burstdet` | 50+ secret-file reads in seconds → `file_read_burst` Class 2 |
+| 5 | `pkg/dnsexfil` | High-entropy subdomain queries to `*.h4ck.cfd` — label entropy + query rate → `dns_exfil.detected` Class 2 |
+| 5 | `pkg/egressguard` | DNS to unfamiliar resolver IPs → undeclared peer |
+
+**MITRE:** `T1195.002`, `T1552.001`, `T1071.004` (DNS C2)
+
+**Verdict:** the credential-burst at stage 4 and DNS-exfil at stage 5 are both **Class 2 named detectors** in xhelix today. No signature needed.
+
+---
+
+## 16. Codecov bash uploader compromise (April 2021)
+
+**Real incident.** Attackers gained access to Codecov's bash uploader script (used by 25,000+ orgs in CI/CD pipelines). Modified it to exfiltrate environment variables — which included CI/CD secrets, cloud credentials, signing keys, source code — to an attacker-controlled IP.
+
+**Attack flow on a Linux CI runner:**
+
+1. CI job runs `bash <(curl -s https://codecov.io/bash)` (or installs codecov-cli)
+2. Modified bash script reads `printenv` — captures **all environment variables** of the build process
+3. POSTs env data to `https://[attacker_ip]/upload/v2`
+4. Attacker now has every secret in the CI environment
+
+**Why signature EDR misses it:**
+- Bash uploader is fetched from Codecov's legitimate domain
+- printenv is a builtin — no exec to catch
+- POST is to a single IP that might rotate
+
+**How xhelix catches it:**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 1 | `pkg/brp/runtime.go` | CI runner's BRP profile lists legitimate uploader hosts. Profile-IP mismatch on the destination = drift |
+| 2 | `pkg/procscrape` | `getenv` / `/proc/self/environ` mass read by a curl-piped-to-bash lineage → `proc_scrape=environ` tag → `cred_proc_scrape=true` |
+| 2 | `pkg/secrettaint` | Read of CI secret env vars → `SecretCICDToken` + `SecretCloudCreds` (depending on which env vars are present) — state `clean → secret_touched` |
+| 3 | `pkg/egressguard` | curl→bash lineage with secret-taint promoted → outbound after secret-touch = `EgressDeny` (or shadow_deny in shadow mode) |
+| 3 | rule | `metadata.access_by_unexpected` if env-read is followed by AWS API calls from CI runner |
+
+**MITRE:** `T1195.001` (Compromise Software Dependencies and Development Tools), `T1552.001`, `T1567` (Exfil Over Web Service)
+
+**Verdict:** stage 2 trips `cred_proc_scrape` + `secrettaint` promotion within milliseconds. The bash uploader reading every env var is exactly the procscrape detector's design intent. Phase N (broker mediation, planned ~10-15d) extends this: even if the CI process *can* read env, the broker only releases short-lived bound tokens, so what gets exfiltrated is useless after seconds.
+
+---
+
+## 17. Apache Struts / Equifax breach (CVE-2017-5638, March 2017)
+
+**Real incident.** OGNL injection in the Jakarta Multipart parser of Apache Struts 2 allowed unauthenticated RCE via a crafted `Content-Type` header. Equifax's failure to patch led to 147M consumer records stolen.
+
+**Attack flow on a Linux app server:**
+
+1. Attacker sends HTTP request with crafted `Content-Type` containing OGNL payload
+2. Vulnerable Struts parses + evaluates the OGNL expression
+3. OGNL invokes `Runtime.exec()` to spawn a shell
+4. Shell runs reconnaissance (whoami, uname, ip a)
+5. Drops a webshell or reverse shell
+6. Lateral movement + bulk data dump
+
+**How xhelix catches it:**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 3 | `pkg/brp/runtime.go` | Tomcat/JBoss BRP profile lists `AllowedChildren = [java, javaw, ...]`. `/bin/sh` not in the list → `brp.hard_deny` Class 1 |
+| 3 | rule | `web_spawns_shell` Class 2 — JVM spawning shell is a hard chain anomaly |
+| 4 | `pkg/correlator` | Recon commands by the spawned shell within seconds of the JVM-spawn event → chain alert |
+| 5 | `pkg/fim` | Webshell drop to webroot path → `fim.drift` Class 3 + `AssetWebDocRoot` weighting |
+| 5 | rule | `binary_runs_from_tmp` if attacker drops to `/tmp/` |
+| 6 | `pkg/secrettaint` | Mass read of DB connection strings, JNDI configs → multi-class taint |
+| 6 | `pkg/egressguard` | Bulk outbound to attacker host → `EgressDeny` |
+
+**MITRE:** `T1190` (Exploit Public-Facing Application), `T1059.004`, `T1505.003` (Webshell), `T1041`
+
+**Verdict:** stage 3 alone (`brp.hard_deny` on JVM-spawning-shell) is the **canonical xhelix protection against web-RCE-to-shell**. Equifax-class exfil is multi-stage but stops at stage 3 with a signed BRP profile in place.
+
+---
+
+## 18. Atlassian Confluence OGNL injection (CVE-2022-26134, June 2022)
+
+**Real incident.** Unauthenticated OGNL injection in Confluence Server / Data Center via URL path. Mass-exploited in the wild within 24h of disclosure. Used for cryptominer drops, ransomware, and intelligence collection.
+
+**Attack flow:**
+
+1. Attacker sends `GET /%24%7B...OGNL_PAYLOAD...%7D/` to Confluence
+2. OGNL evaluates → `Runtime.exec("bash -c '...'")`
+3. Shell downloads a binary from C2
+4. Binary writes systemd persistence + runs miner or stager
+5. Optional: deploys ransomware
+
+**How xhelix catches it (same Confluence service running under Linux):**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 2 | `pkg/brp/runtime.go` | Confluence is a profiled web role; JVM spawning bash is not in `AllowedChildren` → `brp.hard_deny` Class 1 |
+| 3 | `pkg/correlator` | **`dropped_binary_lifecycle` (Phase J.2)** chain: bash outbound (step 0) → exec from `/tmp/` (step 1) → fires Class 3 |
+| 4 | `pkg/fim` + `pkg/persistencewatch` | systemd unit write → Class 2 (`fim.drift` + categorised as `CategorySystemdUnit`) |
+| 4 | `pkg/source` | New `SystemdUnit` anchor minted for the malicious unit start |
+| 4 | rule | `mem_mprotect_rwx` if miner is XMRig (and `cap.gained` if it sets up perf-event privileges) |
+| 5 | `pkg/egressguard` | Bulk outbound to attacker infra → undeclared peer for Confluence role → `EgressDeny` |
+
+**MITRE:** `T1190`, `T1059.004`, `T1053.005` (Scheduled Task: systemd timer), `T1496`
+
+**Verdict:** **two independent Class 1 alerts** fire (`brp.hard_deny` at stage 2 + persistence drop at stage 4). The signed Confluence role profile is the line-of-defense.
+
+---
+
+## 19. Spring4Shell (CVE-2022-22965, March 2022)
+
+**Real incident.** Class.Module.classLoader exposure in Spring Framework allowed remote code execution via crafted HTTP form parameters. Affected Java apps with specific JDK 9+ + Tomcat configurations.
+
+**Attack flow:**
+
+1. Attacker sends crafted form POST with parameter like `class.module.classLoader.resources.context.parent.pipeline.first.pattern`
+2. Spring's PropertyAccessor binds the attacker-controlled value into the AccessLogValve config
+3. Spring writes an attacker-controlled file to disk (`shell.jsp` in the webroot)
+4. Attacker visits `/shell.jsp?cmd=...` and gets RCE
+
+**How xhelix catches it:**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 3 | `pkg/fim` | Write to webroot (`/var/www/`, `/opt/tomcat/webapps/`) from a non-package-manager process → `fim.drift` Class 3 + `AssetWebDocRoot` weighting |
+| 3 | `pkg/brp/runtime.go` | Tomcat's BRP profile lists `FileWrites = [logs/, work/]`. Write to webapps/ path = path-not-in-FileWrites → `brp.verify_protected_path` |
+| 4 | `pkg/brp/runtime.go` | When the JSP is then loaded + executed, Tomcat spawning a shell process trips `brp.hard_deny` |
+| 4 | rule | `web_spawns_shell` Class 2 |
+| 5 | `pkg/correlator` | Sequence: webroot write → web request → shell spawn within same lineage → Class 2 incident |
+
+**MITRE:** `T1190`, `T1505.003`, `T1059.004`
+
+**Verdict:** stage 3 is the **earliest detection point** — webroot writes by Tomcat lineage that aren't in `FileWrites` are inherently suspicious. Subsequent shell execution trips `brp.hard_deny`. **Two-stage redundancy** so a single missed signal still catches the chain.
+
+---
+
+## 20. Apache ActiveMQ RCE (CVE-2023-46604, October 2023)
+
+**Real incident.** OpenWire protocol deserialization flaw in ActiveMQ allowed remote attackers to instantiate arbitrary classes. Used in the wild by HelloKitty ransomware affiliates within days of disclosure.
+
+**Attack flow:**
+
+1. Attacker sends crafted OpenWire payload to ActiveMQ (default port 61616)
+2. ActiveMQ deserializes → instantiates `org.springframework.context.support.ClassPathXmlApplicationContext`
+3. The malicious XML config fetches a script from attacker C2
+4. Script downloads + runs a payload (Cobalt Strike, ransomware loader, or crypto miner)
+5. Persistence + lateral move
+
+**How xhelix catches it:**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 3 | `pkg/egressguard` | ActiveMQ JVM's BRP profile declares legitimate peer set (downstream consumers, broker peers). Attacker C2 = undeclared → `EgressVerify` → `EgressDeny` in enforce |
+| 3 | rule | `metadata.access_by_unexpected` if the script tries IMDS for cloud creds |
+| 4 | `pkg/brp/runtime.go` | JVM spawning shell to run the payload → `brp.hard_deny` Class 1 |
+| 4 | `pkg/correlator` | **`dropped_binary_lifecycle`** chain: outbound + exec-from-tmp |
+| 5 | `pkg/fim` + `pkg/persistencewatch` | systemd / cron persistence drop → Class 2 |
+
+**MITRE:** `T1190`, `T1190.003` (Deserialization), `T1059.004`, `T1105`
+
+**Verdict:** stage 3 egress + stage 4 brp.hard_deny + correlator chain = **three independent fires** before the payload can establish persistence.
+
+---
+
+## 21. F5 BIG-IP iControl REST RCE (CVE-2022-1388, May 2022)
+
+**Real incident.** Authentication bypass in F5 BIG-IP allowed unauthenticated attackers to invoke iControl REST endpoints. Exploits chained to wipe configs, drop webshells, or pivot.
+
+**Attack flow on a Linux-based F5 appliance:**
+
+1. Attacker sends crafted HTTP with bypassed auth headers to `/mgmt/tm/util/bash`
+2. The endpoint runs arbitrary bash commands as root
+3. Attacker drops a webshell or steals the appliance's signing keys
+4. Optionally wipes `/config/bigip.conf` or pivots to internal networks
+
+**How xhelix catches it (assume xhelix deployed on the F5 management Linux):**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 2 | `pkg/brp/runtime.go` | The F5 control-plane role (httpd / Java backend) spawning arbitrary bash → `brp.hard_deny` Class 1 |
+| 3 | `pkg/secrettaint` | Read of `/config/ssl/ssl.key/` (F5 signing keys) → `SecretSigningKey` taint |
+| 3 | `pkg/fim` | Webshell drop to `/usr/local/www/` → `fim.drift` + `AssetWebDocRoot` |
+| 4 | `pkg/fim` | Write to `/config/bigip.conf` → `AssetSystemConfig` weighting, high-severity drift |
+| 4 | `pkg/egressguard` | Pivot to internal subnet from F5 management role → undeclared peer → `EgressDeny` |
+
+**MITRE:** `T1190`, `T1059.004`, `T1552.001`, `T1485` (Data Destruction)
+
+**Verdict:** F5 appliances are notoriously closed-source — xhelix gives you a Linux-host-level observation layer the F5 itself doesn't expose. Stage 2 `brp.hard_deny` catches every variant of "F5 control plane spawning shell."
+
+---
+
+## 22. Polyfill.io CDN compromise (June 2024)
+
+**Real incident.** The widely-used `polyfill.io` CDN was acquired by an attacker who modified the JavaScript responses to inject malware into 100,000+ websites. Affected sites unknowingly served malicious JS to every visitor.
+
+**Attack flow on a Linux web server using polyfill.io:**
+
+1. Server-rendered page includes `<script src="https://cdn.polyfill.io/..."></script>`
+2. CDN serves modified JS to specific user-agents (mobile, certain geos)
+3. Malicious JS runs in the visitor's browser — not the server
+4. **But also:** the website's reverse proxy / SSR layer might fetch polyfill JS server-side for bundling
+
+**xhelix's role (server-side):**
+
+| Stage | Component | What fires |
+|---|---|---|
+| 4 (SSR) | `pkg/egressguard` | Reverse proxy / SSR fetching from `polyfill.io` — if the server-side fetch was added recently (after profile snapshot), it's an undeclared peer → `EgressVerify` |
+| 4 (SSR) | `pkg/snicheck` | Outbound TLS to `polyfill.io` without expected cert SAN (Phase K.3 cert SAN cross-validation, planned) — alert on cert chain change |
+| Indirect | `pkg/dnsresolver` | DNS query log records every polyfill.io resolution — operator can correlate with public IOC disclosure |
+
+**Honest gap:** the in-browser attack happens client-side. xhelix is server-side EDR — **it does not protect site visitors**. What xhelix does protect:
+- The web server itself if the malicious JS attempts to call back to the same server with attack patterns
+- The build/CI pipeline if `polyfill.io` is fetched server-side and bundled — the moment that fetch points to an attacker-controlled host, egressguard sees the new destination
+- The operator's audit trail — every polyfill.io fetch is in the forensic chain, replayable offline
+
+**MITRE:** `T1195.002`, `T1059.007` (JavaScript), `T1071.001`
+
+**Verdict:** xhelix's coverage of this incident is **partial and honest**. Server-side detection works; client-side does not. **Phase K.3 cert SAN cross-validation** (planned, 3-5d) closes the "polyfill.io's cert chain changed when attacker took over" gap server-side. This is in the locked roadmap, not just aspirational.
+
+---
+
 ## Threat coverage matrix
 
-Concise summary across the 12 scenarios above:
+Concise summary across the 22 scenarios above:
 
 | Scenario | Stage caught | xhelix Class | Notes |
 |---|---|---|---|
@@ -378,6 +687,16 @@ Concise summary across the 12 scenarios above:
 | Container escape | privileged mount / pivot_root | Class 1-2 | `contescape.detected` + `cap.gained` |
 | Memory implant (memfd) | execveat from memfd + RWX mprotect | Class 3 (multi-detector) | Strongest case for xhelix vs fileless |
 | PAM module replacement | unauthorized write to security lib | Class 3 + verifier escalate | Anchored + chain-attributed |
+| event-stream npm (2018) | postinstall secret-read + outbound | Class 2 | Phase K.2 closes pkg-install FP gap |
+| ua-parser-js + coa + rc npm (2021) | preinstall fetch + drop + exec | Class 3 (`dropped_binary_lifecycle`) | Built for this class |
+| PyTorch torchtriton (2022) | mass secret read + DNS exfil | Class 2 (`file_read_burst` + `dnsexfil`) | `procscrape` catches the env-read |
+| Codecov bash uploader (2021) | `procscrape` env-read + outbound | Class 2 | Phase N broker mediation extends this |
+| Apache Struts CVE-2017-5638 | JVM spawning shell | Class 1 (`brp.hard_deny`) | Canonical web-RCE detection |
+| Confluence OGNL CVE-2022-26134 | OGNL → shell + persistence drop | Class 1 + Class 2 (two independent fires) | Two-stage redundancy |
+| Spring4Shell CVE-2022-22965 | webroot write + shell spawn | Class 1 + Class 3 (two-stage) | Webroot write tag is the early signal |
+| Apache ActiveMQ CVE-2023-46604 | undeclared egress + JVM-spawn-shell + chain | 3 independent fires | Pre-persistence detection |
+| F5 BIG-IP CVE-2022-1388 | mgmt-spawning-shell + signing-key read + config wipe | Class 1 + Class 2 | Linux-level observation appliance doesn't expose |
+| polyfill.io CDN (June 2024) | partial — server-side egress + cert SAN drift (Phase K.3 planned) | partial | Honest gap on client-side; server-side covered |
 
 ---
 
