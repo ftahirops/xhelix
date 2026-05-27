@@ -35,6 +35,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
@@ -130,6 +131,8 @@ type foundationContext struct {
 	SSHBrute *sshbrute.Detector
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
+	// LongWindow is the disk-backed long-horizon event journal (Phase H.2).
+	LongWindow *longwindow.Store
 
 	// DLCF subsystem (P7). May be nil if no catalog is configured.
 	Catalog   *catalog.Catalog
@@ -450,6 +453,24 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		}()
 	}
 
+	// Long-window event journal + threshold poller (Phase H.2).
+	// Disk-backed at /var/lib/xhelix/longwindow.db. Pipeline records
+	// per-net_connect (image, "egress_ip", dst_ip); a poller fires
+	// when a configured threshold is met over a long window.
+	{
+		path := "/var/lib/xhelix/longwindow.db"
+		st, err := longwindow.OpenStore(path)
+		if err != nil {
+			slog.Warn("longwindow: open failed; continuing without long-window correlation",
+				"path", path, "err", err)
+		} else {
+			fc.LongWindow = st
+			slog.Info("longwindow ready", "path", path)
+			go fc.sweepLongWindow(parent)
+			go fc.runLongWindowPoller(parent)
+		}
+	}
+
 	// SSH brute-force detector (Phase J.1). Defaults: 20 failures /
 	// 60s window / 5-min cooldown. Sweep stale per-source state
 	// every 5 min.
@@ -482,6 +503,67 @@ func (fc *foundationContext) sweepPkgMgr(ctx context.Context) {
 			fc.PkgMgr.Sweep(now, 5*time.Minute)
 		}
 	}
+}
+
+// sweepLongWindow purges long-window events older than 7 days every
+// hour, keeping disk usage bounded. 7 days is enough for the default
+// 24h slow-C2 rule; operators wanting longer windows can extend.
+func (fc *foundationContext) sweepLongWindow(ctx context.Context) {
+	if fc.LongWindow == nil {
+		return
+	}
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			n, err := fc.LongWindow.Sweep(7*24*time.Hour, now)
+			if err != nil {
+				slog.Warn("longwindow: sweep failed", "err", err)
+			} else if n > 0 {
+				slog.Info("longwindow: swept", "rows", n)
+			}
+		}
+	}
+}
+
+// runLongWindowPoller evaluates the default H.2 threshold rules
+// every minute. Default rule: distinct destination IPs ≥ 20 per
+// image within 24h (slow C2 / fan-out beacon).
+func (fc *foundationContext) runLongWindowPoller(ctx context.Context) {
+	if fc.LongWindow == nil {
+		return
+	}
+	rules := []longwindow.Rule{
+		{
+			ID:        "h2.slow_egress_fanout_24h",
+			Tag:       "egress_ip",
+			Mode:      longwindow.ModeDistinctValue,
+			Window:    24 * time.Hour,
+			Threshold: 20,
+			Severity:  "high",
+			Desc:      "Process reached ≥20 distinct destination IPs within 24h — slow C2 beacon or fan-out scan suspected.",
+		},
+	}
+	p := &longwindow.Poller{
+		Store: fc.LongWindow,
+		Rules: rules,
+		Tick:  time.Minute,
+		Log:   slog.Default(),
+		Emit: func(h longwindow.Hit) {
+			// Bus publish is wired by run.go (H.2.1); for now operators
+			// see the breach via the structured log line and the
+			// underlying SQLite journal.
+			slog.Warn("longwindow: threshold breach",
+				"rule", h.Rule.ID, "group", h.Group,
+				"count", h.Count, "window", h.Rule.Window.String())
+		},
+	}
+	stop := make(chan struct{})
+	go func() { <-ctx.Done(); close(stop) }()
+	p.Run(stop)
 }
 
 // sweepSSHBrute runs the per-source-IP cleanup once every 5 minutes.

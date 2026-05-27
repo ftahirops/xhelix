@@ -84,6 +84,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/sbom"
 	"github.com/xhelix/xhelix/pkg/bpflsm"
 	"github.com/xhelix/xhelix/pkg/landlock"
+	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/memhardening"
 	posturehost "github.com/xhelix/xhelix/pkg/posture/host"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
@@ -2648,7 +2649,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.EgressGuard,
 		foundation.IncidentGraph,
 		foundation.SSHBrute,
-		foundation.PkgMgr)
+		foundation.PkgMgr,
+		foundation.LongWindow)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -2777,6 +2779,7 @@ func dispatch(
 	incidentGraph incidentgraph.Engine,
 	sshBrute *sshbrute.Detector,
 	pkgMgrStore *pkgmgr.Store,
+	longWindow *longwindow.Store,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -2920,6 +2923,7 @@ func dispatch(
 		IncidentGraph:    incidentGraph,
 		SSHBrute:         sshBrute,
 		PkgMgr:           pkgMgrStore,
+		LongWindow:       longWindow,
 	}
 	p.Run(ctx, events)
 }

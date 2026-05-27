@@ -33,6 +33,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
@@ -264,6 +265,13 @@ type Pipeline struct {
 	// calls ApplyDeny to push the deny to the kernel backend.
 	// Nil-safe — when absent, no egress enforcement happens.
 	EgressGuard egressguard.Guard
+
+	// LongWindow is the Phase H.2 long-horizon event journal. When
+	// non-nil, the pipeline records (image, "egress_ip", dst_ip) on
+	// every net_connect event so a separate poller can fire
+	// threshold rules over hour/day windows (slow C2, distinct-IP
+	// fan-out, periodic egress). Nil-safe.
+	LongWindow *longwindow.Store
 }
 
 // Handle processes one event end-to-end. The full per-event chain:
@@ -872,6 +880,22 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 	}
 
 	// Cloud-metadata abuse on outbound connects.
+	// Phase H.2 long-window recorder. Logs (image, "egress_ip", dst_ip)
+	// for every net_connect so the long-window poller can fire on
+	// slow-burn fan-out (e.g. distinct dst IPs ≥ N over 24h per image).
+	// Errors are non-fatal — recording is best-effort.
+	if p.LongWindow != nil && ev.Sensor == "ebpf.net" &&
+		ev.Tags["kind"] == "net_connect" {
+		dst := ev.Tags["dst_ip"]
+		img := ev.Image
+		if img == "" {
+			img = ev.Comm
+		}
+		if dst != "" && img != "" {
+			_ = p.LongWindow.Record(ev.Time, img, "egress_ip", dst)
+		}
+	}
+
 	if ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_connect" {
 		if hit, ok := cloudmeta.Classify(cloudmeta.Context{
 			IP: ev.Tags["dst_ip"], Comm: ev.Comm,
