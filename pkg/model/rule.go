@@ -57,6 +57,22 @@ func ParseCategory(raw string) (Category, bool) {
 	return CategoryWeakSignal, false
 }
 
+// DefaultWeight returns the evidence weight a category contributes to a
+// lineage's verdict score when no explicit per-rule weight is set.
+func DefaultWeight(c Category) int {
+	switch c {
+	case CategoryFact:
+		return 0
+	case CategoryWeakSignal:
+		return 20
+	case CategoryIncident:
+		return 50
+	case CategoryHardDeny:
+		return 100
+	}
+	return 20
+}
+
 // Rule is the parsed form of a YAML detection rule.
 //
 // Match is a CEL expression (compiled lazily by the rule engine).
@@ -91,6 +107,10 @@ type Rule struct {
 	Category    Category `yaml:"-" json:"category"`
 	CategoryRaw string   `yaml:"category" json:"-"`
 
+	// Weight overrides the category's default evidence weight in the
+	// verdict engine. 0 = use DefaultWeight(Category).
+	Weight int `yaml:"weight" json:"weight,omitempty"`
+
 	RateLimit *RuleRateLimit `yaml:"rate_limit" json:"rate_limit,omitempty"`
 }
 
@@ -116,6 +136,15 @@ func (r *Rule) NormalizeCategory() error {
 		return &ParseError{Field: "category", Value: r.CategoryRaw}
 	}
 	return nil
+}
+
+// EffectiveWeight returns the rule's explicit Weight if non-zero, else
+// the category default.
+func (r *Rule) EffectiveWeight() int {
+	if r.Weight != 0 {
+		return r.Weight
+	}
+	return DefaultWeight(r.Category)
 }
 
 // RuleRateLimit caps how often a rule may fire.
