@@ -1,6 +1,61 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// Category classifies a rule by what its match means in the verdict
+// model defined in docs/XHELIX_VERDICT_ENGINE_EDR_MODEL_2026-05-29.md.
+//
+//	fact         — structural observation. Records only. Never alerts on its
+//	               own. Examples: process gained capability, TLS without SNI,
+//	               namespace change.
+//	weak_signal  — contributes to a per-PID score in the verdict engine.
+//	               Never alerts on its own.
+//	incident     — alerts when chain-confirmed (verdict engine threshold).
+//	               May contribute to active response.
+//	hard_deny    — explicit invariant violation. Alerts on every fire. May
+//	               block depending on enforce mode. FP budget < 0.1%.
+type Category uint8
+
+const (
+	CategoryWeakSignal Category = iota // default — explicit re-classification required
+	CategoryFact
+	CategoryIncident
+	CategoryHardDeny
+)
+
+func (c Category) String() string {
+	switch c {
+	case CategoryFact:
+		return "fact"
+	case CategoryWeakSignal:
+		return "weak_signal"
+	case CategoryIncident:
+		return "incident"
+	case CategoryHardDeny:
+		return "hard_deny"
+	}
+	return "weak_signal"
+}
+
+// ParseCategory accepts the YAML form (case-insensitive) and returns the
+// matching Category. Unknown values return (CategoryWeakSignal, false) so
+// the caller can still proceed safely while flagging the misconfiguration.
+func ParseCategory(raw string) (Category, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "weak_signal":
+		return CategoryWeakSignal, true
+	case "fact":
+		return CategoryFact, true
+	case "incident":
+		return CategoryIncident, true
+	case "hard_deny":
+		return CategoryHardDeny, true
+	}
+	return CategoryWeakSignal, false
+}
 
 // Rule is the parsed form of a YAML detection rule.
 //
@@ -30,6 +85,12 @@ type Rule struct {
 	// don't accidentally get auto-block treatment.
 	Class int `yaml:"class" json:"class,omitempty"`
 
+	// Category replaces Class for routing decisions in the verdict engine.
+	// Empty defaults to CategoryWeakSignal in NormalizeCategory so untagged
+	// rules cannot escalate to alerts by accident.
+	Category    Category `yaml:"-" json:"category"`
+	CategoryRaw string   `yaml:"category" json:"-"`
+
 	RateLimit *RuleRateLimit `yaml:"rate_limit" json:"rate_limit,omitempty"`
 }
 
@@ -42,6 +103,19 @@ func (r *Rule) NormalizeClass() int {
 		return 3
 	}
 	return c
+}
+
+// NormalizeCategory parses CategoryRaw into Category. Returns a non-nil
+// error if the raw value was a non-empty unknown string; the Category
+// field is still set to the safe default (weak_signal) so processing
+// can continue.
+func (r *Rule) NormalizeCategory() error {
+	c, ok := ParseCategory(r.CategoryRaw)
+	r.Category = c
+	if !ok {
+		return &ParseError{Field: "category", Value: r.CategoryRaw}
+	}
+	return nil
 }
 
 // RuleRateLimit caps how often a rule may fire.
@@ -80,6 +154,9 @@ func (r *Rule) Normalize() error {
 		r.Mode = ModeBlock
 	default:
 		return &ParseError{Field: "mode", Value: r.ModeRaw}
+	}
+	if err := r.NormalizeCategory(); err != nil {
+		return err
 	}
 	return nil
 }
