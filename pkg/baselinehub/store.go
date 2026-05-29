@@ -94,10 +94,11 @@ func (s *Store) IngestUploadWithSize(u Upload, payloadBytes int) error {
 		// Tag every persisted window with the source host. The hub
 		// reads these back when computing rare-endpoint aggregates.
 		envelope := struct {
-			HostTag string             `json:"host_tag"`
-			RoleTag string             `json:"role_tag,omitempty"`
-			Window  *baseline.Window   `json:"window"`
-		}{u.HostTag, u.RoleTag, w}
+			HostTag string           `json:"host_tag"`
+			RoleTag string           `json:"role_tag,omitempty"`
+			Cohort  CohortTags       `json:"cohort,omitempty"`
+			Window  *baseline.Window `json:"window"`
+		}{u.HostTag, u.RoleTag, u.Cohort, w}
 		if err := enc.Encode(envelope); err != nil {
 			return err
 		}

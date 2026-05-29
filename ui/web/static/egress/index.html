@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>xhelix — egress</title>
+<link rel="stylesheet" href="/static/egress/egress.css" />
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">xh</div>
+      <div class="brand-text">
+        <div class="brand-name">xhelix</div>
+        <div class="brand-sub">egress control</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-section">Observability</div>
+      <a class="nav-item" data-route="/egress">Overview</a>
+      <a class="nav-item" data-route="/egress/verdict">Verdict</a>
+      <a class="nav-item" data-route="/egress/live">Live activity</a>
+      <a class="nav-item" data-route="/egress/process">Per-process</a>
+      <a class="nav-item" data-route="/egress/connections">Per-connection</a>
+      <a class="nav-item" data-route="/egress/users">Per-user (UID)</a>
+      <a class="nav-item" data-route="/egress/cgroups">Per-cgroup</a>
+
+      <div class="nav-section">Intelligence</div>
+      <a class="nav-item" data-route="/egress/countries">Countries</a>
+      <a class="nav-item" data-route="/egress/internal">Internal Network</a>
+      <a class="nav-item" data-route="/egress/companies">Companies / ASNs</a>
+      <a class="nav-item" data-route="/egress/destinations">Destinations</a>
+      <a class="nav-item" data-route="/egress/protocols">Protocols</a>
+
+      <div class="nav-section">Threats</div>
+      <a class="nav-item" data-route="/egress/alerts">Alerts</a>
+      <a class="nav-item" data-route="/egress/malware">Malware signals</a>
+      <a class="nav-item" data-route="/egress/anomalies">Anomalies</a>
+      <a class="nav-item" data-route="/egress/lineage">Source lineage</a>
+      <a class="nav-item" data-route="/egress/captures">Packet captures</a>
+      <a class="nav-item" data-route="/egress/tls-plaintext">TLS plaintext <span style="font-size:9px;background:#a00;color:#fff;padding:1px 4px;border-radius:3px;margin-left:4px;">BETA</span></a>
+
+      <div class="nav-section">Policy</div>
+      <a class="nav-item" data-route="/egress/policy/process">Per-process rules</a>
+      <a class="nav-item" data-route="/egress/policy/user">Per-user rules</a>
+      <a class="nav-item" data-route="/egress/policy/country">Per-country block</a>
+      <a class="nav-item" data-route="/egress/policy/queue">Observe → Sign queue</a>
+      <a class="nav-item" data-route="/egress/safety">IP Safety Net</a>
+
+      <div class="nav-section">System</div>
+      <a class="nav-item" data-route="/egress/storage">Storage</a>
+      <a class="nav-item" data-route="/egress/sensors">Sensors</a>
+      <a class="nav-item" data-route="/egress/chain">Forensic chain</a>
+      <a class="nav-item" data-route="/egress/settings">Settings</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="host-row"><span class="host-dot"></span><span id="host-name">host</span></div>
+      <div class="host-sub" id="host-meta">—</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div id="crumbs" class="crumbs">Egress</div>
+      </div>
+      <div class="topbar-right">
+        <div class="range-picker">
+          <button class="rng" data-hours="1">1h</button>
+          <button class="rng active" data-hours="6">6h</button>
+          <button class="rng" data-hours="24">24h</button>
+          <button class="rng" data-hours="168">7d</button>
+        </div>
+        <button class="btn-ghost" id="pause-btn" title="Pause refresh">⏸ Pause</button>
+        <div class="refresh-ind" id="refresh-ind"></div>
+      </div>
+    </header>
+
+    <section id="view" class="view"></section>
+  </main>
+
+  <aside id="drawer" class="drawer">
+    <div class="drawer-head">
+      <div id="drawer-title">Details</div>
+      <button class="btn-ghost" id="drawer-close">✕</button>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </aside>
+  <div id="drawer-scrim" class="drawer-scrim"></div>
+</div>
+
+<script src="/static/egress/charts.js"></script>
+<script src="/static/egress/egress.js"></script>
+</body>
+</html>

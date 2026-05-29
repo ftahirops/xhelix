@@ -1,0 +1,12 @@
+# Redis server.
+#
+# Redis should be bound to 127.0.0.1:6379 (or a unix socket) on
+# single-host deployments. Replication and Sentinel need explicit
+# allow rules.
+schema_version: 1
+binary: redis-server
+mode: observe
+comment: "Redis — loopback only; replication needs explicit rules"
+allow:
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback"

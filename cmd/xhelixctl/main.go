@@ -46,6 +46,10 @@ func main() {
 	root.AddCommand(newFlowStatsCmd())
 	root.AddCommand(newEndpointScoreCmd())
 	root.AddCommand(newTopCmd())
+	root.AddCommand(newXhubCmd())
+	root.AddCommand(newZoneCmd())
+	root.AddCommand(newSafetyCmd())
+	root.AddCommand(newTLSCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

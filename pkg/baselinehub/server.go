@@ -21,6 +21,7 @@ type Server struct {
 	store      *Store
 	authToken  string  // empty disables auth (dev only)
 	log        *slog.Logger
+	onUpload   func(Upload) // optional post-ingest hook (fleet engine)
 	rateMu     sync.Mutex
 	rateBucket map[string]int     // host_tag → bytes posted this minute
 	rateWindow time.Time
@@ -41,6 +42,10 @@ type ServerConfig struct {
 	Store     *Store
 	AuthToken string
 	Logger    *slog.Logger
+	// OnUpload, if non-nil, is invoked after each successful upload
+	// ingest. Used by the fleet engine to feed the rarity/trust subsystems
+	// without coupling baselinehub to xhubfleet.
+	OnUpload func(Upload)
 }
 
 // NewServer builds an HTTP handler graph from the config.
@@ -52,6 +57,7 @@ func NewServer(cfg ServerConfig) *Server {
 		store:      cfg.Store,
 		authToken:  cfg.AuthToken,
 		log:        cfg.Logger,
+		onUpload:   cfg.OnUpload,
 		rateBucket: map[string]int{},
 		rateWindow: time.Now(),
 		cache:      map[string]*cachedRare{},
@@ -127,6 +133,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("hub: ingest failed", "host", u.HostTag, "err", err)
 		http.Error(w, "ingest failed", http.StatusInternalServerError)
 		return
+	}
+	if s.onUpload != nil {
+		s.onUpload(u)
 	}
 	s.log.Info("hub: upload received",
 		"host", u.HostTag, "windows", len(u.Windows), "bytes", len(body))

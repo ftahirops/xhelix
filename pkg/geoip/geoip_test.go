@@ -88,6 +88,39 @@ func TestSeedEntriesCoverPrivateAndMetadata(t *testing.T) {
 	}
 }
 
+func TestSeedEntriesCoverIPv6Providers(t *testing.T) {
+	p := NewInMemory()
+	p.Load(SeedEntries())
+	cases := []struct {
+		ip      string
+		country string
+		asn     string
+	}{
+		{"2606:4700::1", "US", "AS13335"},          // Cloudflare
+		{"2001:4860:4860::8888", "US", "AS15169"},  // Google DNS v6
+		{"2a00:1450:4001:828::200e", "US", "AS15169"}, // Google EU
+		{"2600:1f00::1", "US", "AS16509"},          // AWS
+		{"2603:1000::1", "US", "AS8075"},           // Microsoft
+		{"2a04:4e40::1", "US", "AS54113"},          // Fastly
+		{"2a01:4f8::1", "DE", "AS24940"},           // Hetzner
+		{"2604:a880::1", "US", "AS14061"},          // DigitalOcean
+		{"2001:41d0::1", "FR", "AS16276"},          // OVH
+		{"2606:50c0::1", "US", "AS36459"},          // GitHub
+		{"2620:fe::9", "CH", "AS19281"},            // Quad9
+		{"2a07:a8c0::1", "US", "AS395747"},         // Tailscale
+	}
+	for _, c := range cases {
+		r, ok := p.Lookup(c.ip)
+		if !ok {
+			t.Errorf("seed missed %s", c.ip)
+			continue
+		}
+		if r.Country != c.country || r.ASN != c.asn {
+			t.Errorf("Lookup(%s) = %+v; want country=%s asn=%s", c.ip, r, c.country, c.asn)
+		}
+	}
+}
+
 func TestIsPrivate(t *testing.T) {
 	cases := []struct {
 		ip   string

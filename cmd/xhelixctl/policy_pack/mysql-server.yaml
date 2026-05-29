@@ -1,0 +1,20 @@
+# MySQL / MariaDB server.
+#
+# MySQL is a server — it listens on 3306 and should not initiate
+# outbound connections at all. Federated/FEDERATED engines and
+# replication slaves are the only legitimate exceptions; those need
+# explicit allow rules added by hand.
+#
+# Default mode is OBSERVE. Bump to deny_default once you've verified
+# the profile against your replication topology:
+#   xhelixctl egress policy enforce mysqld --signer you --key …
+schema_version: 1
+binary: mysqld
+mode: observe
+comment: "MySQL — no outbound expected; replication needs explicit rules"
+allow:
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback admin clients"
+  - ports: [53]
+    protocols: [udp]
+    comment: "DNS — resolve replica hostnames"

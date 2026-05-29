@@ -89,6 +89,13 @@ type Options struct {
 	// using this as the seal timestamp. Loaded from the DB at
 	// startup.
 	SealedAt time.Time
+	// IOCCheck, if set, is called with (sha256, dstIP) before recording
+	// a behavior. Returning true means the event carries a known-bad
+	// indicator — refuse to baseline and call PoisonAlert.
+	IOCCheck func(sha256, dstIP string) bool
+	// PoisonAlert is called when IOCCheck returns true. Provides image
+	// and reason.
+	PoisonAlert func(image, sha256, reason string)
 }
 
 // Behavior is the dimension of an event we record + query
@@ -110,14 +117,17 @@ type Behavior struct {
 
 // Manager owns the autobaseline state.
 type Manager struct {
-	mu       sync.RWMutex
-	mode     Mode
-	startAt  time.Time
-	sealAt   time.Time
-	obsWin   time.Duration
-	db       *sql.DB
-	memCache map[string]map[Behavior]uint64 // image → behavior → count
-	dirty    bool
+	mu          sync.RWMutex
+	mode        Mode
+	startAt     time.Time
+	sealAt      time.Time
+	obsWin      time.Duration
+	db          *sql.DB
+	memCache    map[string]map[Behavior]uint64 // image → behavior → count
+	shaHistory  map[string]map[string]struct{} // bare_image → set of SHA256s seen
+	dirty       bool
+	iocCheck    func(sha256, dstIP string) bool
+	poisonAlert func(image, sha256, reason string)
 }
 
 // New constructs a Manager. If opts.DBPath exists and contains a
@@ -128,9 +138,12 @@ func New(opts Options) (*Manager, error) {
 		opts.Observation = 24 * time.Hour
 	}
 	m := &Manager{
-		obsWin:   opts.Observation,
-		memCache: map[string]map[Behavior]uint64{},
-		startAt:  time.Now(),
+		obsWin:      opts.Observation,
+		memCache:    map[string]map[Behavior]uint64{},
+		shaHistory:  map[string]map[string]struct{}{},
+		startAt:     time.Now(),
+		iocCheck:    opts.IOCCheck,
+		poisonAlert: opts.PoisonAlert,
 	}
 	if opts.DBPath == "" {
 		m.mode = ModeObserve
@@ -215,6 +228,19 @@ func (m *Manager) Status() Status {
 	return s
 }
 
+// neverLearnable is the set of Behavior.Action values that must never be
+// silenced by the baseline — dangerous behaviors an attacker could exploit
+// to hide inside the observation window.
+var neverLearnable = map[string]struct{}{
+	"memfd_spawn":  {},
+	"mprotect_rwx": {},
+	"bpf_syscall":  {},
+	"mod_load":     {},
+	"ptrace":       {},
+	"uid0":         {},
+	"shell_socket": {},
+}
+
 // Observe records one (image, behavior) pair. Cheap and lock-
 // guarded — safe to call from the hot pipeline path. No-op when
 // image is empty or mode is DETECT/OFF.
@@ -232,6 +258,28 @@ func (m *Manager) Observe(image string, b Behavior) {
 	}
 	// Strip argv that sometimes sneaks in via Image.
 	image = strings.Fields(image)[0]
+
+	// Never baseline dangerous behaviors that an attacker could exploit
+	// to hide inside the observation window.
+	if _, denied := neverLearnable[b.Action]; denied {
+		return
+	}
+
+	// IOC check: refuse to baseline if the binary's SHA is known-bad.
+	if m.iocCheck != nil {
+		sha := ""
+		if idx := strings.Index(image, "|sha:"); idx >= 0 {
+			sha = image[idx+5:]
+		}
+		if sha != "" && m.iocCheck(sha, "") {
+			if m.poisonAlert != nil {
+				bare := image[:strings.Index(image, "|sha:")]
+				m.poisonAlert(bare, sha, "baseline_poisoning_attempt: IOC SHA match during observe")
+			}
+			return
+		}
+	}
+
 	bs, ok := m.memCache[image]
 	if !ok {
 		bs = map[Behavior]uint64{}
@@ -239,6 +287,21 @@ func (m *Manager) Observe(image string, b Behavior) {
 	}
 	bs[b]++
 	m.dirty = true
+
+	// Detect binary swap: same bare image, different SHA256.
+	if idx := strings.Index(image, "|sha:"); idx >= 0 {
+		bare := image[:idx]
+		sha := image[idx+5:]
+		if sha != "" {
+			if m.shaHistory[bare] == nil {
+				m.shaHistory[bare] = map[string]struct{}{}
+			}
+			m.shaHistory[bare][sha] = struct{}{}
+			if len(m.shaHistory[bare]) > 1 && m.poisonAlert != nil {
+				m.poisonAlert(bare, sha, "sha_changed_for_image: multiple SHAs seen during observe window")
+			}
+		}
+	}
 }
 
 // IsKnown returns true if (image, behavior) is in the sealed
@@ -318,6 +381,48 @@ func (m *Manager) ForceSeal(ctx context.Context) error {
 	return nil
 }
 
+// ReviewEntry is one row in the pre-seal review report.
+type ReviewEntry struct {
+	Image     string
+	Action    string
+	Detail    string
+	Hits      int64
+	FirstSeen time.Time
+	LastSeen  time.Time
+}
+
+// Review returns all recorded behaviors for operator review.
+// Returns an error if the DB is not open.
+func (m *Manager) Review(ctx context.Context) ([]ReviewEntry, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("autobaseline: no persistent store")
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	rows, err := m.db.QueryContext(ctx,
+		`SELECT image, action, detail, hits, first_seen, last_seen FROM profile ORDER BY image, action, detail`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReviewEntry
+	for rows.Next() {
+		var e ReviewEntry
+		var fs, ls int64
+		if err := rows.Scan(&e.Image, &e.Action, &e.Detail, &e.Hits, &fs, &ls); err != nil {
+			return nil, err
+		}
+		if fs != 0 {
+			e.FirstSeen = time.Unix(fs, 0)
+		}
+		if ls != 0 {
+			e.LastSeen = time.Unix(ls, 0)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // Close persists and releases the DB.
 func (m *Manager) Close() error {
 	if m == nil || m.db == nil {
@@ -333,13 +438,21 @@ func (m *Manager) Close() error {
 	return m.db.Close()
 }
 
-// ImageKey returns the unit of normality we profile against. For
-// most events the binary path is the right key; eBPF often emits
-// events with an empty Image (only comm is set), so we fall back to
-// "comm:<name>" to give the autobaseline something to bind to.
+// ImageKey returns the unit of normality we profile against. When
+// exe_sha256 is present, it is appended as "|sha:<hex>" so a binary
+// swap at the same path is treated as a different profile entry.
 // Heartbeat + identity events bind by sensor so they aggregate
 // instead of fanning out per-uid.
 func ImageKey(e model.Event) string {
+	base := imageBase(e)
+	if sha := e.Tags["exe_sha256"]; sha != "" {
+		return base + "|sha:" + sha
+	}
+	return base
+}
+
+// imageBase returns the bare image identifier without SHA.
+func imageBase(e model.Event) string {
 	if e.Image != "" {
 		return e.Image
 	}
@@ -479,16 +592,27 @@ CREATE TABLE IF NOT EXISTS state (
   value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS profile (
-  image   TEXT NOT NULL,
-  action  TEXT NOT NULL,
-  detail  TEXT NOT NULL,
-  hits    INTEGER NOT NULL DEFAULT 0,
+  image        TEXT NOT NULL,
+  action       TEXT NOT NULL,
+  detail       TEXT NOT NULL,
+  hits         INTEGER NOT NULL DEFAULT 0,
+  first_seen   INTEGER NOT NULL DEFAULT 0,
+  last_seen    INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (image, action, detail)
 );
 CREATE INDEX IF NOT EXISTS profile_image_idx ON profile(image);
 `
-	_, err := db.Exec(ddl)
-	return err
+	if _, err := db.Exec(ddl); err != nil {
+		return err
+	}
+	// Migration: add timeline columns if absent (existing DBs won't have them).
+	for _, col := range []string{
+		`ALTER TABLE profile ADD COLUMN first_seen INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE profile ADD COLUMN last_seen  INTEGER NOT NULL DEFAULT 0`,
+	} {
+		_, _ = db.Exec(col) // ignore error — column already exists on new DBs
+	}
+	return nil
 }
 
 func saveState(db *sql.DB, key string, t time.Time) error {
@@ -531,19 +655,24 @@ func (m *Manager) flushLocked(ctx context.Context) error {
 		return err
 	}
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO profile(image, action, detail, hits) VALUES(?,?,?,?)
-		ON CONFLICT(image, action, detail) DO UPDATE SET hits = hits + excluded.hits`)
+		INSERT INTO profile(image, action, detail, hits, first_seen, last_seen)
+		VALUES(?,?,?,?,?,?)
+		ON CONFLICT(image, action, detail) DO UPDATE SET
+		  hits = hits + excluded.hits,
+		  first_seen = CASE WHEN first_seen=0 THEN excluded.first_seen ELSE first_seen END,
+		  last_seen  = excluded.last_seen`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
+	nowUnix := time.Now().Unix()
 	for img, bs := range m.memCache {
 		for b, n := range bs {
 			if n == 0 {
 				continue
 			}
-			if _, err := stmt.ExecContext(ctx, img, b.Action, b.Detail, n); err != nil {
+			if _, err := stmt.ExecContext(ctx, img, b.Action, b.Detail, n, nowUnix, nowUnix); err != nil {
 				_ = tx.Rollback()
 				return err
 			}

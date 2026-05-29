@@ -17,6 +17,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -55,7 +56,11 @@ import (
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/appident"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
+	"github.com/xhelix/xhelix/pkg/destclass"
+	"github.com/xhelix/xhelix/pkg/egressledger"
+	"github.com/xhelix/xhelix/pkg/tlsledger"
 	"github.com/xhelix/xhelix/pkg/egressmon"
+	"github.com/xhelix/xhelix/pkg/egresspolicy"
 	"github.com/xhelix/xhelix/pkg/imagecache"
 	"github.com/xhelix/xhelix/pkg/vhostcorr"
 	"github.com/xhelix/xhelix/pkg/intel"
@@ -72,6 +77,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/shmguard"
 	"github.com/xhelix/xhelix/pkg/source"
 	"github.com/xhelix/xhelix/pkg/store"
+	"github.com/xhelix/xhelix/pkg/trustzone"
 	"github.com/xhelix/xhelix/pkg/webshellguard"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/pkg/snicheck"
@@ -144,6 +150,29 @@ type Pipeline struct {
 	// outbound connect event and stamps the resulting class onto
 	// event.Tags["dest_class"] so sinks + rules can see it.
 	EgressObserver *egressmon.Observer
+
+	// EgressLedger (P-EGRESS Option A — Week 1) is the 3-tier
+	// portmaster-style telemetry store. Nil-safe; when nil, no
+	// ledger Observe is called. When non-nil, Handle() records
+	// every net_connect / net_bytes event into it for live
+	// dashboards and timeline queries.
+	EgressLedger *egressledger.Ledger
+
+	// DestClassifier (Week 6 — smart CIDR bucketing) classifies the
+	// destination at the WRITE site for the EgressLedger so that
+	// per-class bucket policy (exact IP for raw/unknown/threat; /16
+	// for cdn/cloud/private) takes effect. Nil-safe; when nil the
+	// ledger falls back to /16 for every destination.
+	DestClassifier *destclass.Classifier
+
+	// EgressPolicy (Week 3): per-binary outbound network policy.
+	// Nil-safe. When non-nil, Handle() evaluates every net_connect
+	// against it and stamps event.Tags["egress_policy_action"] +
+	// ["egress_policy_mode"] + ["egress_policy_id"] +
+	// ["egress_policy_matched_by"] for downstream rules/sinks to see.
+	// The policy is informational here — egressguard (Week 4) reads
+	// the same tags to decide whether to push a deny.
+	EgressPolicy *egresspolicy.Engine
 
 	// AppIdent identifies app names from event signals (cgroup, exe,
 	// argv). Nil-safe; identification is skipped when nil. Stamps
@@ -286,10 +315,26 @@ type Pipeline struct {
 	// `flow_out_bytes_window` / `flow_in_bytes_window` on every
 	// net_connect so CEL rules can fire on volume thresholds.
 	FlowStats *flowstats.Counters
+
+	// TLSPlaintext (Phase TLS-L2, opt-in): captures decoded TLS
+	// plaintext from ebpf.ssl events for operator-authorized
+	// binaries. Nil-safe and dormant unless the binary is in the
+	// ledger's allow list. Every operator view is audited.
+	TLSPlaintext *tlsledger.Ledger
+
+	// TrustZone (Week 5): operator-assigned per-subject zone labels.
+	// Nil-safe. When non-nil and no per-binary EgressPolicy stamped an
+	// egress_policy_id tag, Handle() consults TrustZone for a fallback
+	// decision and stamps trustzone_action / trustzone_label /
+	// trustzone_reason on the event. Enforcement (deny push / verify
+	// routing / Tor redirect) is Week 6 — for now the tags are
+	// observation-only so operators can audit before turning the dial.
+	TrustZone *trustzone.Manager
 }
 
 // Handle processes one event end-to-end. The full per-event chain:
 //
+//  1a. Image-hash enrichment on spawn events (exe_sha256 tag).
 //  1. Durable persistence (cold store) — non-blocking, drops on
 //     overflow.
 //  2. Session tracker ingest — identity events open/close sessions.
@@ -298,9 +343,8 @@ type Pipeline struct {
 //  5. Proc-tree update (spawn/exit/touch).
 //  6. cgroup classification + event tagging.
 //  7. Conn-state updates on net events.
-//  8. Image-hash enrichment on spawn events.
-//  9. Hot-store insert.
-// 10. Evidence chain.Add (signed batch).
+//  8. Hot-store insert.
+//  9. Evidence chain.Add (signed batch).
 // 11. Rule engine evaluation.
 // 12. Correlator ingest.
 // 13. YARA scan on exec.
@@ -321,6 +365,124 @@ type Pipeline struct {
 // Same order as before P-RF.7b. Any reordering changes behavior
 // and must be diff-tested against the golden corpus.
 func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
+	// Phase TLS-L2: opt-in plaintext capture. Nil-safe; when the
+	// ledger is nil OR the binary isn't allow-listed, Observe drops
+	// the event. Sensors.ebpf emits `payload_b64` only when the
+	// uprobe captured a non-empty buffer.
+	if p.TLSPlaintext != nil && ev.Sensor == "ebpf.ssl" {
+		var payload []byte
+		if b64 := ev.Tags["payload_b64"]; b64 != "" {
+			if decoded, err := base64.StdEncoding.DecodeString(b64); err == nil {
+				payload = decoded
+			}
+		}
+		if len(payload) == 0 {
+			payload = []byte(ev.Tags["payload"])
+		}
+		if len(payload) > 0 {
+			port := parseUint16(ev.Tags["dst_port"])
+			p.TLSPlaintext.Observe(tlsledger.Event{
+				Time:      ev.Time,
+				Binary:    firstNonEmpty(ev.Image, ev.Comm),
+				PID:       ev.PID,
+				Direction: ev.Tags["direction"],
+				PeerSNI:   ev.Tags["sni"],
+				PeerIP:    ev.Tags["dst_ip"],
+				PeerPort:  port,
+				Payload:   payload,
+			})
+		}
+	}
+
+	if p.EgressLedger != nil && ev.Sensor == "ebpf.net" {
+		kind := ev.Tags["kind"]
+		if kind == "net_connect" || kind == "net_bytes" {
+			le := egressledger.Event{
+				Time:     ev.Time,
+				Binary:   firstNonEmpty(ev.Image, ev.Comm),
+				ExeSHA:   ev.Tags["exe_sha256"],
+				UID:      ev.UID,
+				PID:      ev.PID,
+				PPID:     ev.ParentPID,
+				Comm:     ev.Comm,
+				Protocol: ev.Tags["protocol"],
+				SNI:      ev.Tags["sni"],
+				DNSName:  ev.Tags["dns_name"],
+				Connect:  kind == "net_connect",
+				DestIP:   parseIPOrNil(ev.Tags["dst_ip"]),
+			}
+			// tcp_connect kprobe fires only on the initiator → role=client.
+			// net_bytes fires from tcp_sendmsg/recvmsg for BOTH client
+			// and server sides; src_port is the authoritative tiebreaker.
+			if kind == "net_connect" {
+				le.Role = "client"
+			}
+			if pp := ev.Tags["dst_port"]; pp != "" {
+				var n int
+				_, _ = fmt.Sscanf(pp, "%d", &n)
+				le.DestPort = uint16(n)
+			}
+			if sp := ev.Tags["src_port"]; sp != "" {
+				var n int
+				_, _ = fmt.Sscanf(sp, "%d", &n)
+				le.SrcPort = uint16(n)
+			}
+			if cg := ev.Tags["cgroup_id"]; cg != "" {
+				var n uint64
+				_, _ = fmt.Sscanf(cg, "%d", &n)
+				le.CGroupID = n
+			}
+			if b := parseUint(ev.Tags["bytes"]); b > 0 {
+				if ev.Tags["direction"] == "in" || ev.Tags["dir"] == "in" {
+					le.BytesIn = b
+				} else {
+					le.BytesOut = b
+				}
+			}
+			// Classify the destination at the write site so the
+			// ledger's smart per-class CIDR bucketing kicks in (exact
+			// IP for raw/unknown/threat; /16 for cdn/cloud).
+			if p.DestClassifier != nil && le.DestIP != nil {
+				decision := p.DestClassifier.Classify(le.DestIP, le.SNI, le.DestPort)
+				le.DestClass = string(decision.Class)
+			}
+			p.EgressLedger.Observe(le)
+		}
+	}
+	// Egress policy consultation (Week 3). Decides per-binary whether
+	// this connect is ALLOW / OBSERVE / VERIFY / DENY. Stamps tags
+	// only — egressguard (Week 4) will read them to install actual
+	// denies. Default mode is observe for any binary without a signed
+	// policy, so this is behavior-neutral until operators sign
+	// stricter policies. Kept outside the EgressLedger-nil gate so
+	// the policy engine still runs even when the ledger is disabled.
+	if p.EgressPolicy != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_connect" {
+		req := egresspolicy.Request{
+			Binary:    firstNonEmpty(ev.Image, ev.Comm),
+			UID:       ev.UID,
+			Cgroup:    ev.Tags["cgroup_class"],
+			DestIP:    parseIPOrNil(ev.Tags["dst_ip"]),
+			DestPort:  parseUint16(ev.Tags["dst_port"]),
+			Protocol:  ev.Tags["protocol"],
+			SNI:       ev.Tags["sni"],
+			DNSName:   ev.Tags["dns_name"],
+			DestClass: ev.Tags["dest_class"],
+			Country:   ev.Tags["dst_country"],
+			ASN:       ev.Tags["dst_asn"],
+		}
+		decision := p.EgressPolicy.Decide(req)
+		if ev.Tags == nil {
+			ev.Tags = map[string]string{}
+		}
+		ev.Tags["egress_policy_action"] = decision.Action.String()
+		ev.Tags["egress_policy_mode"] = string(decision.Mode)
+		if decision.PolicyID != "" {
+			ev.Tags["egress_policy_id"] = decision.PolicyID
+		}
+		if decision.MatchedBy != "" {
+			ev.Tags["egress_policy_matched_by"] = decision.MatchedBy
+		}
+	}
 	// Package-manager install-window tag (Phase K.2). Must stamp
 	// BEFORE rules + correlator so chain rules can suppress on
 	// legitimate apt/dpkg/dnf/snap transactions. Always stamp the
@@ -354,6 +516,21 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				ev.Tags = map[string]string{}
 			}
 			ev.Tags["jit_allowlisted"] = "true"
+		}
+	}
+
+	// 1a. Image-hash enrichment — runs BEFORE autobaseline so the
+	// SHA-anchored ImageKey (exe_sha256 tag) is set when Observe/
+	// IsKnown are called. A binary swap at the same path is
+	// invisible without this ordering.
+	if p.ImageCache != nil && ev.Sensor == "ebpf.spawn" {
+		if path := ev.Tags["path"]; path != "" {
+			if img, err := p.ImageCache.Compute(ctx, path); err == nil {
+				if ev.Tags == nil {
+					ev.Tags = map[string]string{}
+				}
+				ev.Tags["exe_sha256"] = img.SHA256
+			}
 		}
 	}
 
@@ -644,6 +821,10 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		feedConnstateBytes(p.ConnTable, ev)
 	}
 
+	// EgressLedger second-pass enrichment (dst_port, bytes, cgroup_id)
+	// runs from the top-of-Handle hook above.
+	_ = ev
+
 	// Phase H.1 per-image rolling byte counter. Nil-safe.
 	if p.FlowStats != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_bytes" {
 		img := ev.Image
@@ -682,15 +863,6 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 	// carry the tag for forensic review.
 	if p.ProcScrape != nil && ev.Tags["kind"] == "proc_scrape" {
 		p.ProcScrape.Enrich(&ev)
-	}
-
-	// Enrich with image hash
-	if p.ImageCache != nil && ev.Sensor == "ebpf.spawn" {
-		if path := ev.Tags["path"]; path != "" {
-			if img, err := p.ImageCache.Compute(ctx, path); err == nil {
-				ev.Tags["image_sha256"] = img.SHA256
-			}
-		}
 	}
 
 	// Store
@@ -1364,11 +1536,50 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		}
 	}
 
-	// Egressguard decision (Phase C.2). For net_connect events only,
-	// build a Request from BRP+asset+secret context already stamped
-	// above and call Guard.Decide. The decision is stamped on the
-	// event tags; if mode==Enforce and decision==Deny, ApplyDeny
-	// pushes the deny to the kernel backend.
+	// Trust-zone fallback decision (Week 5; reordered Week 4). MUST run
+	// before egressguard so the stamped trustzone_action tag can flow
+	// into egressguard.Request.PolicyCtx. Only fires on net_connect
+	// when no per-binary EgressPolicy stamped a decision (egress_policy_id
+	// tag is empty). The trust-zone layer answers "what trust level is
+	// this SUBJECT in?" while EgressPolicy answers "what is THIS binary
+	// allowed to do?" — per-binary wins when both have an opinion.
+	if p.TrustZone != nil && ev.Sensor == "ebpf.net" &&
+		ev.Tags != nil && ev.Tags["kind"] == "net_connect" &&
+		ev.Tags["egress_policy_id"] == "" {
+		var dport uint16
+		if pp := ev.Tags["dst_port"]; pp != "" {
+			if n, err := strconv.ParseUint(pp, 10, 16); err == nil {
+				dport = uint16(n)
+			}
+		}
+		za, lbl, why := p.TrustZone.Decide(trustzone.DecisionInput{
+			Subject: trustzone.Subject{
+				UID:         ev.UID,
+				CGroupUnit:  ev.Tags["cgroup_unit"],
+				CGroupClass: ev.Tags["cgroup_class"],
+				Comm:        ev.Comm,
+			},
+			DestIP:    parseIPOrNil(ev.Tags["dst_ip"]),
+			DestPort:  dport,
+			Protocol:  ev.Tags["protocol"],
+			SNI:       ev.Tags["sni"],
+			DestClass: ev.Tags["dest_class"],
+			Country:   ev.Tags["country"],
+		})
+		ev.Tags["trustzone_action"] = za.String()
+		ev.Tags["trustzone_label"] = string(lbl)
+		if why != "" {
+			ev.Tags["trustzone_reason"] = why
+		}
+	}
+
+	// Egressguard decision (Phase C.2; Week 4 forwards policy+zone tags).
+	// For net_connect events only, build a Request from BRP+asset+secret
+	// context already stamped above and call Guard.Decide. The decision
+	// is stamped on the event tags; if mode==Enforce and decision==Deny,
+	// ApplyDeny pushes the deny to the kernel backend. Week 4: the
+	// pre-computed egress_policy_action + trustzone_action tags are
+	// forwarded as PolicyCtx so signed policies actually enforce.
 	if p.EgressGuard != nil && ev.Sensor == "ebpf.net" &&
 		ev.Tags != nil && ev.Tags["kind"] == "net_connect" {
 		req := egressguard.Request{
@@ -1384,6 +1595,13 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			AssetClass:  ev.Tags["asset_class"],
 			SecretTaint: ev.Tags["secret_taint"],
 			At:          ev.Time,
+			PolicyCtx: egressguard.PolicyContext{
+				EgressPolicyAction: ev.Tags["egress_policy_action"],
+				TrustZoneAction:    ev.Tags["trustzone_action"],
+				PolicyID:           ev.Tags["egress_policy_id"],
+				PolicyMatchedBy:    ev.Tags["egress_policy_matched_by"],
+				ZoneLabel:          ev.Tags["trustzone_label"],
+			},
 		}
 		if portStr := ev.Tags["dst_port"]; portStr != "" {
 			if n, err := strconv.ParseUint(portStr, 10, 16); err == nil {
@@ -1984,6 +2202,11 @@ func brpActionFromEvent(ev model.Event) string {
 // can now be reduced to:
 //   go p.Run(ctx, eventsCh)
 func (p *Pipeline) Run(ctx context.Context, events <-chan model.Event) {
+	if p.Log != nil {
+		p.Log.Info("pipeline starting",
+			"egress_ledger_wired", p.EgressLedger != nil,
+			"flow_stats_wired", p.FlowStats != nil)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -2042,4 +2265,22 @@ func (p *Pipeline) emitBurst(triggerEv model.Event, ruleID string, pid uint32, c
 		Reason: reason,
 		Class:  2, // strong exploit signal
 	})
+}
+
+// firstNonEmpty returns the first non-empty string from the args.
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// parseIPOrNil parses an IP string or returns nil.
+func parseIPOrNil(s string) net.IP {
+	if s == "" {
+		return nil
+	}
+	return net.ParseIP(s)
 }

@@ -492,6 +492,18 @@ Non-negotiable design rules:
 - **Production canary requires explicit operator decision.** No automation.
 - **No mystery scores.** Every verifier domain is independently auditable.
 
+### TLS plaintext capture (opt-in, audited)
+
+xhelix can surface decoded TLS plaintext for LOCAL processes via the
+existing eBPF SSL uprobes. This is opt-in per binary, audited on
+every view, and applies hard redaction to Authorization / Cookie /
+common JSON secret fields. It does NOT decrypt traffic passing
+through the box — only TLS calls made BY processes ON this host
+through libssl/openssl/boringssl. Enable via `tls_plaintext.enabled`
++ `tls_plaintext.allowed_binaries` in `/etc/xhelix/xhelix.yaml`.
+Every list/get access is appended to
+`/var/log/xhelix/tls-plaintext-access.log`.
+
 ---
 
 ## How it works — concrete end-to-end example

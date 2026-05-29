@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -36,7 +40,11 @@ import (
 	brpphase "github.com/xhelix/xhelix/pkg/brp/phase"
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
 	"github.com/xhelix/xhelix/pkg/egressguard"
+	"github.com/xhelix/xhelix/pkg/egressledger"
+	"github.com/xhelix/xhelix/pkg/tlsledger"
+	"github.com/xhelix/xhelix/pkg/egresspolicy"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/pcap"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
@@ -69,6 +77,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/ml"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/netban"
+	"github.com/xhelix/xhelix/pkg/safetynet"
 	"github.com/xhelix/xhelix/pkg/pipeline"
 	"github.com/xhelix/xhelix/pkg/posture"
 	"github.com/xhelix/xhelix/pkg/proctree"
@@ -102,6 +111,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/suppression"
 	"github.com/xhelix/xhelix/pkg/tamperguard"
 	"github.com/xhelix/xhelix/pkg/threatintel"
+	"github.com/xhelix/xhelix/pkg/trustzone"
 	"github.com/xhelix/xhelix/pkg/version"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/sensors"
@@ -470,6 +480,47 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			}
 		}
 		log.Info("netban enabled", "nft", cfg.Netban.UseNFTables)
+	}
+
+	// SafetyNet — global never-block list + block-with-observe list.
+	// Veto bridge into netban happens via SetSafetyNet below. SSH source
+	// IP auto-allow-listed for operator safety.
+	var sn *safetynet.SafetyNet
+	if cfg.SafetyNet.Enabled {
+		var snErr error
+		sn, snErr = safetynet.New(cfg.SafetyNet.AlwaysAllow, cfg.SafetyNet.BlockObserve, cfg.SafetyNet.AttemptHistory)
+		if snErr != nil {
+			log.Warn("safety net init", "err", snErr)
+			sn = nil
+		}
+		if sn != nil && cfg.SafetyNet.AutoAddSSHSource {
+			if ssh := os.Getenv("SSH_CLIENT"); ssh != "" {
+				parts := strings.Fields(ssh)
+				if len(parts) > 0 {
+					if err := sn.AddAllow(parts[0] + "/32"); err == nil {
+						log.Info("safety net auto-added SSH source", "ip", parts[0])
+					}
+				}
+			}
+		}
+		if sn != nil {
+			nft := safetynet.NewNFTables()
+			if err := nft.EnsureChain(ctx); err != nil {
+				log.Warn("safety net nftables ensure", "err", err)
+			} else {
+				for _, c := range cfg.SafetyNet.BlockObserve {
+					_ = nft.AddCIDR(ctx, c)
+				}
+				stopReader := safetynet.StartLogReader(ctx, sn, log)
+				_ = stopReader
+			}
+			log.Info("safety net enabled",
+				"allow_count", len(sn.AllowList()),
+				"block_count", len(sn.BlockList()))
+			if banner != nil {
+				banner.SetSafetyNet(sn)
+			}
+		}
 	}
 
 	// File remediator — restore tampered files from a backup vault.
@@ -874,6 +925,17 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				if upInterval == 0 {
 					upInterval = 5 * time.Minute
 				}
+				cohortSnapshot := baseline.CohortTags{
+					HostRole:      cfg.FleetCohort.HostRole,
+					AppRole:       cfg.FleetCohort.AppRole,
+					OSFamily:      cfg.FleetCohort.OSFamily,
+					PackageOrigin: cfg.FleetCohort.PackageOrigin,
+					VersionFamily: cfg.FleetCohort.VersionFamily,
+					Environment:   cfg.FleetCohort.Environment,
+					ControlPanel:  cfg.FleetCohort.ControlPanel,
+					NetworkZone:   cfg.FleetCohort.NetworkZone,
+					Tenant:        cfg.FleetCohort.Tenant,
+				}
 				up, err := baseline.NewUploader(baseline.UploaderConfig{
 					URL:                   cfg.Baseline.Hub.URL,
 					HostTag:               hostTag,
@@ -884,6 +946,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 					QueueDir:              queueDir,
 					TLSInsecureSkipVerify: cfg.Baseline.Hub.TLSInsecureSkipVerify,
 					Logger:                log,
+					CohortFn:              func() baseline.CohortTags { return cohortSnapshot },
 				})
 				if err != nil {
 					log.Warn("baseline uploader init failed", "err", err)
@@ -1275,6 +1338,13 @@ func runDaemon(parent context.Context, cfgPath string) error {
 
 	// ProcTree
 	procTree := proctree.New(0)
+	// Bootstrap from /proc so pre-existing PIDs (nginx, sshd, systemd…)
+	// are visible to ancestor lookups from the first event. Without this,
+	// any process started before xhelix is invisible until it spawns a
+	// child.
+	if n := procTree.BootstrapFromProc(); n > 0 {
+		log.Info("proctree bootstrapped from /proc", "pids", n)
+	}
 	ruleEngine.SetTreeFn(procTree.Ancestors)
 
 	// Per-process connection visibility (NETVISIBILITY F1–F4 wiring).
@@ -2686,6 +2756,25 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 	}
 
+	// Trust zones — Week 5. Operator-assigned per-subject labels at
+	// /etc/xhelix/trustzones.yaml. Default zone "trusted" — no
+	// behavior change until operator opts a subject into restricted.
+	// Missing file is not an error (fresh deploys start empty).
+	// Created here (before webServer) so it can be wired into both
+	// the web UI and the pipeline.
+	var trustMgr *trustzone.Manager
+	{
+		tzPath := "/etc/xhelix/trustzones.yaml"
+		trustMgr = trustzone.New(tzPath, trustzone.LabelTrusted)
+		n, terr := trustMgr.Reload()
+		if terr != nil && !errors.Is(terr, os.ErrNotExist) {
+			log.Warn("trust zones init", "err", terr)
+		} else {
+			log.Info("trust zones enabled", "path", tzPath, "assignments", n)
+		}
+		trustMgr.StartWatcher(ctx)
+	}
+
 	// Web dashboard — protected enterprise UI when cfg.UI.Enabled.
 	// Falls back to legacy unprotected mode if not enabled, to keep
 	// upgrades from older configs working.
@@ -2839,8 +2928,215 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}()
 	}
 
+	// Egress Option A — Week 1: 3-tier portmaster-style telemetry ledger.
+	// In-memory hot ring + badger warm + parquet cold. Cold retention is
+	// operator-configurable; default 14 days.
+	var egressLedger *egressledger.Ledger
+	if cfg.EgressLedger.Enabled {
+		ledgerDir := filepath.Join(cfg.Agent.StateDir, "egressledger")
+		retentionDays := cfg.EgressLedger.RetentionDays
+		if retentionDays <= 0 {
+			retentionDays = 14
+		}
+		el, err := egressledger.New(egressledger.Options{
+			Dir:            ledgerDir,
+			RetentionDays:  retentionDays,
+			ExcludePrivate: cfg.EgressLedger.ExcludePrivate,
+			RecentRingCap:  cfg.EgressLedger.RecentRingCap,
+			OwnIPs:         discoverOwnIPs(log),
+			Logger:         log,
+		})
+		if err != nil {
+			log.Warn("egress ledger init failed", "err", err)
+		} else {
+			egressLedger = el
+			log.Info("egress ledger enabled", "dir", ledgerDir, "retention_days", retentionDays)
+			if webServer != nil {
+				webServer.SetEgress(el)
+				// GeoIP adapter for the dashboard. Uses a fresh InMemory
+				// seeded from defaults + the operator's optional CSV at
+				// /var/lib/xhelix/geoip/country.csv.
+				localGeo := geoip.NewInMemory()
+				geoEntries := geoip.SeedEntries()
+				if csvEntries, gerr := geoip.LoadCSVFile(filepath.Join(cfg.Agent.StateDir, "geoip", "country.csv")); gerr == nil {
+					geoEntries = append(geoEntries, csvEntries...)
+				}
+				localGeo.Load(geoEntries)
+				webServer.SetGeoIP(geoipWebAdapter{p: localGeo})
+				// destclass adapter — a fresh classifier is fine; the
+				// builtin CIDR list covers cloud + CDN providers.
+				webServer.SetDestClass(destclassWebAdapter{c: destclass.New()})
+				if connTable != nil {
+					ct := connTable
+					webServer.SetConnstate(func() []web.ConnView {
+						return connstateToConnView(ct.Snapshot())
+					})
+				}
+				if procTree != nil {
+					adapter := procTreeWebAdapter{g: procTree}
+					webServer.SetProcTree(adapter)
+					webServer.SetProcAncestry(adapter)
+				}
+				// Alert ring snapshot — feeds the country-drilldown's
+				// "Related alerts" surface. Converts model.Alert →
+				// web.AlertSummary at the boundary.
+				if alertRing != nil {
+					ar := alertRing
+					webServer.SetAlertSnap(func() []web.AlertSummary {
+						snap := ar.Snapshot()
+						out := make([]web.AlertSummary, 0, len(snap))
+						for _, a := range snap {
+							out = append(out, web.AlertSummary{
+								Time:   a.Event.Time,
+								RuleID: a.RuleID,
+								Reason: a.Reason,
+								Action: a.Action,
+								Class:  a.Class,
+								DstIP:  a.Event.Tags["dst_ip"],
+								SrcIP:  a.Event.Tags["src_ip"],
+								PID:    a.Event.PID,
+								Binary: func() string { if a.Event.Image != "" { return a.Event.Image }; return a.Event.Comm }(),
+							})
+						}
+						return out
+					})
+				}
+				if sn != nil {
+					webServer.SetSafetyNet(sn)
+				}
+				if trustMgr != nil {
+					webServer.SetTrustZone(trustMgr)
+				}
+				// IP deep-analysis adapters. Reverse-DNS uses the system
+				// resolver (2s timeout enforced in the handler). Threat
+				// intel hooks the loaded feed if available; dnsobs has no
+				// daemon-side provider yet — leave nil, the UI just won't
+				// show "related domains".
+				webServer.SetReverseDNS(systemReverseDNS{})
+				if threatSet != nil {
+					webServer.SetThreatIntel(threatIntelAdapter{s: threatSet})
+				}
+			}
+			go func() {
+				t := time.NewTicker(time.Minute)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						_ = el.Close()
+						return
+					case <-t.C:
+						if err := el.Tick(ctx); err != nil {
+							log.Warn("egress ledger tick failed", "err", err)
+						}
+					}
+				}
+			}()
+		}
+	}
+
+	// On-demand packet capture (Week 4 country/process drilldown
+	// helper). tcpdump-backed, operator-initiated, hard size + time
+	// caps. If tcpdump isn't installed, NewManager returns an error;
+	// log it and continue — the UI shows an "unavailable" placeholder.
+	if webServer != nil {
+		captureDir := filepath.Join(cfg.Agent.StateDir, "captures")
+		if pcapMgr, perr := pcap.NewManager(captureDir); perr != nil {
+			log.Warn("pcap manager unavailable", "err", perr)
+		} else {
+			log.Info("pcap manager enabled", "dir", captureDir)
+			webServer.SetPCAP(pcapMgr)
+			go func() {
+				t := time.NewTicker(15 * time.Minute)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						pcapMgr.Tick()
+					}
+				}
+			}()
+		}
+	}
+
+	// Egress policy engine — Week 3. Loads signed per-binary policies
+	// from /etc/xhelix/policies/. Default mode: observe (record but no
+	// behavior change) for binaries without a policy file. Without an
+	// operator.pub at that directory the engine stays disabled — we
+	// refuse to load policies we can't verify.
+	var egressPolicyEng *egresspolicy.Engine
+	{
+		policyDir := "/etc/xhelix/policies"
+		pubPath := filepath.Join(policyDir, "operator.pub")
+		pubBytes, perr := os.ReadFile(pubPath)
+		var pub ed25519.PublicKey
+		if perr == nil {
+			if decoded := tryDecodeKey(pubBytes); len(decoded) == ed25519.PublicKeySize {
+				pub = decoded
+			} else {
+				log.Warn("egress policy operator.pub present but not a valid ed25519 key",
+					"path", pubPath, "decoded_len", len(decoded))
+			}
+		}
+		if pub != nil {
+			pstore, serr := egresspolicy.NewStore(policyDir, pub)
+			if serr != nil {
+				log.Warn("egress policy store init", "err", serr)
+			} else {
+				n, rerr := pstore.Reload()
+				if rerr != nil {
+					log.Warn("egress policy initial reload had errors",
+						"err", rerr, "loaded", n)
+				}
+				egressPolicyEng = egresspolicy.New(pstore, egresspolicy.ModeObserve)
+				pstore.StartWatcher(ctx)
+				log.Info("egress policy engine enabled",
+					"dir", policyDir, "loaded", n, "default_mode", "observe")
+				if webServer != nil {
+					webServer.SetEgressPolicy(egressPolicyWebAdapter{e: egressPolicyEng, l: egressLedger})
+				}
+			}
+		} else {
+			log.Info("egress policy engine disabled — no operator.pub at " + pubPath)
+		}
+	}
+
+	// Phase TLS-L2 — opt-in TLS plaintext capture. Default DISABLED.
+	// Operator enables via cfg.TLSPlaintext.Enabled + per-binary
+	// allow list. Every operator view audits to a file under LogDir.
+	var tlsLedger *tlsledger.Ledger
+	if cfg.TLSPlaintext.Enabled {
+		auditPath := filepath.Join(cfg.Agent.LogDir, "tls-plaintext-access.log")
+		af, ferr := os.OpenFile(auditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		var auditor tlsledger.AuditLogger
+		if ferr != nil {
+			log.Warn("tls plaintext audit log open failed — access will NOT be recorded",
+				"path", auditPath, "err", ferr)
+			auditor = tlsledger.DiscardAuditLogger{}
+		} else {
+			auditor = tlsledger.NewFileAuditLogger(af)
+		}
+		tlsLedger = tlsledger.New(tlsledger.Options{
+			AllowedBinaries: cfg.TLSPlaintext.AllowedBinaries,
+			MaxBodyKB:       cfg.TLSPlaintext.MaxBodyKB,
+			RingSize:        cfg.TLSPlaintext.RingSize,
+			AuditLogger:     auditor,
+		})
+		log.Warn("tls plaintext ledger ENABLED — review audit log for every operator view",
+			"audit_log", auditPath,
+			"allowed_binaries", cfg.TLSPlaintext.AllowedBinaries,
+			"ring_size", cfg.TLSPlaintext.RingSize,
+			"max_body_kb", cfg.TLSPlaintext.MaxBodyKB,
+		)
+		if webServer != nil {
+			webServer.SetTLSPlaintext(tlsLedger)
+		}
+	}
+
 	// Dispatch loop
-	go dispatch(ctx, log, events, hot, ruleEngine, corrEngine,
+	go dispatch(ctx, log, events, bus, apiSrv, hot, ruleEngine, corrEngine,
 		yaraScanner, intelMgr, mlDetector,
 		procTree, forensicsChain, imgCache, sessionTracker,
 		beaconDet, dnsexfilDet, baselineAgg,
@@ -2850,6 +3146,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.ColdStore,
 		foundation.Catalog,
 		egressObs,
+		egressLedger,
+		egressPolicyEng,
+		trustMgr,
+		sn,
 		appIdentifier,
 		vhostCorrelator,
 		ipTS,
@@ -2873,7 +3173,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.PkgMgr,
 		foundation.LongWindow,
 		foundation.CDNDNS,
-		foundation.FlowStats)
+		foundation.FlowStats,
+		tlsLedger)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -2959,6 +3260,8 @@ func dispatch(
 	ctx context.Context,
 	log *slog.Logger,
 	events <-chan model.Event,
+	bus *alert.Bus,
+	apiSrv *localapi.Server,
 	hot *store.HotStore,
 	eng *rules.Engine,
 	corr *correlator.Engine,
@@ -2981,6 +3284,10 @@ func dispatch(
 	coldStore *coldstore.Store,
 	cat *catalog.Catalog,
 	egressObs *egressmon.Observer,
+	egressLedger *egressledger.Ledger,
+	egressPolicyEng *egresspolicy.Engine,
+	trustMgr *trustzone.Manager,
+	sn *safetynet.SafetyNet,
 	appIdentifier *appident.Identifier,
 	vhostCorrelator *vhostcorr.Correlator,
 	ipTS *egressmon.IPTimeSeries,
@@ -3005,6 +3312,7 @@ func dispatch(
 	longWindow *longwindow.Store,
 	cdnDNS *cdndetect.DNSCache,
 	flowStats *flowstats.Counters,
+	tlsPlaintext *tlsledger.Ledger,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -3047,6 +3355,33 @@ func dispatch(
 	abMgr, abErr := autobaseline.New(autobaseline.Options{
 		DBPath:      abPath,
 		Observation: 24 * time.Hour,
+		// IOCCheck: threatintel.Set has no SHA lookup yet — return false
+		// until a binary-SHA intel feed is wired (Phase L1.2). The hook
+		// is kept here so the wiring point doesn't drift.
+		IOCCheck: func(sha256, dstIP string) bool {
+			return false
+		},
+		// PoisonAlert emits a synthetic high-severity alert when the
+		// autobaseline rejects a behavior because of an IOC match or
+		// because it saw the same image path under multiple SHAs during
+		// the observe window (binary-swap poisoning attempt).
+		PoisonAlert: func(image, sha256, reason string) {
+			bus.Send(model.Alert{
+				RuleID: "baseline.poison_attempt",
+				Reason: reason,
+				Mode:   model.ModeDetect,
+				Event: model.Event{
+					Time:     time.Now().UTC(),
+					Sensor:   "autobaseline",
+					Severity: model.SeverityHigh,
+					Image:    image,
+					Tags: map[string]string{
+						"exe_sha256":  sha256,
+						"poison_kind": reason,
+					},
+				},
+			})
+		},
 	})
 	if abErr != nil {
 		log.Warn("autobaseline init failed (continuing without)",
@@ -3072,6 +3407,203 @@ func dispatch(
 			}
 		}()
 	}
+
+	// Baseline review LocalAPI handler (Phase L1.1). Registered here
+	// because abMgr is not yet declared at the earlier apiSrv
+	// registration block.
+	apiSrv.RegisterHandler("baseline.review", func(ctx context.Context, _ json.RawMessage) (any, error) {
+		if abMgr == nil {
+			return nil, fmt.Errorf("autobaseline: not initialised")
+		}
+		return abMgr.Review(ctx)
+	})
+
+	// Safety net localapi handlers (xhelixctl safety). All nil-safe.
+	apiSrv.RegisterHandler("safety.list", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if sn == nil {
+			return map[string][]string{"allow": {}, "block": {}}, nil
+		}
+		return map[string][]string{"allow": sn.AllowList(), "block": sn.BlockList()}, nil
+	})
+	apiSrv.RegisterHandler("safety.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if sn == nil {
+			return map[string]any{}, nil
+		}
+		return sn.Stats(), nil
+	})
+	apiSrv.RegisterHandler("safety.attempts", func(_ context.Context, params json.RawMessage) (any, error) {
+		if sn == nil {
+			return []any{}, nil
+		}
+		var req struct {
+			N int `json:"n"`
+		}
+		req.N = 50
+		if len(params) > 0 {
+			_ = json.Unmarshal(params, &req)
+		}
+		if req.N <= 0 {
+			req.N = 50
+		}
+		return sn.RecentAttempts(req.N), nil
+	})
+	mutateCIDR := func(fn func(string) error) func(context.Context, json.RawMessage) (any, error) {
+		return func(_ context.Context, params json.RawMessage) (any, error) {
+			if sn == nil {
+				return nil, fmt.Errorf("safety net not enabled")
+			}
+			var req struct {
+				CIDR string `json:"cidr"`
+			}
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, err
+			}
+			if err := fn(req.CIDR); err != nil {
+				return nil, err
+			}
+			return map[string]bool{"ok": true}, nil
+		}
+	}
+	apiSrv.RegisterHandler("safety.allow.add", mutateCIDR(func(c string) error { return sn.AddAllow(c) }))
+	apiSrv.RegisterHandler("safety.allow.del", mutateCIDR(func(c string) error { return sn.RemoveAllow(c) }))
+	apiSrv.RegisterHandler("safety.block.add", mutateCIDR(func(c string) error { return sn.AddBlock(c) }))
+	apiSrv.RegisterHandler("safety.block.del", mutateCIDR(func(c string) error { return sn.RemoveBlock(c) }))
+
+	// Egress ledger handlers (Option A — Week 1). Closures capture the
+	// egressLedger built below; nil-safe — handlers return empty results
+	// if the ledger isn't enabled.
+	apiSrv.RegisterHandler("egress.live", func(_ context.Context, params json.RawMessage) (any, error) {
+		var f egressledger.FlowFilter
+		f.UID, f.CGroupID, f.DestPort = -1, -1, -1
+		if len(params) > 0 {
+			_ = json.Unmarshal(params, &f)
+		}
+		return egressLedger.QueryLive(f), nil
+	})
+	apiSrv.RegisterHandler("egress.timeline", func(_ context.Context, params json.RawMessage) (any, error) {
+		var req struct {
+			Start  time.Time              `json:"start"`
+			End    time.Time              `json:"end"`
+			Filter egressledger.FlowFilter `json:"filter"`
+		}
+		req.Filter.UID, req.Filter.CGroupID, req.Filter.DestPort = -1, -1, -1
+		if len(params) > 0 {
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, err
+			}
+		}
+		if req.Start.IsZero() {
+			req.Start = time.Now().Add(-1 * time.Hour)
+		}
+		if req.End.IsZero() {
+			req.End = time.Now()
+		}
+		return egressLedger.QueryTimeline(req.Start, req.End, req.Filter), nil
+	})
+	apiSrv.RegisterHandler("egress.binary", func(_ context.Context, params json.RawMessage) (any, error) {
+		var req struct {
+			Binary string    `json:"binary"`
+			Start  time.Time `json:"start"`
+			End    time.Time `json:"end"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		if req.End.IsZero() {
+			req.End = time.Now()
+		}
+		if req.Start.IsZero() {
+			req.Start = req.End.Add(-24 * time.Hour)
+		}
+		return egressLedger.QueryBinary(req.Binary, req.Start, req.End), nil
+	})
+	apiSrv.RegisterHandler("egress.stats", func(_ context.Context, _ json.RawMessage) (any, error) {
+		return egressLedger.Stats(), nil
+	})
+
+	// Egress policy workflow handlers (Week 4). These accept signed
+	// SignedPolicy YAML/JSON, validate against operator.pub, and
+	// persist to the store. Propose drives the observe→sign workflow
+	// from the ledger; install/delete/reload are operator surface.
+	apiSrv.RegisterHandler("egress.policy.propose", func(ctx context.Context, params json.RawMessage) (any, error) {
+		if egressLedger == nil {
+			return nil, fmt.Errorf("egress ledger not enabled")
+		}
+		var req struct {
+			Binary string `json:"binary"`
+			Days   int    `json:"days"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		if req.Binary == "" {
+			return nil, fmt.Errorf("binary is required")
+		}
+		if req.Days <= 0 {
+			req.Days = 14
+		}
+		end := time.Now()
+		start := end.Add(-time.Duration(req.Days) * 24 * time.Hour)
+		adapter := ledgerWorkflowAdapter{l: egressLedger}
+		props := egresspolicy.ProposeFromLedger(ctx, adapter, []string{req.Binary}, start, end)
+		if len(props) == 0 {
+			return nil, fmt.Errorf("no proposal generated for %q", req.Binary)
+		}
+		return props[0], nil
+	})
+	apiSrv.RegisterHandler("egress.policy.list", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if egressPolicyEng == nil || egressPolicyEng.Store() == nil {
+			return []egresspolicy.SignedPolicy{}, nil
+		}
+		return egressPolicyEng.Store().All(), nil
+	})
+	apiSrv.RegisterHandler("egress.policy.install", func(_ context.Context, params json.RawMessage) (any, error) {
+		if egressPolicyEng == nil || egressPolicyEng.Store() == nil {
+			return nil, fmt.Errorf("egress policy engine not enabled (operator.pub missing?)")
+		}
+		var sp egresspolicy.SignedPolicy
+		if err := json.Unmarshal(params, &sp); err != nil {
+			return nil, fmt.Errorf("unmarshal SignedPolicy: %w", err)
+		}
+		if err := egressPolicyEng.Store().VerifyAndSave(sp); err != nil {
+			return nil, fmt.Errorf("install: %w", err)
+		}
+		// Force a re-scan so the in-memory map reflects the write —
+		// VerifyAndSave already updates it, but Reload also picks up
+		// any other policies the operator dropped in the directory.
+		n, _ := egressPolicyEng.Store().Reload()
+		return map[string]any{"installed": sp.Policy.Binary, "loaded_total": n}, nil
+	})
+	apiSrv.RegisterHandler("egress.policy.delete", func(_ context.Context, params json.RawMessage) (any, error) {
+		if egressPolicyEng == nil || egressPolicyEng.Store() == nil {
+			return nil, fmt.Errorf("egress policy engine not enabled")
+		}
+		var req struct {
+			Binary string `json:"binary"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		if req.Binary == "" {
+			return nil, fmt.Errorf("binary is required")
+		}
+		if err := egressPolicyEng.Store().Delete(req.Binary); err != nil {
+			return nil, err
+		}
+		n, _ := egressPolicyEng.Store().Reload()
+		return map[string]any{"deleted": req.Binary, "loaded_total": n}, nil
+	})
+	apiSrv.RegisterHandler("egress.policy.reload", func(_ context.Context, _ json.RawMessage) (any, error) {
+		if egressPolicyEng == nil || egressPolicyEng.Store() == nil {
+			return nil, fmt.Errorf("egress policy engine not enabled")
+		}
+		n, err := egressPolicyEng.Store().Reload()
+		out := map[string]any{"loaded": n}
+		if err != nil {
+			out["error"] = err.Error()
+		}
+		return out, nil
+	})
 
 	// Burst detectors (P-AB.13). Wired with default thresholds:
 	// 80 file-opens in 10s = "credential scan"; 20 spawns in 10s
@@ -3151,6 +3683,45 @@ func dispatch(
 		LongWindow:       longWindow,
 		CDNDNS:           cdnDNS,
 		FlowStats:        flowStats,
+		EgressLedger:     egressLedger,
+		// DestClassifier drives smart per-class CIDR bucketing in the
+		// ledger (exact IP for raw/unknown/intel_bad; /16 for cdn/cloud).
+		// Wired with intelMgr so threat-intel-matched IPs classify as
+		// intel_bad → exact-IP forensic capture in the ledger. nil
+		// intelMgr would still satisfy the interface (typed-nil trap)
+		// and panic inside Classify — guard with explicit nil check.
+		DestClassifier: func() *destclass.Classifier {
+			if intelMgr != nil {
+				return destclass.New(destclass.WithIntel(intelMgr))
+			}
+			return destclass.New()
+		}(),
+		EgressPolicy:     egressPolicyEng,
+		TrustZone:        trustMgr,
+		TLSPlaintext:     tlsPlaintext,
 	}
 	p.Run(ctx, events)
+}
+
+// tryDecodeKey accepts an ed25519 public key as either hex or base64.
+// Whitespace and a trailing newline are tolerated. Returns the decoded
+// bytes (which the caller should length-check against
+// ed25519.PublicKeySize). Falls through to base64 if hex fails.
+func tryDecodeKey(raw []byte) []byte {
+	s := strings.TrimSpace(string(raw))
+	// Strip a "ed25519:" prefix if someone hand-wrote one.
+	s = strings.TrimPrefix(s, "ed25519:")
+	if b, err := hex.DecodeString(s); err == nil && len(b) == ed25519.PublicKeySize {
+		return b
+	}
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b
+	}
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b
+	}
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b
+	}
+	return nil
 }

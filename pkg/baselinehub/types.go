@@ -18,17 +18,32 @@ import (
 )
 
 // Upload is the wire-format payload an agent POSTs to /api/upload.
-//
-// We use a thin envelope (host metadata + array of windows) rather
-// than one POST per window so agents on slow networks don't drown
-// the hub in connections.
+// HostTag is the stable host identity; cohort fields enable peer-group
+// comparison (so a mail server isn't compared to a database server).
 type Upload struct {
 	HostTag    string             `json:"host_tag"`
 	RoleTag    string             `json:"role_tag,omitempty"`
 	HostnameOS string             `json:"hostname_os,omitempty"`
 	XhelixVer  string             `json:"xhelix_ver,omitempty"`
 	UploadedAt time.Time          `json:"uploaded_at"`
+	Cohort     CohortTags         `json:"cohort,omitempty"`
 	Windows    []*baseline.Window `json:"windows"`
+}
+
+// CohortTags identify the peer group this host belongs to. Two hosts
+// with the same CohortTags can be compared 1:1; hosts with different
+// tags must not be (a Plesk PHP host isn't comparable to a bare nginx
+// frontend even if both run nginx).
+type CohortTags struct {
+	HostRole      string `json:"host_role,omitempty"`      // "mail" | "web" | "db" | "plesk" | "ci-runner"
+	AppRole       string `json:"app_role,omitempty"`       // "nginx-reverse-proxy" | "postfix-mail" | "mysql-primary"
+	OSFamily      string `json:"os_family,omitempty"`      // "debian12" | "ubuntu22.04"
+	PackageOrigin string `json:"package_origin,omitempty"` // "apt" | "rpm" | "source" | "container"
+	VersionFamily string `json:"version_family,omitempty"` // "nginx-1.24.x"
+	Environment  string  `json:"environment,omitempty"`    // "prod" | "staging" | "dev"
+	ControlPanel string  `json:"control_panel,omitempty"`  // "plesk" | "cpanel" | "directadmin" | "none"
+	NetworkZone  string  `json:"network_zone,omitempty"`   // "public-web" | "internal-db" | "admin"
+	Tenant       string  `json:"tenant,omitempty"`         // optional per-customer tag
 }
 
 // IngestStats reports counters surfaced by GET /api/stats.

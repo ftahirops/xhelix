@@ -77,6 +77,25 @@ type Request struct {
 	SecretTaint string // pkg/secrettaint state token
 	SourceID    uint64
 	At          time.Time
+
+	// PolicyCtx is the optional pre-computed policy + trust-zone
+	// decision the pipeline forwards from the event tags. When any
+	// of its action fields is non-empty, Decide honors it before
+	// consulting legacy rules. Empty fields = no opinion = fall
+	// through. Wired in Week 4.
+	PolicyCtx PolicyContext
+}
+
+// PolicyContext is the optional pre-computed policy + zone decision
+// the pipeline can attach via Request. When set, Decide returns this
+// before the legacy rule set. All fields are tag values copied
+// verbatim from the event (no parsing here).
+type PolicyContext struct {
+	EgressPolicyAction string // "allow" / "verify" / "deny" / "observe"
+	TrustZoneAction    string // "allow" / "verify" / "deny" / "tor_require"
+	PolicyID           string
+	PolicyMatchedBy    string
+	ZoneLabel          string
 }
 
 // Guard is the egress enforcement decision surface.

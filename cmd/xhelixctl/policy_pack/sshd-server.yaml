@@ -1,0 +1,16 @@
+# sshd server.
+#
+# sshd legitimately initiates outbound only for auth helpers — DNS
+# lookups, AD/LDAP/Kerberos. Anything else is a strong signal of
+# pivoting or a reverse shell.
+schema_version: 1
+binary: sshd
+mode: observe
+comment: "sshd — auth lookups only (DNS / AD / LDAP / Kerberos)"
+allow:
+  - ports: [53]
+    comment: "DNS"
+  - ports: [88, 389, 636, 749]
+    comment: "AD / LDAP / Kerberos"
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback PAM helpers"

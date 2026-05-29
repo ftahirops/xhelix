@@ -1,0 +1,15 @@
+# PostgreSQL server.
+#
+# Like MySQL, Postgres listens on 5432 and shouldn't initiate
+# outbound except for replication (configure those manually) and
+# dblink/FDW (also explicit).
+schema_version: 1
+binary: postgres
+mode: observe
+comment: "Postgres — no outbound expected; replication/FDW need explicit rules"
+allow:
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback"
+  - ports: [53]
+    protocols: [udp]
+    comment: "DNS"

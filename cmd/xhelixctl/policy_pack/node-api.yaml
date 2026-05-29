@@ -1,0 +1,26 @@
+# Node.js API server.
+#
+# Talks to private DBs on RFC1918 and SaaS APIs on TLS:443 with SNI.
+# Raw IPs and HTTP/80 are blocked.
+schema_version: 1
+binary: node
+mode: observe
+comment: "Node API — private DBs + SaaS APIs on TLS:443"
+allow:
+  - dest_cidr: 10.0.0.0/8
+    comment: "private LAN"
+  - dest_cidr: 172.16.0.0/12
+    comment: "private LAN"
+  - dest_cidr: 192.168.0.0/16
+    comment: "private LAN"
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback"
+  - ports: [443]
+    protocols: [tcp]
+    comment: "TLS APIs"
+  - ports: [53]
+    protocols: [udp]
+    comment: "DNS"
+deny:
+  - ports: [80]
+    comment: "no cleartext HTTP"

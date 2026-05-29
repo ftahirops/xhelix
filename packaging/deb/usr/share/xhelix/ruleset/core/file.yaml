@@ -85,9 +85,32 @@ match: |
   (path.startsWith("/etc/cron.") ||
    path == "/etc/crontab" ||
    path.startsWith("/var/spool/cron/")) &&
-  event.tags["create"] == "true"
+  event.tags["create"] == "true" &&
+  event.tags["pkg_install_window"] != "true" &&
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true") &&
+  !path.contains("/cron.d/imunify") &&
+  !path.contains("/cron.d/cpanel") &&
+  !path.contains("/cron.d/plesk") &&
+  !path.contains("/cron.d/whm") &&
+  !path.contains("/cron.d/certbot") &&
+  !path.contains("/cron.d/letsencrypt") &&
+  !path.contains("/cron.d/logrotate") &&
+  !path.contains("/cron.d/sysstat") &&
+  !path.contains("/cron.d/anacron") &&
+  !path.contains("/cron.d/php") &&
+  !path.contains("/cron.daily/logrotate") &&
+  !path.contains("/cron.daily/man-db") &&
+  !path.contains("/cron.daily/apt-compat") &&
+  !path.contains("/cron.weekly/man-db") &&
+  !path.contains("/cron.hourly/0anacron")
 tags: [persistence]
-remediation: Verify against ops change log; cron implants are common.
+remediation: |
+  Verify against ops change log; cron implants are common. Known-vendor
+  cron names (imunify, cpanel, plesk, certbot, logrotate, …) are
+  allowlisted directly in the rule. Package-managed creates + writes
+  during a pkg install window are silently suppressed. If a legitimate
+  vendor cron isn't on the list yet, add it here rather than blanket-
+  silencing the rule.
 test_id: FIM-02
 ---
 id: systemd_unit_new

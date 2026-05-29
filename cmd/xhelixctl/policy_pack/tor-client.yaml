@@ -1,0 +1,16 @@
+# Tor client.
+#
+# Tor talks to relays on 443 and 9001, directory authorities on
+# 9030, and exposes a local SOCKS endpoint on 9050. Tor exit traffic
+# is not represented here — this profile only governs Tor's *own*
+# outbound, not what apps tunnel through it.
+schema_version: 1
+binary: tor
+mode: observe
+comment: "Tor client — relays on 443/9001, dirauths on 9030"
+allow:
+  - ports: [443, 9001, 9030]
+    protocols: [tcp]
+    comment: "Tor relay + directory"
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback SOCKS"

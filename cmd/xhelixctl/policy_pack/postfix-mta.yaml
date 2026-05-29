@@ -1,0 +1,17 @@
+# Postfix MTA.
+#
+# Postfix delivers mail outbound on 25 / 465 / 587 and resolves MX
+# records on 53/udp. Any other outbound is suspicious.
+schema_version: 1
+binary: postfix
+mode: observe
+comment: "Postfix — SMTP delivery + DNS MX lookups only"
+allow:
+  - ports: [25, 465, 587]
+    protocols: [tcp]
+    comment: "SMTP submission/delivery"
+  - ports: [53]
+    protocols: [udp]
+    comment: "MX lookups"
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback"

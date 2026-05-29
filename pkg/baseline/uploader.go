@@ -42,25 +42,47 @@ type Uploader struct {
 
 // UploaderConfig is the public knobs.
 type UploaderConfig struct {
-	URL              string        // https://xhub.example.com:18444
-	HostTag          string
-	RoleTag          string
-	XhelixVer        string
-	AuthToken        string
-	UploadInterval   time.Duration // default 5m
-	QueueDir         string        // for failed uploads
+	URL                   string // https://xhub.example.com:18444
+	HostTag               string
+	RoleTag               string
+	XhelixVer             string
+	AuthToken             string
+	UploadInterval        time.Duration // default 5m
+	QueueDir              string        // for failed uploads
 	TLSInsecureSkipVerify bool
-	Logger           *slog.Logger
+	Logger                *slog.Logger
+	// CohortFn, if set, is called on every POST to produce the
+	// per-upload CohortTags. Returning a zero value is fine — the
+	// hub treats empty cohort as "uncategorized." We use a closure
+	// rather than a static value so operators can hot-reload
+	// fleet_cohort config without restarting the agent.
+	CohortFn func() CohortTags
+}
+
+// CohortTags mirrors baselinehub.CohortTags. Duplicated here to keep
+// pkg/baseline → pkg/baselinehub import-cycle-free. Kept in lockstep
+// with the canonical definition in pkg/baselinehub/types.go.
+type CohortTags struct {
+	HostRole      string `json:"host_role,omitempty"`
+	AppRole       string `json:"app_role,omitempty"`
+	OSFamily      string `json:"os_family,omitempty"`
+	PackageOrigin string `json:"package_origin,omitempty"`
+	VersionFamily string `json:"version_family,omitempty"`
+	Environment   string `json:"environment,omitempty"`
+	ControlPanel  string `json:"control_panel,omitempty"`
+	NetworkZone   string `json:"network_zone,omitempty"`
+	Tenant        string `json:"tenant,omitempty"`
 }
 
 // uploadEnvelope mirrors baselinehub.Upload. Defined locally to keep
 // pkg/baseline independent of pkg/baselinehub.
 type uploadEnvelope struct {
-	HostTag    string    `json:"host_tag"`
-	RoleTag    string    `json:"role_tag,omitempty"`
-	XhelixVer  string    `json:"xhelix_ver,omitempty"`
-	UploadedAt time.Time `json:"uploaded_at"`
-	Windows    []*Window `json:"windows"`
+	HostTag    string     `json:"host_tag"`
+	RoleTag    string     `json:"role_tag,omitempty"`
+	XhelixVer  string     `json:"xhelix_ver,omitempty"`
+	UploadedAt time.Time  `json:"uploaded_at"`
+	Cohort     CohortTags `json:"cohort,omitempty"`
+	Windows    []*Window  `json:"windows"`
 }
 
 // NewUploader returns an unstarted uploader. Call Start() with the
@@ -115,6 +137,7 @@ func (u *Uploader) Push(windows []*Window) error {
 		RoleTag:    u.cfg.RoleTag,
 		XhelixVer:  u.cfg.XhelixVer,
 		UploadedAt: time.Now().UTC(),
+		Cohort:     u.cohort(),
 		Windows:    windows,
 	}
 	body, err := json.Marshal(env)
@@ -210,6 +233,7 @@ func (u *Uploader) uploadOnce(windows []*Window) {
 		RoleTag:    u.cfg.RoleTag,
 		XhelixVer:  u.cfg.XhelixVer,
 		UploadedAt: time.Now().UTC(),
+		Cohort:     u.cohort(),
 		Windows:    windows,
 	}
 	body, err := json.Marshal(env)
@@ -224,6 +248,16 @@ func (u *Uploader) uploadOnce(windows []*Window) {
 	}
 	u.stats.uploaded.Add(1)
 	u.stats.bytes.Add(uint64(len(body)))
+}
+
+// cohort resolves the current CohortTags for this upload. Returns
+// the zero value if no CohortFn is configured — the hub treats that
+// as "uncategorized fleet."
+func (u *Uploader) cohort() CohortTags {
+	if u.cfg.CohortFn == nil {
+		return CohortTags{}
+	}
+	return u.cfg.CohortFn()
 }
 
 func (u *Uploader) send(ctx context.Context, body []byte) error {

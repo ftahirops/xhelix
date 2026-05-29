@@ -1,0 +1,35 @@
+# nginx reverse proxy / web frontend.
+#
+# Default mode is OBSERVE — installs without enforcement so you can
+# verify the rules match real traffic. Bump to deny_default with:
+#   xhelixctl egress policy enforce nginx --signer you --key …
+#
+# Expected traffic:
+#   * outbound to loopback / private LAN (upstream pools)
+#   * occasional 443 to CDN endpoints (cache purge, metadata)
+#   * DNS (53/udp) for upstream name resolution
+schema_version: 1
+binary: nginx
+mode: observe
+comment: "nginx reverse proxy — loopback upstreams + CDN purge on 443"
+allow:
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback upstream pools"
+  - dest_cidr: 10.0.0.0/8
+    comment: "private LAN upstreams"
+  - dest_cidr: 172.16.0.0/12
+    comment: "private LAN upstreams"
+  - dest_cidr: 192.168.0.0/16
+    comment: "private LAN upstreams"
+  - dest_class: cloudflare
+    ports: [443]
+    comment: "CDN purge"
+  - dest_class: fastly
+    ports: [443]
+    comment: "CDN purge"
+  - dest_class: akamai
+    ports: [443]
+    comment: "CDN purge"
+  - ports: [53]
+    protocols: [udp]
+    comment: "DNS"

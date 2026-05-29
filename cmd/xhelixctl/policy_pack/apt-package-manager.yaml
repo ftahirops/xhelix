@@ -1,0 +1,18 @@
+# apt / dpkg / package manager.
+#
+# apt only legitimately runs during an install window. The daemon's
+# pkg-install-window detector marks a 5-minute window after `apt
+# install` runs; outside that window, apt should not be making
+# outbound connects. This profile is mode: observe and a future
+# tightening will gate this on the window flag.
+schema_version: 1
+binary: apt
+mode: observe
+comment: "apt — debian/ubuntu mirrors + security pockets only"
+allow:
+  - dest_class: os_update
+    ports: [80, 443]
+    comment: "OS package repos"
+  - ports: [53]
+    protocols: [udp]
+    comment: "DNS"

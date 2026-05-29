@@ -74,15 +74,23 @@ func (s *Sensor) Start(parent context.Context, out chan<- model.Event) error {
 	s.cancel = cancel
 	s.out = out
 
-	// Initial build if needed
-	count, err := b.Build(ctx, s.watchPaths)
-	if err != nil {
-		s.reason = fmt.Sprintf("build failed: %v", err)
-		s.healthy.Store(false)
-	} else {
-		s.reason = fmt.Sprintf("baseline %d entries", count)
-		s.healthy.Store(true)
-	}
+	// Mark sensor healthy IMMEDIATELY so the daemon's systemd notify
+	// fires fast. Baseline build runs in background — walking
+	// /var/www/vhosts/* on a busy Plesk box takes 2-5 minutes; the
+	// rest of the daemon (sensors, pipeline, web UI) should not wait.
+	// Events arriving before the baseline is built will simply not
+	// be matched against it (acceptable — we'd rather start than block).
+	s.reason = "baseline build in background"
+	s.healthy.Store(true)
+	go func() {
+		count, err := b.Build(ctx, s.watchPaths)
+		if err != nil {
+			s.reason = fmt.Sprintf("build failed: %v", err)
+			s.healthy.Store(false)
+		} else {
+			s.reason = fmt.Sprintf("baseline %d entries", count)
+		}
+	}()
 
 	// Real-time inotify watcher (Linux only — see inotify_linux.go).
 	// Soft-fails to periodic-only on non-Linux or if inotify_init

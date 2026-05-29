@@ -50,15 +50,33 @@ type Endpoint struct {
 
 // Window is one (binary, hour) feature record.
 type Window struct {
-	Binary     string             `json:"binary"`
-	Hour       time.Time          `json:"hour"`        // truncated to hour
-	Events     uint64             `json:"events"`      // total events in window
-	Syscalls   map[string]uint64  `json:"syscalls"`    // sensor/syscall → count
-	Children   map[string]uint64  `json:"children"`    // child comm → count
-	Endpoints  map[string]uint64  `json:"endpoints"`   // "cidr:port" → count
-	FileWrites map[string]uint64  `json:"file_writes"` // path → count
-	UIDs       map[uint32]uint64  `json:"uids"`        // uid → count
-	Severities map[string]uint64  `json:"severities"`  // sensor severity tally
+	Binary         string            `json:"binary"`
+	Hour           time.Time         `json:"hour"`        // truncated to hour
+	Events         uint64            `json:"events"`      // total events in window
+	Syscalls       map[string]uint64 `json:"syscalls"`    // sensor/syscall → count
+	Children       map[string]uint64 `json:"children"`    // child comm → count
+	Endpoints      map[string]uint64 `json:"endpoints"`   // "cidr:port" → count
+	FileWrites     map[string]uint64 `json:"file_writes"` // path → count
+	UIDs           map[uint32]uint64 `json:"uids"`        // uid → count
+	Severities     map[string]uint64 `json:"severities"`  // sensor severity tally
+	SensitivePaths map[string]uint64 `json:"sensitive_paths,omitempty"` // "/etc/shadow" etc → count
+	BinarySHAs     map[string]uint64 `json:"binary_shas,omitempty"`     // exe_sha256 → count
+	ListenPorts    map[string]uint64 `json:"listen_ports,omitempty"`    // "tcp:443" → count
+}
+
+// sensitivePathPrefixes lists path prefixes whose writes/opens we
+// surface to fleet rollups. The list errs toward small + obvious;
+// expand only when a real detection benefits from it.
+var sensitivePathPrefixes = []string{
+	"/etc/shadow", "/etc/passwd", "/etc/sudoers", "/etc/sudoers.d/",
+	"/etc/ssh/sshd_config", "/etc/pam.d/",
+	"/etc/cron.d/", "/etc/cron.daily/", "/etc/cron.hourly/", "/etc/cron.weekly/", "/etc/cron.monthly/",
+	"/etc/systemd/system/",
+	"/root/.ssh/", "/root/.bash_history",
+	"/home/", // narrow this when authorized_keys / .ssh appears in path
+	"/var/spool/cron/",
+	"/etc/init.d/", "/etc/rc.local",
+	"/boot/grub/",
 }
 
 // Aggregator keeps the in-memory window state.
@@ -205,6 +223,40 @@ func (a *Aggregator) Observe(e model.Event) {
 		w.FileWrites[e.Tags["path"]]++
 	}
 
+	// Sensitive-path touches: file_write or open of high-value system
+	// paths. Same path field as FileWrites, but we keep this map
+	// separate so the rollup carries a curated short list rather than
+	// a noisy long-tail FileWrites map.
+	if p := e.Tags["path"]; p != "" {
+		for _, pref := range sensitivePathPrefixes {
+			if strings.HasPrefix(p, pref) {
+				// For /home/* only count if it contains .ssh or authorized_keys
+				if pref == "/home/" && !strings.Contains(p, "/.ssh/") && !strings.Contains(p, "authorized_keys") {
+					continue
+				}
+				w.SensitivePaths[p]++
+				break
+			}
+		}
+	}
+
+	// Binary SHA: capture on spawn. The aggregator doesn't filter on
+	// sensor kind — any event carrying exe_sha256 contributes.
+	if sha := e.Tags["exe_sha256"]; sha != "" {
+		w.BinarySHAs[sha]++
+	}
+
+	// Listen ports: capture on net_bind. proto defaults to tcp.
+	if e.Tags["kind"] == "net_bind" {
+		proto := "tcp"
+		if p := e.Tags["protocol"]; p != "" {
+			proto = p
+		}
+		if port := e.Tags["dst_port"]; port != "" {
+			w.ListenPorts[proto+":"+port]++
+		}
+	}
+
 	// Mark older windows for flushing.
 	a.maybeFlushOldUnlocked(hour)
 }
@@ -276,14 +328,17 @@ func (a *Aggregator) maybeFlushOldUnlocked(now time.Time) {
 
 func newWindow(binary string, hour time.Time) *Window {
 	return &Window{
-		Binary:     binary,
-		Hour:       hour.UTC(),
-		Syscalls:   map[string]uint64{},
-		Children:   map[string]uint64{},
-		Endpoints:  map[string]uint64{},
-		FileWrites: map[string]uint64{},
-		UIDs:       map[uint32]uint64{},
-		Severities: map[string]uint64{},
+		Binary:         binary,
+		Hour:           hour.UTC(),
+		Syscalls:       map[string]uint64{},
+		Children:       map[string]uint64{},
+		Endpoints:      map[string]uint64{},
+		FileWrites:     map[string]uint64{},
+		UIDs:           map[uint32]uint64{},
+		Severities:     map[string]uint64{},
+		SensitivePaths: map[string]uint64{},
+		BinarySHAs:     map[string]uint64{},
+		ListenPorts:    map[string]uint64{},
 	}
 }
 
@@ -295,6 +350,9 @@ func (w *Window) truncateTopN(n int) {
 	w.Children = topNStr(w.Children, n)
 	w.Endpoints = topNStr(w.Endpoints, n)
 	w.FileWrites = topNStr(w.FileWrites, n)
+	w.SensitivePaths = topNStr(w.SensitivePaths, n)
+	w.BinarySHAs = topNStr(w.BinarySHAs, n)
+	w.ListenPorts = topNStr(w.ListenPorts, n)
 	// UIDs and Severities are naturally low-cardinality; leave intact.
 }
 

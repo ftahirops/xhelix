@@ -28,6 +28,7 @@ import (
 
 	"github.com/xhelix/xhelix/pkg/baselinehub"
 	"github.com/xhelix/xhelix/pkg/version"
+	"github.com/xhelix/xhelix/pkg/xhubfleet"
 )
 
 func main() {
@@ -144,14 +145,29 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool
 		log.Warn("auth DISABLED via --dev-insecure (no token-file)")
 	}
 
+	engine, err := xhubfleet.NewEngine(xhubfleet.EngineConfig{
+		Weights:      xhubfleet.DefaultWeights(),
+		Gates:        xhubfleet.DefaultCandidateGates(),
+		TrustPolicy:  xhubfleet.DefaultTrustPolicy(),
+		PublisherDir: filepath.Join(dataDir, "brp-feed"),
+	})
+	if err != nil {
+		return fmt.Errorf("fleet engine init: %w", err)
+	}
+	log.Info("fleet engine initialized", "publisher_dir", filepath.Join(dataDir, "brp-feed"))
+
 	srv := baselinehub.NewServer(baselinehub.ServerConfig{
 		Store:     store,
 		AuthToken: token,
 		Logger:    log,
+		OnUpload: func(u baselinehub.Upload) {
+			engine.Ingest(u, time.Now())
+		},
 	})
 
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
+	engine.RegisterRoutes(mux)
 
 	httpsSrv := &http.Server{
 		Addr:              bind,
@@ -161,6 +177,23 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool
 
 	ctx, cancel := signal.NotifyContext(cmd_ctx_root(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// Periodic candidate rebuild + alert decay. 15 min is a balance
+	// between operator latency (seeing new candidates soon after fleet
+	// behavior shifts) and rebuild cost on a large fleet.
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				engine.RebuildCandidates()
+				engine.Trust().DecayAlerts()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {

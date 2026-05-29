@@ -130,7 +130,7 @@ func feedConnstate(tab *connstate.Table, classifier *cgroupclass.Classifier, ev 
 		ce.Unit = info.Unit
 		ce.UserID = info.UserID
 	}
-	if sha := ev.Tags["image_sha256"]; sha != "" {
+	if sha := ev.Tags["exe_sha256"]; sha != "" {
 		ce.ExeSHA = sha
 	}
 	tab.OnConnect(ce)
@@ -161,6 +161,16 @@ func parseUint32(s string) uint32 {
 		return 0
 	}
 	var v uint32
+	_, _ = fmt.Sscanf(s, "%d", &v)
+	return v
+}
+
+// parseUint16 parses decimal; 0 on error. Used for dest_port tags.
+func parseUint16(s string) uint16 {
+	if s == "" {
+		return 0
+	}
+	var v uint16
 	_, _ = fmt.Sscanf(s, "%d", &v)
 	return v
 }

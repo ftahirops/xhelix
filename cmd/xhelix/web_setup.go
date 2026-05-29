@@ -95,6 +95,12 @@ func startWebServer(
 	// every other UI route.
 	registerIncidentRoutes(mux, incidentEng)
 
+	// Egress dashboard (Option A — Week 2). Mount the same routes on
+	// the auth-guarded mux so /egress works when cfg.UI.Enabled=true.
+	webSrv.RegisterEgressRoutes(mux)
+	webSrv.RegisterSafetyRoutes(mux)
+	webSrv.RegisterZoneRoutes(mux)
+
 	// AuthGuard — bearer token + IP allow-list + rate limit + audit.
 	tokenFile := cfg.UI.TokenFile
 	if tokenFile == "" {
@@ -111,6 +117,7 @@ func startWebServer(
 		return nil
 	}
 	guard, err := web.NewAuthGuard(web.AuthConfig{
+		NoAuth:             cfg.UI.NoAuth,
 		AllowIPs:           cfg.UI.AllowIPs,
 		AutoDetectSSH:      cfg.UI.AutoDetectSSH,
 		TokenFile:          tokenFile,

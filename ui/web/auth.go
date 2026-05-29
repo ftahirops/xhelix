@@ -36,6 +36,12 @@ import (
 // safest default. Operators who want remote access populate at
 // least AllowIPs + Token.
 type AuthConfig struct {
+	// NoAuth, if true, bypasses bearer-token + CSRF checks. IP
+	// allowlist + rate limit + audit log still apply. Use ONLY when
+	// the network layer already restricts who can reach the daemon
+	// (e.g. SSH-only access + IP allowlist).
+	NoAuth bool
+
 	// AllowIPs is the explicit allow-list. CIDRs accepted.
 	// Empty + AutoDetectSSH=false = loopback only.
 	AllowIPs []string
@@ -215,7 +221,7 @@ func (g *AuthGuard) Wrap(h http.Handler) http.Handler {
 		}
 
 		// 4. CSRF for state-changing methods (token must be in header)
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if !g.cfg.NoAuth && r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if !g.csrfOK(r) {
 				g.denied.Add(1)
 				status = http.StatusForbidden
@@ -392,6 +398,9 @@ func loadOrCreateToken(path string) (token []byte, fresh bool, err error) {
 // xhelix serves at /ui/login and which sets the cookie. The
 // printed startup URL no longer carries the token.
 func (g *AuthGuard) tokenOK(r *http.Request) bool {
+	if g.cfg.NoAuth || len(g.token) == 0 {
+		return true
+	}
 	var presented string
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		presented = strings.TrimPrefix(h, "Bearer ")
