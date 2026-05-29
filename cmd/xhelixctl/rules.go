@@ -274,6 +274,21 @@ func newRulesSoakCmd() *cobra.Command {
 	return cmd
 }
 
+// lintCategoryViolations returns a non-empty slice if any rule has no
+// explicit category. The Category field defaults to CategoryWeakSignal,
+// but CategoryRaw == "" marks a rule that was never reviewed — that's
+// the condition we reject. Empty CategoryRaw must be fixed in the YAML
+// before the rule ships.
+func lintCategoryViolations(rules []model.Rule) []string {
+	var out []string
+	for _, r := range rules {
+		if r.CategoryRaw == "" {
+			out = append(out, "rule "+r.ID+": missing 'category' field (one of: fact, weak_signal, incident, hard_deny)")
+		}
+	}
+	return out
+}
+
 func lintRules(path string, verbose, strict bool) error {
 	parsed, err := rules.LoadDir(path)
 	if err != nil {
@@ -309,6 +324,16 @@ func lintRules(path string, verbose, strict bool) error {
 		fmt.Fprintf(os.Stderr, "\n%d/%d rules failed to compile\n", failed, len(parsed))
 		return fmt.Errorf("%d compile errors", failed)
 	}
+
+	// Every rule must be explicitly classified before it can ship.
+	if catErrs := lintCategoryViolations(parsed); len(catErrs) > 0 {
+		for _, e := range catErrs {
+			fmt.Fprintln(os.Stderr, "  "+e)
+		}
+		fmt.Fprintf(os.Stderr, "\n%d/%d rules missing 'category'\n", len(catErrs), len(parsed))
+		return fmt.Errorf("%d category violations", len(catErrs))
+	}
+
 	fmt.Printf("%d rules valid\n", len(parsed))
 	_ = strict // reserved for future warning-promotion (deprecated tags etc.)
 	return nil
