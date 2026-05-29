@@ -11,9 +11,10 @@ HSH := xhelix-honeysh
 SNK := xhelix-sinkhole
 DNS := xhelix-dnspoison
 WD  := xhelix-watchdog
+RPL := xhelix-replay
 DIST := dist
 
-.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint sbom checksums verify-checksums govulncheck modverify supplychain corpus corpus-mega corpus-check
+.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint sbom checksums verify-checksums govulncheck modverify supplychain corpus corpus-mega corpus-check xhelix-replay
 
 all: build
 
@@ -54,6 +55,10 @@ build:
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(SNK) ./cmd/xhelix-sinkhole
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(DNS) ./cmd/xhelix-dnspoison
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(WD)  ./cmd/xhelix-watchdog
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(RPL) ./cmd/xhelix-replay
+
+xhelix-replay:
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(RPL) ./cmd/xhelix-replay
 
 race:
 	go test -race -count=1 ./...
@@ -167,7 +172,7 @@ tidy:
 	go mod tidy
 
 clean:
-	rm -f $(BIN) $(CTL) $(VFY) $(HSH) $(SNK) $(DNS) $(WD)
+	rm -f $(BIN) $(CTL) $(VFY) $(HSH) $(SNK) $(DNS) $(WD) $(RPL)
 	rm -rf $(DIST)
 
 deb: build rules-lint

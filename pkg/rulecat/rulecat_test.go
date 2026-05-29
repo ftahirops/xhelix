@@ -111,3 +111,14 @@ func TestResolver_Gate(t *testing.T) {
 		t.Fatal("detection mode must emit fact")
 	}
 }
+
+func TestResolver_Known(t *testing.T) {
+	r := NewResolver()
+	r.AddRules([]model.Rule{{ID: "f", CategoryRaw: "fact", Category: model.CategoryFact}})
+	if !r.Known("f") {
+		t.Fatal("explicitly classified rule must be Known")
+	}
+	if r.Known("never.added") {
+		t.Fatal("unclassified rule must not be Known (it falls back to weak_signal default)")
+	}
+}

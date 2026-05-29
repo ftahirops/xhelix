@@ -75,6 +75,13 @@ func (r *Resolver) Category(ruleID string) model.Category {
 // Len returns the number of classified rule_ids (for diagnostics).
 func (r *Resolver) Len() int { return len(r.cats) }
 
+// Known reports whether ruleID has an explicit classification (as
+// opposed to falling back to the weak_signal default).
+func (r *Resolver) Known(ruleID string) bool {
+	_, ok := r.cats[ruleID]
+	return ok
+}
+
 // ShouldEmit reports whether an alert of the given category should be
 // emitted under the supplied AlertMode.
 //
