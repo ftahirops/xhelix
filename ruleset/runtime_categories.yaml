@@ -51,3 +51,5 @@ categories:
   policy.app.allow-only-domains: hard_deny
   policy.app.asn-restricted: hard_deny
   policy.app.country-restricted: hard_deny
+  dropped_binary_lifecycle: incident
+  h2.slow_egress_fanout_24h: weak_signal
