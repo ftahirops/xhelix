@@ -83,6 +83,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/proctree"
 	"github.com/xhelix/xhelix/pkg/remediate"
 	"github.com/xhelix/xhelix/pkg/response"
+	"github.com/xhelix/xhelix/pkg/rulecat"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/baselinegate"
@@ -1304,6 +1305,25 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			_ = ruleEngine.Load(append(bundledRules, customRules...))
 			log.Info("custom rules loaded", "count", len(customRules))
 		}
+	}
+
+	// Verdict-foundation: install the category gate on the alert bus.
+	// In visibility mode (default) only hard_deny + incident categories
+	// emit; fact + weak_signal are suppressed. Covers BOTH YAML-rule
+	// alerts and runtime-emitted alerts (cap.gained, brp.hard_deny, ...)
+	// because the gate lives at the bus, the single alert chokepoint.
+	{
+		catResolver := rulecat.NewResolver()
+		catResolver.AddRules(bundledRules) // includes dlcf rules (merged above)
+		// runtime_categories.yaml lives one level up from core/.
+		runtimeCatPath := filepath.Join(bundledRulesDir, "..", "runtime_categories.yaml")
+		if err := catResolver.AddRuntimeFile(runtimeCatPath); err != nil {
+			log.Warn("rulecat: runtime categories load failed", "path", runtimeCatPath, "err", err)
+		}
+		bus.SetGate(catResolver.Gate(cfg.Detection.AlertMode))
+		log.Info("alert category gate installed",
+			"mode", cfg.Detection.AlertMode,
+			"classified_rules", catResolver.Len())
 	}
 
 	// Correlator — uses the same emit so correlation incidents go

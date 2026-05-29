@@ -60,3 +60,27 @@ func TestBusDropsWhenFull(t *testing.T) {
 		t.Errorf("dropped = %d, want 1", got)
 	}
 }
+
+func TestBus_Gate_SuppressesFalse(t *testing.T) {
+	b := NewBus(nil, 16, nil)
+	b.SetGate(func(a model.Alert) bool { return a.RuleID == "keep" })
+	if b.Send(model.Alert{RuleID: "drop"}) {
+		t.Fatal("gated-false alert must be suppressed (Send returns false)")
+	}
+	if !b.Send(model.Alert{RuleID: "keep"}) {
+		t.Fatal("gated-true alert must be accepted")
+	}
+	if b.Suppressed() != 1 {
+		t.Fatalf("suppressed count: got %d want 1", b.Suppressed())
+	}
+}
+
+func TestBus_NilGate_EmitsAll(t *testing.T) {
+	b := NewBus(nil, 16, nil)
+	if !b.Send(model.Alert{RuleID: "anything"}) {
+		t.Fatal("nil gate must emit everything")
+	}
+	if b.Suppressed() != 0 {
+		t.Fatal("nil gate must suppress nothing")
+	}
+}
