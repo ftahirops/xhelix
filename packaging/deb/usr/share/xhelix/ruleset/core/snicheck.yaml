@@ -10,6 +10,7 @@
 # ClientHello to be parsed by sensors/dpi.
 ---
 id: tls_no_sni
+category: fact
 desc: Outbound TLS connection did not include an SNI extension
 severity: warn
 mitre: [T1071.001, T1573]
@@ -33,6 +34,7 @@ remediation: |
 test_id: SNI-01
 ---
 id: tls_no_sni_from_webserver
+category: fact
 desc: A web server lineage made a bare-IP / no-SNI TLS connection
 severity: high
 mitre: [T1071.001, T1190]
@@ -48,6 +50,7 @@ remediation: |
 test_id: SNI-02
 ---
 id: tls_no_sni_from_tmp
+category: weak_signal
 desc: A binary running from /tmp made a bare-IP / no-SNI TLS connection
 severity: critical
 mitre: [T1071.001, T1059]

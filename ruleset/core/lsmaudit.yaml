@@ -7,6 +7,7 @@
 # SELinux booleans, not by suppressing xhelix.
 ---
 id: lsm_apparmor_denied
+category: weak_signal
 desc: AppArmor denied a forbidden operation
 severity: critical
 mitre: [T1562, T1068]
@@ -22,6 +23,7 @@ remediation: |
   legitimate.
 ---
 id: lsm_selinux_denied
+category: weak_signal
 desc: SELinux denied a forbidden operation
 severity: critical
 mitre: [T1562, T1068]
@@ -37,6 +39,7 @@ remediation: |
   audit2allow only after careful review.
 ---
 id: lsm_apparmor_audit_mode
+category: fact
 desc: AppArmor in complain/audit mode flagged an operation
 severity: warn
 match: |

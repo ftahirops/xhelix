@@ -2,6 +2,7 @@
 # Used by the test harness; in production these are noisy.
 ---
 id: any_ptrace
+category: fact
 desc: Any ptrace attach was observed
 severity: notice
 match: |
@@ -14,6 +15,7 @@ remediation: |
   out in production; harness uses it to verify the decoder fires.
 ---
 id: fim.drift
+category: weak_signal
 desc: Any FIM drift event
 # Observer rule for harness verification. severity=info because
 # legitimate package installs / config reloads produce FIM drifts

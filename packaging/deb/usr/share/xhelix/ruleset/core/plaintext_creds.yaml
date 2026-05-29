@@ -8,6 +8,7 @@
 # not on the allowlist.
 ---
 id: credbroker.plaintext_read
+category: weak_signal
 desc: A watched plaintext credential file was opened — reader lineage recorded
 severity: warn
 mitre: [T1552.001, T1003]
@@ -32,6 +33,7 @@ remediation: |
 test_id: PT-01
 ---
 id: credbroker.plaintext_read_from_webserver
+category: incident
 desc: A plaintext credential file was opened by a process in a web-server lineage
 severity: high
 mitre: [T1552.001, T1190]
@@ -49,6 +51,7 @@ remediation: |
 test_id: PT-02
 ---
 id: credbroker.plaintext_read_from_tmp
+category: incident
 desc: A plaintext credential file was opened by a binary running from /tmp
 severity: critical
 mitre: [T1552.001, T1059]

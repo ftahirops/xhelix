@@ -1,6 +1,7 @@
 # Decoy plane rules. Decoys produce zero-FP indicators.
 ---
 id: decoy_file_opened
+category: hard_deny
 desc: A honey file was opened
 severity: critical
 mitre: [T1552.001]
@@ -14,6 +15,7 @@ remediation: |
 test_id: D-01
 ---
 id: decoy_service_connect
+category: hard_deny
 desc: Connection received on a honey service port
 severity: critical
 mitre: [T1046]
@@ -25,6 +27,7 @@ remediation: Capture src IP, JA3, payload. Correlate to lateral movement.
 test_id: D-02
 ---
 id: decoy_dns_resolved
+category: hard_deny
 desc: A canary DNS hostname was resolved
 severity: high
 mitre: [T1018]
@@ -36,6 +39,7 @@ remediation: Reconnaissance indicator. Identify resolver source.
 test_id: D-03
 ---
 id: decoy_canary_token_used
+category: hard_deny
 desc: An embedded canary token was used externally
 severity: critical
 mitre: [T1059, T1005]
@@ -49,6 +53,7 @@ remediation: |
 test_id: D-04
 ---
 id: decoy_db_row_read
+category: hard_deny
 desc: Honey row in a real database was read
 severity: critical
 mitre: [T1005]

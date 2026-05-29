@@ -2,6 +2,7 @@
 # Covers kernel LPE, container escape, cloud metadata, and supply-chain.
 ---
 id: kernel_lpe_exploit
+category: incident
 desc: Kernel exploit indicators (ptrace abuse, unprivileged userns, suspicious modprobe)
 severity: critical
 mitre: [T1068, T1548.001]
@@ -18,6 +19,7 @@ remediation: |
 test_id: ADV-01
 ---
 id: container_escape_privileged
+category: incident
 desc: Container escape via privileged capability abuse (mount, mknod, chroot)
 severity: critical
 mitre: [T1611]
@@ -35,6 +37,7 @@ remediation: |
 test_id: ADV-02
 ---
 id: cloud_metadata_from_container
+category: incident
 desc: Cloud metadata service accessed from inside a container
 severity: high
 mitre: [T1552.005]
@@ -49,6 +52,7 @@ remediation: |
 test_id: ADV-03
 ---
 id: ebpf_program_load_unexpected
+category: weak_signal
 desc: Unexpected eBPF program or map load by a non-system process
 severity: high
 mitre: [T1562.001]
@@ -63,6 +67,7 @@ remediation: |
 test_id: ADV-04
 ---
 id: docker_socket_access
+category: weak_signal
 desc: Non-docker process accessed the Docker Unix socket
 severity: high
 mitre: [T1610]
@@ -77,6 +82,7 @@ remediation: |
 test_id: ADV-05
 ---
 id: suid_binary_created
+category: incident
 desc: A new SUID binary appeared outside known package paths
 severity: critical
 mitre: [T1548.001]
@@ -91,6 +97,7 @@ remediation: |
 test_id: ADV-06
 ---
 id: hidden_process_reuse
+category: weak_signal
 desc: PID reuse detected with different comm/image but same start_ns
 severity: high
 mitre: [T1055]
@@ -105,6 +112,7 @@ remediation: |
 test_id: ADV-07
 ---
 id: supply_chain_liblzma_backdoor
+category: hard_deny
 desc: liblzma hash mismatch — possible XZ backdoor (CVE-2024-3094)
 severity: critical
 mitre: [T1195.001]
@@ -122,6 +130,7 @@ remediation: |
 test_id: ADV-08
 ---
 id: suspicious_interpreter_network
+category: weak_signal
 desc: Python/Perl/Ruby opened a network connection to a public IP
 severity: high
 mitre: [T1059, T1071]
@@ -137,6 +146,7 @@ remediation: |
 test_id: ADV-09
 ---
 id: kernel_module_unsigned
+category: incident
 desc: Unsigned or unknown kernel module loaded
 severity: high
 mitre: [T1547.006]

@@ -12,6 +12,7 @@
 #    arrival, even if the thread RIP isn't in it yet)
 ---
 id: mem_new_rwx_mapping
+category: fact
 desc: A process gained a new anonymous executable memory region between scans
 severity: high
 mitre: [T1055.002, T1620]
@@ -34,6 +35,7 @@ remediation: |
 test_id: MD-01
 ---
 id: mem_new_rwx_mapping_in_webserver
+category: incident
 desc: A web-server process gained a new anonymous executable region
 severity: critical
 mitre: [T1055, T1190]
