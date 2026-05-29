@@ -126,6 +126,35 @@ type Config struct {
 	// containment. BlockObserve installs an nftables drop+log rule and
 	// surfaces every blocked attempt to the operator.
 	SafetyNet SafetyNetConfig `yaml:"safety_net"`
+
+	// Detection — verdict-engine alert gating. Default visibility.
+	Detection DetectionConfig `yaml:"detection"`
+}
+
+// DetectionConfig bundles the verdict-engine controls. AlertMode gates
+// which rule categories actually emit alerts at the alert bus:
+//
+//	visibility — only CategoryHardDeny and CategoryIncident emit alerts.
+//	             fact and weak_signal categories are recorded but never
+//	             paged. SAFE DEFAULT.
+//	detection  — every category emits (legacy behavior). Use for
+//	             trace-replay regression testing only.
+type DetectionConfig struct {
+	AlertMode string `yaml:"alert_mode"`
+}
+
+// normalize validates and defaults the detection config. Empty AlertMode
+// becomes "visibility"; unknown values are an error.
+func (d *DetectionConfig) normalize() error {
+	switch d.AlertMode {
+	case "", "visibility":
+		d.AlertMode = "visibility"
+	case "detection":
+		// allowed
+	default:
+		return fmt.Errorf("detection.alert_mode: unknown %q (want visibility|detection)", d.AlertMode)
+	}
+	return nil
 }
 
 // SafetyNetConfig is the bootstrap content of the safety net at
@@ -943,6 +972,7 @@ func Default() Config {
 				GlobalPerSecond:  500,
 			},
 		},
+		Detection: DetectionConfig{AlertMode: "visibility"},
 	}
 }
 
@@ -965,6 +995,9 @@ func Load(path string) (Config, error) {
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config: %w", err)
+	}
+	if err := cfg.Detection.normalize(); err != nil {
+		return cfg, fmt.Errorf("config: %w", err)
 	}
 	cfg = ApplyPreset(cfg)
 	return cfg, nil

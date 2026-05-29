@@ -237,3 +237,52 @@ func TestApplyPreset_AllPresetsGetTheDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestDefault_DetectionAlertModeIsVisibility(t *testing.T) {
+	c := Default()
+	if c.Detection.AlertMode != "visibility" {
+		t.Fatalf("default AlertMode must be 'visibility' for safety, got %q", c.Detection.AlertMode)
+	}
+}
+
+func TestLoad_DetectionAlertMode_FromYAML(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "c.yaml")
+	if err := os.WriteFile(p, []byte("detection:\n  alert_mode: detection\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.Detection.AlertMode != "detection" {
+		t.Fatalf("got %q", c.Detection.AlertMode)
+	}
+}
+
+func TestLoad_DetectionAlertMode_RejectsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "c.yaml")
+	if err := os.WriteFile(p, []byte("detection:\n  alert_mode: bogus\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err == nil {
+		t.Fatalf("unknown alert_mode must be a load error")
+	}
+}
+
+func TestLoad_DetectionAlertMode_EmptyDefaultsToVisibility(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "c.yaml")
+	// A config that doesn't mention detection at all must still end up visibility.
+	if err := os.WriteFile(p, []byte("preset: server\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.Detection.AlertMode != "visibility" {
+		t.Fatalf("absent detection block must default to visibility, got %q", c.Detection.AlertMode)
+	}
+}
