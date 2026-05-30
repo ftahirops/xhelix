@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,5 +94,73 @@ func TestReplay_TPRegressionDetected(t *testing.T) {
 	}
 	if len(res.TPRegressions) == 0 || !strings.Contains(strings.Join(res.TPRegressions, ""), "brp.hard_deny") {
 		t.Fatalf("expected TP regression for brp.hard_deny, got %v", res.TPRegressions)
+	}
+}
+
+func TestReplay_VerdictMode_CollapsesRawIncidents(t *testing.T) {
+	// Two incident fires on the SAME pid → one verdict (50+50>=80).
+	// One lone incident on another pid → no verdict (50<80), collapsed.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "v.jsonl")
+	lines := `{"event":{"pid":5,"time":"2026-05-27T20:23:00Z"},"rule_id":"incA"}
+{"event":{"pid":5,"time":"2026-05-27T20:23:10Z"},"rule_id":"incB"}
+{"event":{"pid":9,"time":"2026-05-27T20:24:00Z"},"rule_id":"incA"}
+{"event":{"pid":3,"time":"2026-05-27T20:25:00Z"},"rule_id":"hardX"}
+`
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := rulecat.NewResolver()
+	r.AddRules([]model.Rule{
+		{ID: "incA", CategoryRaw: "incident", Category: model.CategoryIncident}, // weight 50
+		{ID: "incB", CategoryRaw: "incident", Category: model.CategoryIncident}, // weight 50
+		{ID: "hardX", CategoryRaw: "hard_deny", Category: model.CategoryHardDeny},
+	})
+	res, err := ReplayFile(p, ReplayOpts{AlertMode: "visibility", Verdict: true, Resolver: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// pid5: incA(50)+incB(50)=100 → 1 verdict. pid9: incA(50) alone → collapsed, no verdict.
+	// hardX → emitted directly.
+	if res.VerdictsEmitted != 1 {
+		t.Fatalf("verdicts: got %d want 1", res.VerdictsEmitted)
+	}
+	// Emitted = 1 verdict + 1 hard_deny = 2.
+	if res.Emitted != 2 {
+		t.Fatalf("emitted: got %d want 2", res.Emitted)
+	}
+	// Collapsed incA = 2: pid5's incA (50, below threshold until incB lands)
+	// AND pid9's lone incA. Only incB on pid5 is the threshold-crossing
+	// signal that emits the verdict; every other incident fire returned
+	// nil and is counted as collapsed.
+	if res.CollapsedByRule["incA"] != 2 {
+		t.Fatalf("collapsed incA: got %d want 2", res.CollapsedByRule["incA"])
+	}
+}
+
+func TestReplay_VerdictMode_DetectionStillEmitsAll(t *testing.T) {
+	// In detection mode, verdict has no effect: incidents emit raw.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "d.jsonl")
+	lines := `{"event":{"pid":9,"time":"2026-05-27T20:24:00Z"},"rule_id":"incA"}
+{"event":{"pid":7,"time":"2026-05-27T20:24:05Z"},"rule_id":"factA"}
+`
+	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := rulecat.NewResolver()
+	r.AddRules([]model.Rule{
+		{ID: "incA", CategoryRaw: "incident", Category: model.CategoryIncident},
+		{ID: "factA", CategoryRaw: "fact", Category: model.CategoryFact},
+	})
+	res, err := ReplayFile(p, ReplayOpts{AlertMode: "detection", Verdict: true, Resolver: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Emitted != 2 {
+		t.Fatalf("detection emits all: got %d want 2", res.Emitted)
+	}
+	if res.VerdictsEmitted != 0 {
+		t.Fatalf("detection bypasses verdict engine: got %d want 0", res.VerdictsEmitted)
 	}
 }

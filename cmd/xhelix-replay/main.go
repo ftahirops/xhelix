@@ -25,6 +25,7 @@ func main() {
 	mode := flag.String("mode", "visibility", "alert mode: visibility | detection")
 	tpFile := flag.String("tp", "", "optional newline-separated TP rule ids")
 	format := flag.String("format", "text", "output: text | json")
+	verdict := flag.Bool("verdict", false, "route incident/weak_signal through the per-lineage score engine (lower bound: replay lineage is per-PID)")
 	flag.Parse()
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "xhelix-replay: --in is required")
@@ -57,7 +58,7 @@ func main() {
 		}
 	}
 
-	res, err := ReplayFile(*in, ReplayOpts{AlertMode: *mode, Resolver: resolver, TruePositiveIDs: tp})
+	res, err := ReplayFile(*in, ReplayOpts{AlertMode: *mode, Resolver: resolver, TruePositiveIDs: tp, Verdict: *verdict})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "replay: %v\n", err)
 		os.Exit(1)
@@ -68,11 +69,21 @@ func main() {
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(res)
 	} else {
-		fmt.Printf("Replay summary (mode=%s, classified_rules=%d)\n", *mode, resolver.Len())
+		fmt.Printf("Replay summary (mode=%s, verdict=%v, classified_rules=%d)\n", *mode, *verdict, resolver.Len())
 		fmt.Printf("  total lines:  %d\n", res.TotalLines)
 		fmt.Printf("  parsed:       %d\n", res.Parsed)
 		fmt.Printf("  emitted:      %d\n", res.Emitted)
 		fmt.Printf("  suppressed:   %d\n", res.Suppressed)
+		if *verdict {
+			fmt.Printf("  verdicts_emitted: %d  (incident/weak_signal routed through per-lineage score engine)\n", res.VerdictsEmitted)
+			fmt.Println("  NOTE: replay lineage = identity (per-PID). No proctree ancestry is")
+			fmt.Println("        reconstructed from the trace, so this is a CONSERVATIVE LOWER BOUND;")
+			fmt.Println("        the live daemon correlates across parent+child PIDs and collapses MORE.")
+			fmt.Println("  top collapsed_by_rule (raw incident/weak fires that did NOT cross threshold):")
+			for _, kv := range topN(res.CollapsedByRule, 15) {
+				fmt.Printf("    %-40s %d\n", kv.k, kv.v)
+			}
+		}
 		fmt.Printf("  by category suppressed: fact=%d weak_signal=%d\n",
 			res.SuppressedByCategory["fact"], res.SuppressedByCategory["weak_signal"])
 		// Top emitted rules.
