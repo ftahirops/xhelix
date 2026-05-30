@@ -1372,15 +1372,19 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		Threshold: 80,
 		Window:    time.Hour,
 		LineageOf: func(pid uint32) uint32 {
-			// Ancestors returns the chain from pid upward to PID 1,
-			// inclusive (graph.go: index 0 is pid itself, the loop walks
-			// PPID upward, so the LAST element is the outermost ancestor
-			// closest to PID 1). The lineage root is that last element.
+			// Prefer the source-lineage anchor: it survives exec/reparent
+			// and ties an entire attack chain (e.g. php-fpm -> bash -> curl)
+			// to one ingress. lineage.LineageID is a uint64; fold to uint32
+			// for the score bucket (collisions only over-correlate and are
+			// rare). Fall back to the process-tree root, then the pid.
+			if id, _ := procTree.SourceOf(pid); id != 0 {
+				return uint32(id) ^ uint32(id>>32)
+			}
 			anc := procTree.Ancestors(pid, 16)
 			if len(anc) == 0 {
 				return pid
 			}
-			return anc[len(anc)-1].PID // outermost ancestor = lineage root
+			return anc[len(anc)-1].PID
 		},
 	})
 	mode := cfg.Detection.AlertMode
@@ -1397,7 +1401,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			v := lineageEng.Observe(lineagescore.Signal{
 				PID:    a.Event.PID,
 				RuleID: a.RuleID,
-				Weight: catResolver.Weight(a.RuleID),
+				Weight: lineagescore.SensitivityBoost(catResolver.Weight(a.RuleID), a.Event.Tags),
 				At:     a.Event.Time,
 				Reason: a.Reason,
 			})
@@ -3796,11 +3800,24 @@ func synthVerdictAlert(trigger model.Alert, v *lineagescore.Verdict) *model.Aler
 	for _, c := range v.Contributors {
 		parts = append(parts, fmt.Sprintf("%s(+%d)", c.RuleID, c.Weight))
 	}
+	ev := trigger.Event
+	if ev.Tags == nil {
+		ev.Tags = map[string]string{}
+	} else {
+		// copy so we don't mutate the triggering event's map
+		cp := make(map[string]string, len(ev.Tags)+2)
+		for k, val := range ev.Tags {
+			cp[k] = val
+		}
+		ev.Tags = cp
+	}
+	ev.Tags["verdict_tier"] = v.Tier
+	ev.Tags["verdict_score"] = strconv.Itoa(v.Score)
 	return &model.Alert{
-		Event:  trigger.Event,
+		Event:  ev,
 		RuleID: "verdict.incident",
-		Reason: fmt.Sprintf("lineage %d crossed score %d: %s",
-			v.LineageRoot, v.Score, strings.Join(parts, " -> ")),
+		Reason: fmt.Sprintf("[%s] lineage %d score %d: %s",
+			v.Tier, v.LineageRoot, v.Score, strings.Join(parts, " -> ")),
 		Class: 1,
 	}
 }
