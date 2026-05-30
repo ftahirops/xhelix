@@ -1,0 +1,130 @@
+// Package lineagescore accumulates per-process-lineage evidence and emits
+// a single incident Verdict when a lineage crosses a score threshold.
+// Deterministic and single-goroutine by contract (called from the
+// dispatch loop). No fleet, no ML — local chain scoring only.
+//
+// NOTE: distinct from pkg/verdict, which is the egress per-connection
+// decision engine. This package scores process lineages for incident
+// alerting.
+package lineagescore
+
+import (
+	"sort"
+	"time"
+)
+
+// Signal is one piece of evidence for a process.
+type Signal struct {
+	PID    uint32
+	RuleID string
+	Weight int
+	At     time.Time
+	Reason string
+}
+
+// Contributor records one signal that fed a verdict.
+type Contributor struct {
+	RuleID string
+	Weight int
+	At     time.Time
+	Reason string
+}
+
+// Verdict is emitted when a lineage crosses the threshold.
+type Verdict struct {
+	LineageRoot  uint32
+	Score        int
+	Contributors []Contributor
+	At           time.Time
+}
+
+// Opts configures the engine.
+type Opts struct {
+	Threshold int
+	Window    time.Duration
+	Cooldown  time.Duration
+	LineageOf func(pid uint32) uint32
+}
+
+type entry struct {
+	rid    string
+	weight int
+	at     time.Time
+	reason string
+}
+
+type lineageState struct {
+	entries  []entry
+	firedAt  time.Time
+	hasFired bool
+}
+
+// Engine is the per-lineage score accumulator.
+type Engine struct {
+	opts   Opts
+	states map[uint32]*lineageState
+}
+
+// New constructs an Engine with safe defaults.
+func New(o Opts) *Engine {
+	if o.Threshold <= 0 {
+		o.Threshold = 80
+	}
+	if o.Window <= 0 {
+		o.Window = time.Hour
+	}
+	if o.Cooldown <= 0 {
+		o.Cooldown = o.Window
+	}
+	if o.LineageOf == nil {
+		o.LineageOf = func(p uint32) uint32 { return p }
+	}
+	return &Engine{opts: o, states: map[uint32]*lineageState{}}
+}
+
+// Observe records a signal and returns a non-nil Verdict if this signal
+// caused the lineage to cross the threshold (once per cooldown window).
+// Zero/negative-weight signals (facts) are ignored.
+func (e *Engine) Observe(s Signal) *Verdict {
+	if s.Weight <= 0 {
+		return nil
+	}
+	root := e.opts.LineageOf(s.PID)
+	st := e.states[root]
+	if st == nil {
+		st = &lineageState{}
+		e.states[root] = st
+	}
+	cutoff := s.At.Add(-e.opts.Window)
+	kept := st.entries[:0]
+	for _, en := range st.entries {
+		if en.at.After(cutoff) {
+			kept = append(kept, en)
+		}
+	}
+	st.entries = append(kept, entry{rid: s.RuleID, weight: s.Weight, at: s.At, reason: s.Reason})
+
+	if st.hasFired && s.At.Sub(st.firedAt) < e.opts.Cooldown {
+		return nil
+	}
+
+	score := 0
+	for _, en := range st.entries {
+		score += en.weight
+	}
+	if score < e.opts.Threshold {
+		return nil
+	}
+
+	contribs := make([]Contributor, 0, len(st.entries))
+	for _, en := range st.entries {
+		contribs = append(contribs, Contributor{RuleID: en.rid, Weight: en.weight, At: en.at, Reason: en.reason})
+	}
+	sort.SliceStable(contribs, func(i, j int) bool { return contribs[i].At.Before(contribs[j].At) })
+	st.hasFired = true
+	st.firedAt = s.At
+	return &Verdict{LineageRoot: root, Score: score, Contributors: contribs, At: s.At}
+}
+
+// Reset clears all state.
+func (e *Engine) Reset() { e.states = map[uint32]*lineageState{} }
