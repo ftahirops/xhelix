@@ -203,18 +203,11 @@ func (a *Aggregator) Observe(e model.Event) {
 		pw.Children[e.Comm]++
 	}
 
-	// Network endpoint: any tag with dst_ip + dst_port.
-	if dst := e.Tags["dst_ip"]; dst != "" {
-		if cidr := cidr16(dst); cidr != "" {
-			port := uint16(0)
-			if p := e.Tags["dst_port"]; p != "" {
-				if n, err := strconv.Atoi(p); err == nil && n > 0 && n < 65536 {
-					port = uint16(n)
-				}
-			}
-			ek := cidr + ":" + strconv.Itoa(int(port))
-			w.Endpoints[ek]++
-		}
+	// Network endpoint: any tag with dst_ip + dst_port. Built via the
+	// exported EndpointKey so the agent's verdict-router lookup key and
+	// the uploaded key can never drift.
+	if ek := EndpointKey(e.Tags["dst_ip"], e.Tags["dst_port"]); ek != "" {
+		w.Endpoints[ek]++
 	}
 
 	// File writes: any FIM event with path.
@@ -376,10 +369,10 @@ func topNStr(m map[string]uint64, n int) map[string]uint64 {
 	return out
 }
 
-// cidr16 reduces an IPv4 address to its /16 prefix string. IPv6 maps
+// CIDR16 reduces an IPv4 address to its /16 prefix string. IPv6 maps
 // to a /48. Returns "" on parse failure or for loopback/link-local
 // (which aren't useful in fleet baselines).
-func cidr16(ipStr string) string {
+func CIDR16(ipStr string) string {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return ""
@@ -393,6 +386,25 @@ func cidr16(ipStr string) string {
 	}
 	mask := net.CIDRMask(48, 128)
 	return (&net.IPNet{IP: ip.Mask(mask), Mask: mask}).String()
+}
+
+// EndpointKey builds the cohort endpoint key the aggregator uploads and
+// the hub stores in RareEndpoint.Endpoint: "<cidr16>:<port>". Returns ""
+// when the IP is not a routable unicast address (loopback/link-local/
+// unspecified) — callers skip fleet lookups for those. Single source of
+// truth shared with the verdict router so lookup keys always match.
+func EndpointKey(dstIP, dstPort string) string {
+	cidr := CIDR16(dstIP)
+	if cidr == "" {
+		return ""
+	}
+	port := 0
+	if dstPort != "" {
+		if n, err := strconv.Atoi(dstPort); err == nil && n > 0 && n < 65536 {
+			port = n
+		}
+	}
+	return cidr + ":" + strconv.Itoa(port)
 }
 
 func tagOr(e model.Event, keys ...string) string {

@@ -64,6 +64,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/vhostcorr"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/execguard"
+	"github.com/xhelix/xhelix/pkg/fleetrarity"
 	"github.com/xhelix/xhelix/pkg/forensic"
 	"github.com/xhelix/xhelix/pkg/geoip"
 	"github.com/xhelix/xhelix/pkg/idlehint"
@@ -1387,6 +1388,16 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			return anc[len(anc)-1].PID
 		},
 	})
+	var fleetClient fleetrarity.Provider
+	if cfg.Detection.FleetRarity && cfg.Baseline.Hub.URL != "" {
+		fleetClient = fleetrarity.NewClient(fleetrarity.Config{
+			HubURL:    cfg.Baseline.Hub.URL,
+			AuthToken: cfg.Baseline.Hub.AuthToken,
+			MinCohort: cfg.Detection.FleetMinCohort,
+			Insecure:  cfg.Baseline.Hub.TLSInsecureSkipVerify,
+		})
+		log.Info("fleet rarity enabled", "hub", cfg.Baseline.Hub.URL, "min_cohort", cfg.Detection.FleetMinCohort)
+	}
 	mode := cfg.Detection.AlertMode
 	bus.SetRouter(func(a model.Alert) (bool, *model.Alert) {
 		if mode == "detection" {
@@ -1398,10 +1409,16 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		case model.CategoryFact:
 			return false, nil
 		default: // incident, weak_signal
+			w := lineagescore.SensitivityBoost(catResolver.Weight(a.RuleID), a.Event.Tags)
+			if fleetClient != nil {
+				if ep := baseline.EndpointKey(a.Event.Tags["dst_ip"], a.Event.Tags["dst_port"]); ep != "" {
+					w = fleetrarity.FleetWeightAdjust(w, fleetClient.Lookup(binaryOfEvent(a.Event), ep))
+				}
+			}
 			v := lineageEng.Observe(lineagescore.Signal{
 				PID:    a.Event.PID,
 				RuleID: a.RuleID,
-				Weight: lineagescore.SensitivityBoost(catResolver.Weight(a.RuleID), a.Event.Tags),
+				Weight: w,
 				At:     a.Event.Time,
 				Reason: a.Reason,
 			})
@@ -3795,6 +3812,17 @@ func tryDecodeKey(raw []byte) []byte {
 // synthVerdictAlert builds the synthesized verdict.incident alert emitted
 // when a process lineage crosses the score threshold. It carries the
 // triggering event and a human-readable chain of contributing signals.
+// binaryOfEvent derives the binary identity for fleet-rarity lookups —
+// Image when present, else Comm. Mirrors the baseline aggregator's window
+// binary derivation (firstNonEmpty(Image, Comm)) so the agent's Lookup
+// binary matches the binary the aggregator uploaded.
+func binaryOfEvent(ev model.Event) string {
+	if ev.Image != "" {
+		return ev.Image
+	}
+	return ev.Comm
+}
+
 func synthVerdictAlert(trigger model.Alert, v *lineagescore.Verdict) *model.Alert {
 	parts := make([]string, 0, len(v.Contributors))
 	for _, c := range v.Contributors {

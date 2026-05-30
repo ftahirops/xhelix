@@ -184,8 +184,8 @@ func TestCidr16(t *testing.T) {
 		"2001:db8::1":    "2001:db8::/48",
 	}
 	for in, want := range cases {
-		if got := cidr16(in); got != want {
-			t.Errorf("cidr16(%q) = %q, want %q", in, got, want)
+		if got := CIDR16(in); got != want {
+			t.Errorf("CIDR16(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -266,5 +266,20 @@ func TestStorePushDropsWhenFull(t *testing.T) {
 	}
 	if s.Stats().Dropped == 0 {
 		t.Errorf("expected drops on full queue, got 0")
+	}
+}
+
+func TestEndpointKey_MatchesAggregatorFormat(t *testing.T) {
+	// /16 fold of 203.0.113.7 is 203.0.0.0/16 (matches TestCidr16 +
+	// what the aggregator uploads). The spec's example string used the
+	// /24 octet; the actual /16 mask zeroes the third octet.
+	if got := EndpointKey("203.0.113.7", "443"); got != "203.0.0.0/16:443" {
+		t.Fatalf("got %q want 203.0.0.0/16:443", got)
+	}
+	if got := EndpointKey("203.0.113.7", ""); got != "203.0.0.0/16:0" {
+		t.Fatalf("missing port → :0, got %q", got)
+	}
+	if EndpointKey("127.0.0.1", "443") != "" {
+		t.Fatal("loopback must yield empty key")
 	}
 }
