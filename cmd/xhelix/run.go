@@ -115,6 +115,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/tamperguard"
 	"github.com/xhelix/xhelix/pkg/threatintel"
 	"github.com/xhelix/xhelix/pkg/trustzone"
+	"github.com/xhelix/xhelix/pkg/verdictcount"
 	"github.com/xhelix/xhelix/pkg/version"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/sensors"
@@ -854,6 +855,12 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	var dedupe *alertdedupe.Engine
 	var liveHub *liveHubT
 	var webServer *web.Server
+	// Tally verdict-engine outcomes by tier; the verdict router (installed
+	// below) records each, and the hub uploader drains it per upload into
+	// Upload.VerdictSummary so the hub trust ranker can gate critical hosts.
+	// Declared here so both the uploader (inside cfg.Baseline.Enabled) and
+	// the router (further down) share the one counter.
+	verdictCounter := verdictcount.New()
 	if cfg.Baseline.Enabled {
 		ignore := map[string]bool{}
 		for _, b := range cfg.Baseline.IgnoreBinaries {
@@ -950,6 +957,13 @@ func runDaemon(parent context.Context, cfgPath string) error {
 					TLSInsecureSkipVerify: cfg.Baseline.Hub.TLSInsecureSkipVerify,
 					Logger:                log,
 					CohortFn:              func() baseline.CohortTags { return cohortSnapshot },
+					VerdictFn: func() *baseline.VerdictSummary {
+						cr, h, tot := verdictCounter.Drain()
+						if tot == 0 {
+							return nil // nothing to report → omit field
+						}
+						return &baseline.VerdictSummary{Critical: cr, High: h, Total: tot}
+					},
 				})
 				if err != nil {
 					log.Warn("baseline uploader init failed", "err", err)
@@ -1425,6 +1439,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			if v == nil {
 				return false, nil // not enough evidence yet
 			}
+			verdictCounter.Record(v.Tier)
 			return false, synthVerdictAlert(a, v)
 		}
 	})

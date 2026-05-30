@@ -25,9 +25,9 @@ import (
 // definition to avoid importing the hub package — keeps the agent's
 // build graph small).
 type Uploader struct {
-	cfg      UploaderConfig
-	log      *slog.Logger
-	client   *http.Client
+	cfg    UploaderConfig
+	log    *slog.Logger
+	client *http.Client
 
 	mu       sync.Mutex
 	queueDir string
@@ -57,6 +57,26 @@ type UploaderConfig struct {
 	// rather than a static value so operators can hot-reload
 	// fleet_cohort config without restarting the agent.
 	CohortFn func() CohortTags
+	// VerdictFn, if set, is drained per upload to populate
+	// Upload.VerdictSummary (counts since the last upload). Closure form
+	// mirrors CohortFn for hot-reload-free wiring. Returning nil omits
+	// the field. NOTE: the closure is expected to RESET (drain) its
+	// source counter on each call, so it is invoked exactly once per
+	// envelope build (see Push / uploadOnce). The drained counts then
+	// travel with that envelope — including into the on-disk retry queue
+	// if the POST fails — so a failed-then-retried upload does not lose
+	// or double-count verdicts.
+	VerdictFn func() *VerdictSummary
+}
+
+// VerdictSummary mirrors baselinehub.VerdictSummary. Duplicated here to
+// keep pkg/baseline → pkg/baselinehub import-cycle-free (same rationale
+// as CohortTags). JSON tags match the canonical type so the wire format
+// is identical. Kept in lockstep with pkg/baselinehub/types.go.
+type VerdictSummary struct {
+	Critical int `json:"critical"`
+	High     int `json:"high"`
+	Total    int `json:"total"`
 }
 
 // CohortTags mirrors baselinehub.CohortTags. Duplicated here to keep
@@ -77,12 +97,13 @@ type CohortTags struct {
 // uploadEnvelope mirrors baselinehub.Upload. Defined locally to keep
 // pkg/baseline independent of pkg/baselinehub.
 type uploadEnvelope struct {
-	HostTag    string     `json:"host_tag"`
-	RoleTag    string     `json:"role_tag,omitempty"`
-	XhelixVer  string     `json:"xhelix_ver,omitempty"`
-	UploadedAt time.Time  `json:"uploaded_at"`
-	Cohort     CohortTags `json:"cohort,omitempty"`
-	Windows    []*Window  `json:"windows"`
+	HostTag        string          `json:"host_tag"`
+	RoleTag        string          `json:"role_tag,omitempty"`
+	XhelixVer      string          `json:"xhelix_ver,omitempty"`
+	UploadedAt     time.Time       `json:"uploaded_at"`
+	Cohort         CohortTags      `json:"cohort,omitempty"`
+	VerdictSummary *VerdictSummary `json:"verdict_summary,omitempty"`
+	Windows        []*Window       `json:"windows"`
 }
 
 // NewUploader returns an unstarted uploader. Call Start() with the
@@ -113,7 +134,7 @@ func NewUploader(cfg UploaderConfig) (*Uploader, error) {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: tlsCfg,
+				TLSClientConfig:   tlsCfg,
 				DisableKeepAlives: false,
 			},
 		},
@@ -139,6 +160,12 @@ func (u *Uploader) Push(windows []*Window) error {
 		UploadedAt: time.Now().UTC(),
 		Cohort:     u.cohort(),
 		Windows:    windows,
+	}
+	// Drain the verdict tally into this envelope exactly once. The counts
+	// now travel with this batch into the retry queue, so a failed POST
+	// still preserves them.
+	if u.cfg.VerdictFn != nil {
+		env.VerdictSummary = u.cfg.VerdictFn()
 	}
 	body, err := json.Marshal(env)
 	if err != nil {
@@ -236,6 +263,10 @@ func (u *Uploader) uploadOnce(windows []*Window) {
 		Cohort:     u.cohort(),
 		Windows:    windows,
 	}
+	// Same drain-once semantics as Push (no-queue path).
+	if u.cfg.VerdictFn != nil {
+		env.VerdictSummary = u.cfg.VerdictFn()
+	}
 	body, err := json.Marshal(env)
 	if err != nil {
 		u.stats.failed.Add(1)
@@ -285,11 +316,11 @@ func (u *Uploader) send(ctx context.Context, body []byte) error {
 // RareEndpoint mirrors baselinehub.RareEndpoint locally so this
 // package doesn't import the hub package.
 type RareEndpoint struct {
-	Binary    string  `json:"binary"`
-	Endpoint  string  `json:"endpoint"`
-	HostsSeen int     `json:"hosts_seen"`
-	TotalHosts int    `json:"total_hosts"`
-	Rarity    float64 `json:"rarity"`
+	Binary     string  `json:"binary"`
+	Endpoint   string  `json:"endpoint"`
+	HostsSeen  int     `json:"hosts_seen"`
+	TotalHosts int     `json:"total_hosts"`
+	Rarity     float64 `json:"rarity"`
 }
 
 // rareListResp matches baselinehub.RareList for unmarshalling.
@@ -352,10 +383,10 @@ func urlQueryEscape(s string) string {
 
 // Stats reports uploader counters.
 type UploaderStats struct {
-	Queued   uint64
-	Uploaded uint64
-	Failed   uint64
-	Bytes    uint64
+	Queued       uint64
+	Uploaded     uint64
+	Failed       uint64
+	Bytes        uint64
 	QueuedOnDisk int
 }
 
