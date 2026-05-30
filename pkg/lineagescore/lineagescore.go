@@ -56,10 +56,26 @@ type entry struct {
 }
 
 type lineageState struct {
-	entries  []entry
-	firedAt  time.Time
-	hasFired bool
+	entries   []entry
+	firedAt   time.Time
+	firedTier string
+	hasFired  bool
 }
+
+// tierRank orders tiers for escalation comparison.
+func tierRank(t string) int {
+	switch t {
+	case "watch":
+		return 1
+	case "high":
+		return 2
+	case "critical":
+		return 3
+	}
+	return 0
+}
+
+func tierHigher(a, b string) bool { return tierRank(a) > tierRank(b) }
 
 // Engine is the per-lineage score accumulator.
 //
@@ -113,15 +129,20 @@ func (e *Engine) Observe(s Signal) *Verdict {
 	}
 	st.entries = append(kept, entry{rid: s.RuleID, weight: s.Weight, at: s.At, reason: s.Reason})
 
-	if st.hasFired && s.At.Sub(st.firedAt) < e.opts.Cooldown {
-		return nil
-	}
-
 	score := 0
 	for _, en := range st.entries {
 		score += en.weight
 	}
 	if score < e.opts.Threshold {
+		return nil
+	}
+
+	// Suppress within the cooldown window only when the tier has NOT
+	// risen above the last fired tier. A tier escalation (e.g.
+	// high->critical) re-emits even within cooldown so incident response
+	// sees the worse verdict instead of the first crossing masking it.
+	newTier := Tier(score)
+	if st.hasFired && s.At.Sub(st.firedAt) < e.opts.Cooldown && !tierHigher(newTier, st.firedTier) {
 		return nil
 	}
 
@@ -132,7 +153,8 @@ func (e *Engine) Observe(s Signal) *Verdict {
 	sort.SliceStable(contribs, func(i, j int) bool { return contribs[i].At.Before(contribs[j].At) })
 	st.hasFired = true
 	st.firedAt = s.At
-	return &Verdict{LineageRoot: root, Score: score, Tier: Tier(score), Contributors: contribs, At: s.At}
+	st.firedTier = newTier
+	return &Verdict{LineageRoot: root, Score: score, Tier: newTier, Contributors: contribs, At: s.At}
 }
 
 // Reset clears all state.
