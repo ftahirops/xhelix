@@ -117,6 +117,91 @@ func TestRareEndpoint(t *testing.T) {
 	}
 }
 
+func TestHandleRare_CleanPeerFilter(t *testing.T) {
+	// hostA, hostB share a common endpoint; hostEvil is the sole owner
+	// of a rare endpoint. With clean-peer filtering ON and hostEvil
+	// untrusted, the evil endpoint must vanish and TotalHosts drop to 2.
+	t0 := time.Now().UTC().Truncate(time.Hour)
+	common := map[string]uint64{"10.0.0.0/16:80": 1}
+	seed := func(st *Store) {
+		_ = st.IngestUpload(Upload{HostTag: "hostA", Windows: []*baseline.Window{{
+			Binary: "nginx", Hour: t0, Endpoints: common,
+		}}})
+		_ = st.IngestUpload(Upload{HostTag: "hostB", Windows: []*baseline.Window{{
+			Binary: "nginx", Hour: t0, Endpoints: common,
+		}}})
+		_ = st.IngestUpload(Upload{HostTag: "hostEvil", Windows: []*baseline.Window{{
+			Binary: "nginx", Hour: t0, Endpoints: map[string]uint64{
+				"10.0.0.0/16:80":     1,
+				"198.51.100.0/16:80": 1, // rare, only on evil host
+			},
+		}}})
+	}
+
+	hasEvil := func(r *RareList) bool {
+		for _, e := range r.Rare {
+			if strings.Contains(e.Endpoint, "198.51.100") {
+				return true
+			}
+		}
+		return false
+	}
+
+	doRare := func(s *Server) *RareList {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/api/rare/?binary=nginx&rarity_cutoff=0.5", nil)
+		rec := httptest.NewRecorder()
+		s.handleRare(rec, req)
+		if rec.Code != 200 {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var r RareList
+		if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return &r
+	}
+
+	canTeach := func(h string) bool { return h != "hostEvil" }
+
+	// Flag ON → evil host excluded.
+	stOn, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed(stOn)
+	srvOn := NewServer(ServerConfig{
+		Store:           stOn,
+		CleanPeerRarity: true,
+		CanTeach:        canTeach,
+	})
+	rOn := doRare(srvOn)
+	if rOn.TotalHosts != 2 {
+		t.Errorf("flag ON: TotalHosts = %d, want 2", rOn.TotalHosts)
+	}
+	if hasEvil(rOn) {
+		t.Errorf("flag ON: evil endpoint should be absent: %+v", rOn.Rare)
+	}
+
+	// Flag OFF (default) → all hosts, evil endpoint present.
+	stOff, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed(stOff)
+	srvOff := NewServer(ServerConfig{
+		Store:    stOff,
+		CanTeach: canTeach, // present but ignored when flag is off
+	})
+	rOff := doRare(srvOff)
+	if rOff.TotalHosts != 3 {
+		t.Errorf("flag OFF: TotalHosts = %d, want 3", rOff.TotalHosts)
+	}
+	if !hasEvil(rOff) {
+		t.Errorf("flag OFF: evil endpoint should be present: %+v", rOff.Rare)
+	}
+}
+
 func TestRateLimitTrips(t *testing.T) {
 	// We don't synthesize 50 MB just to flip the cap. Instead just
 	// confirm the per-host bucket increments and that the same

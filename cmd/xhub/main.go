@@ -74,12 +74,13 @@ func newRunCmd() *cobra.Command {
 		certFile     string
 		keyFile      string
 		devInsecure  bool
+		cleanPeerRarity bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the xhub HTTP(S) server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runHub(bind, dataDir, tokenFile, certFile, keyFile, devInsecure)
+			return runHub(bind, dataDir, tokenFile, certFile, keyFile, devInsecure, cleanPeerRarity)
 		},
 	}
 	cmd.Flags().StringVar(&bind, "bind", "127.0.0.1:18444", "HTTP(S) listen address")
@@ -90,10 +91,12 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&keyFile, "tls-key", "", "TLS key path")
 	cmd.Flags().BoolVar(&devInsecure, "dev-insecure", false,
 		"Allow auth-disabled and/or plaintext HTTP — DEV ONLY. xhub refuses to start without this flag if either auth or TLS is missing.")
+	cmd.Flags().BoolVar(&cleanPeerRarity, "clean-peer-rarity", false,
+		"compute /api/rare over only trusted (clean, established) peers")
 	return cmd
 }
 
-func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool) error {
+func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure, cleanPeerRarity bool) error {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	log.Info("xhub starting", "version", version.Version,
 		"commit", version.Commit, "bind", bind, "data", dataDir)
@@ -164,9 +167,11 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool
 		"file", filepath.Join(dataDir, trustFileName))
 
 	srv := baselinehub.NewServer(baselinehub.ServerConfig{
-		Store:     store,
-		AuthToken: token,
-		Logger:    log,
+		Store:           store,
+		AuthToken:       token,
+		Logger:          log,
+		CleanPeerRarity: cleanPeerRarity,
+		CanTeach:        engine.Trust().CanTeach,
 		OnUpload: func(u baselinehub.Upload) {
 			engine.Ingest(u, time.Now())
 			// Persist trust after each ingest. Upload volume is low, so

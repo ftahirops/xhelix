@@ -22,6 +22,12 @@ type Server struct {
 	authToken  string  // empty disables auth (dev only)
 	log        *slog.Logger
 	onUpload   func(Upload) // optional post-ingest hook (fleet engine)
+
+	// cleanPeerRarity, when set, makes /api/rare compute cohort rarity
+	// over only trusted ("clean") peers — those for which canTeach
+	// returns true. Default off = all hosts (non-breaking).
+	cleanPeerRarity bool
+	canTeach        func(hostTag string) bool
 	rateMu     sync.Mutex
 	rateBucket map[string]int     // host_tag → bytes posted this minute
 	rateWindow time.Time
@@ -46,6 +52,13 @@ type ServerConfig struct {
 	// ingest. Used by the fleet engine to feed the rarity/trust subsystems
 	// without coupling baselinehub to xhubfleet.
 	OnUpload func(Upload)
+	// CleanPeerRarity, when true, restricts /api/rare to trusted peers
+	// (those for which CanTeach returns true), so a compromised peer no
+	// longer dilutes cohort rarity. Default false = all hosts.
+	CleanPeerRarity bool
+	// CanTeach is the trust predicate (e.g. the fleet engine's ranker).
+	// Only consulted when CleanPeerRarity is true and CanTeach is non-nil.
+	CanTeach func(hostTag string) bool
 }
 
 // NewServer builds an HTTP handler graph from the config.
@@ -54,11 +67,13 @@ func NewServer(cfg ServerConfig) *Server {
 		cfg.Logger = slog.Default()
 	}
 	return &Server{
-		store:      cfg.Store,
-		authToken:  cfg.AuthToken,
-		log:        cfg.Logger,
-		onUpload:   cfg.OnUpload,
-		rateBucket: map[string]int{},
+		store:           cfg.Store,
+		authToken:       cfg.AuthToken,
+		log:             cfg.Logger,
+		onUpload:        cfg.OnUpload,
+		cleanPeerRarity: cfg.CleanPeerRarity,
+		canTeach:        cfg.CanTeach,
+		rateBucket:      map[string]int{},
 		rateWindow: time.Now(),
 		cache:      map[string]*cachedRare{},
 	}
@@ -195,7 +210,13 @@ func (s *Server) handleRare(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cacheMu.Unlock()
 
-	res, err := s.store.ComputeRare(binary, lookback, cutoff)
+	var res *RareList
+	var err error
+	if s.cleanPeerRarity && s.canTeach != nil {
+		res, err = s.store.ComputeRareFiltered(binary, lookback, cutoff, s.canTeach)
+	} else {
+		res, err = s.store.ComputeRare(binary, lookback, cutoff)
+	}
 	if err != nil {
 		http.Error(w, "compute rare: "+err.Error(), http.StatusInternalServerError)
 		return
