@@ -185,6 +185,13 @@ deb: build rules-lint
 	mkdir -p packaging/deb/usr/share/xhelix/ruleset
 	cp -a ruleset/core packaging/deb/usr/share/xhelix/ruleset/
 	cp -a ruleset/dlcf packaging/deb/usr/share/xhelix/ruleset/
+	# runtime_categories.yaml maps code-emitted rule_ids (cap.gained,
+	# brp.hard_deny, ...) to verdict categories. The daemon loads it from
+	# <ruleset>/runtime_categories.yaml (one level up from core/). Without
+	# it the alert-bus category gate sees 0 runtime classifications and
+	# every code-emitted alert falls to the weak_signal default — observed
+	# as classified_rules=0 on a binary-only deploy (2026-05-30).
+	cp -a ruleset/runtime_categories.yaml packaging/deb/usr/share/xhelix/ruleset/
 	# Optional: include compiled eBPF programs if present.
 	@if [ -f sensors/ebpf/progs/xhelix-progs.o ]; then \
 	  mkdir -p packaging/deb/usr/lib/xhelix; \
