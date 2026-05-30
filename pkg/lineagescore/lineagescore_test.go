@@ -108,3 +108,26 @@ func TestEngine_ConcurrentObserve_NoRace(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestVerdict_HasTier(t *testing.T) {
+	now := time.Unix(1000, 0)
+	e := New(Opts{Threshold: 80, Window: time.Hour, LineageOf: fixedLineage(1)})
+	e.Observe(Signal{PID: 5, RuleID: "a", Weight: 70, At: now})
+	v := e.Observe(Signal{PID: 5, RuleID: "b", Weight: 70, At: now}) // cum 140 -> critical
+	if v == nil {
+		t.Fatal("should emit")
+	}
+	if v.Tier != "critical" {
+		t.Fatalf("score %d must be tier critical, got %q", v.Score, v.Tier)
+	}
+}
+
+func TestVerdict_TierHigh(t *testing.T) {
+	now := time.Unix(1000, 0)
+	e := New(Opts{Threshold: 80, Window: time.Hour, LineageOf: fixedLineage(1)})
+	e.Observe(Signal{PID: 5, RuleID: "a", Weight: 50, At: now})
+	v := e.Observe(Signal{PID: 5, RuleID: "b", Weight: 50, At: now}) // cum 100 -> high
+	if v == nil || v.Tier != "high" {
+		t.Fatalf("score 100 must be tier high, got %+v", v)
+	}
+}

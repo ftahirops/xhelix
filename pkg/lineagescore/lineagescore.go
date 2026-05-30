@@ -35,6 +35,7 @@ type Contributor struct {
 type Verdict struct {
 	LineageRoot  uint32
 	Score        int
+	Tier         string
 	Contributors []Contributor
 	At           time.Time
 }
@@ -131,7 +132,7 @@ func (e *Engine) Observe(s Signal) *Verdict {
 	sort.SliceStable(contribs, func(i, j int) bool { return contribs[i].At.Before(contribs[j].At) })
 	st.hasFired = true
 	st.firedAt = s.At
-	return &Verdict{LineageRoot: root, Score: score, Contributors: contribs, At: s.At}
+	return &Verdict{LineageRoot: root, Score: score, Tier: Tier(score), Contributors: contribs, At: s.At}
 }
 
 // Reset clears all state.
