@@ -21,13 +21,23 @@ import (
 // HostTag is the stable host identity; cohort fields enable peer-group
 // comparison (so a mail server isn't compared to a database server).
 type Upload struct {
-	HostTag    string             `json:"host_tag"`
-	RoleTag    string             `json:"role_tag,omitempty"`
-	HostnameOS string             `json:"hostname_os,omitempty"`
-	XhelixVer  string             `json:"xhelix_ver,omitempty"`
-	UploadedAt time.Time          `json:"uploaded_at"`
-	Cohort     CohortTags         `json:"cohort,omitempty"`
-	Windows    []*baseline.Window `json:"windows"`
+	HostTag        string             `json:"host_tag"`
+	RoleTag        string             `json:"role_tag,omitempty"`
+	HostnameOS     string             `json:"hostname_os,omitempty"`
+	XhelixVer      string             `json:"xhelix_ver,omitempty"`
+	UploadedAt     time.Time          `json:"uploaded_at"`
+	Cohort         CohortTags         `json:"cohort,omitempty"`
+	Windows        []*baseline.Window `json:"windows"`
+	VerdictSummary *VerdictSummary    `json:"verdict_summary,omitempty"`
+}
+
+// VerdictSummary is an optional per-upload report of the agent's recent
+// verdict-engine outcomes, used by the hub's trust ranker to gate which
+// hosts may teach cohort rarity. Absent (nil) on agents that don't report.
+type VerdictSummary struct {
+	Critical int `json:"critical"`
+	High     int `json:"high"`
+	Total    int `json:"total"`
 }
 
 // CohortTags identify the peer group this host belongs to. Two hosts
@@ -40,30 +50,30 @@ type CohortTags struct {
 	OSFamily      string `json:"os_family,omitempty"`      // "debian12" | "ubuntu22.04"
 	PackageOrigin string `json:"package_origin,omitempty"` // "apt" | "rpm" | "source" | "container"
 	VersionFamily string `json:"version_family,omitempty"` // "nginx-1.24.x"
-	Environment  string  `json:"environment,omitempty"`    // "prod" | "staging" | "dev"
-	ControlPanel string  `json:"control_panel,omitempty"`  // "plesk" | "cpanel" | "directadmin" | "none"
-	NetworkZone  string  `json:"network_zone,omitempty"`   // "public-web" | "internal-db" | "admin"
-	Tenant       string  `json:"tenant,omitempty"`         // optional per-customer tag
+	Environment   string `json:"environment,omitempty"`    // "prod" | "staging" | "dev"
+	ControlPanel  string `json:"control_panel,omitempty"`  // "plesk" | "cpanel" | "directadmin" | "none"
+	NetworkZone   string `json:"network_zone,omitempty"`   // "public-web" | "internal-db" | "admin"
+	Tenant        string `json:"tenant,omitempty"`         // optional per-customer tag
 }
 
 // IngestStats reports counters surfaced by GET /api/stats.
 type IngestStats struct {
-	UploadsTotal  uint64    `json:"uploads_total"`
-	WindowsTotal  uint64    `json:"windows_total"`
-	BytesTotal    uint64    `json:"bytes_total"`
-	UniqueHosts   int       `json:"unique_hosts"`
-	UniqueBinaries int      `json:"unique_binaries"`
-	OldestWindow  time.Time `json:"oldest_window"`
-	NewestWindow  time.Time `json:"newest_window"`
+	UploadsTotal   uint64    `json:"uploads_total"`
+	WindowsTotal   uint64    `json:"windows_total"`
+	BytesTotal     uint64    `json:"bytes_total"`
+	UniqueHosts    int       `json:"unique_hosts"`
+	UniqueBinaries int       `json:"unique_binaries"`
+	OldestWindow   time.Time `json:"oldest_window"`
+	NewestWindow   time.Time `json:"newest_window"`
 }
 
 // RareEndpoint is one cross-fleet aggregate row.
 type RareEndpoint struct {
-	Binary   string `json:"binary"`
-	Endpoint string `json:"endpoint"` // "203.0.113.0/16:443"
-	HostsSeen int   `json:"hosts_seen"`
-	TotalHosts int  `json:"total_hosts"`
-	Rarity    float64 `json:"rarity"` // 1.0 - hosts_seen/total_hosts
+	Binary     string  `json:"binary"`
+	Endpoint   string  `json:"endpoint"` // "203.0.113.0/16:443"
+	HostsSeen  int     `json:"hosts_seen"`
+	TotalHosts int     `json:"total_hosts"`
+	Rarity     float64 `json:"rarity"` // 1.0 - hosts_seen/total_hosts
 }
 
 // RareList is what GET /api/rare/<binary> returns. Agents pull this
@@ -72,9 +82,9 @@ type RareEndpoint struct {
 // elevated to higher severity (statistical confidence from the fleet
 // view).
 type RareList struct {
-	Binary    string         `json:"binary"`
-	GeneratedAt time.Time    `json:"generated_at"`
-	TotalHosts int           `json:"total_hosts"`
-	RarityCutoff float64     `json:"rarity_cutoff"` // entries returned have rarity >= this
-	Rare      []RareEndpoint `json:"rare"`
+	Binary       string         `json:"binary"`
+	GeneratedAt  time.Time      `json:"generated_at"`
+	TotalHosts   int            `json:"total_hosts"`
+	RarityCutoff float64        `json:"rarity_cutoff"` // entries returned have rarity >= this
+	Rare         []RareEndpoint `json:"rare"`
 }

@@ -48,6 +48,15 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 func (e *Engine) Ingest(u baselinehub.Upload, now time.Time) {
 	e.trust.See(u.HostTag, now)
 	e.trust.Evaluate(u.HostTag, now)
+	if u.VerdictSummary != nil {
+		for i := 0; i < u.VerdictSummary.Critical; i++ {
+			e.trust.RecordAlert(u.HostTag, "critical", now)
+		}
+		for i := 0; i < u.VerdictSummary.High; i++ {
+			e.trust.RecordAlert(u.HostTag, "high", now)
+		}
+		e.trust.Evaluate(u.HostTag, now)
+	}
 	if e.trust.CanTeach(u.HostTag) {
 		e.rarity.Ingest(u)
 	}
