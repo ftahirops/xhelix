@@ -156,6 +156,17 @@ func (t *TrustRanker) All() []HostRecord {
 	return out
 }
 
+// Restore replaces the ranker's host records (used to reload persisted
+// trust state on hub startup). Records are adopted as-is.
+func (t *TrustRanker) Restore(records []HostRecord) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := range records {
+		r := records[i]
+		t.hosts[r.HostTag] = &r
+	}
+}
+
 // DecayAlerts halves the AlertCount24h on every tick (call hourly).
 // Simple decay rather than a sliding window — accurate enough for trust gating.
 func (t *TrustRanker) DecayAlerts() {

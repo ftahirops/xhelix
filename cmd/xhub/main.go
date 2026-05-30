@@ -156,12 +156,25 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool
 	}
 	log.Info("fleet engine initialized", "publisher_dir", filepath.Join(dataDir, "brp-feed"))
 
+	// Reload persisted per-host trust state (missing file = first run).
+	if err := loadTrust(dataDir, engine.Trust()); err != nil {
+		return fmt.Errorf("load trust state: %w", err)
+	}
+	log.Info("trust state loaded", "hosts", len(engine.Trust().All()),
+		"file", filepath.Join(dataDir, trustFileName))
+
 	srv := baselinehub.NewServer(baselinehub.ServerConfig{
 		Store:     store,
 		AuthToken: token,
 		Logger:    log,
 		OnUpload: func(u baselinehub.Upload) {
 			engine.Ingest(u, time.Now())
+			// Persist trust after each ingest. Upload volume is low, so
+			// on-each-ingest is simpler than a timer and loses nothing on
+			// crash. Best-effort: a save failure must not drop the upload.
+			if err := saveTrust(dataDir, engine.Trust()); err != nil {
+				log.Warn("hub: trust persist failed", "err", err)
+			}
 		},
 	})
 
@@ -221,6 +234,9 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool
 	stopCtx, stopCancel := contextWithTimeout(time.Minute)
 	defer stopCancel()
 	_ = httpsSrv.Shutdown(stopCtx)
+	if err := saveTrust(dataDir, engine.Trust()); err != nil {
+		log.Warn("hub: trust persist on shutdown failed", "err", err)
+	}
 	log.Info("xhub stopped")
 	_ = filepath.Join // keep filepath import live for future config-discovery code
 	return nil
