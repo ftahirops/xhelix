@@ -122,3 +122,24 @@ func TestResolver_Known(t *testing.T) {
 		t.Fatal("unclassified rule must not be Known (it falls back to weak_signal default)")
 	}
 }
+
+func TestResolver_Weight(t *testing.T) {
+	r := NewResolver()
+	r.AddRules([]model.Rule{
+		{ID: "inc", CategoryRaw: "incident", Category: model.CategoryIncident},
+		{ID: "heavy", CategoryRaw: "incident", Category: model.CategoryIncident, Weight: 70},
+		{ID: "fact1", CategoryRaw: "fact", Category: model.CategoryFact},
+	})
+	if got := r.Weight("inc"); got != 50 {
+		t.Fatalf("incident default: got %d want 50", got)
+	}
+	if got := r.Weight("heavy"); got != 70 {
+		t.Fatalf("override: got %d want 70", got)
+	}
+	if got := r.Weight("fact1"); got != 0 {
+		t.Fatalf("fact: got %d want 0", got)
+	}
+	if got := r.Weight("unknown"); got != 20 {
+		t.Fatalf("unknown→weak_signal weight: got %d want 20", got)
+	}
+}

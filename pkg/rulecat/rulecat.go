@@ -14,14 +14,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Resolver maps rule_id -> Category.
+// Resolver maps rule_id -> Category (and its evidence weight).
 type Resolver struct {
-	cats map[string]model.Category
+	cats    map[string]model.Category
+	weights map[string]int
 }
 
 // NewResolver returns an empty resolver.
 func NewResolver() *Resolver {
-	return &Resolver{cats: make(map[string]model.Category)}
+	return &Resolver{
+		cats:    make(map[string]model.Category),
+		weights: make(map[string]int),
+	}
 }
 
 // AddRules merges the categories of the supplied YAML rules.
@@ -33,6 +37,7 @@ func (r *Resolver) AddRules(rules []model.Rule) {
 			continue
 		}
 		r.cats[rule.ID] = rule.Category
+		r.weights[rule.ID] = rule.EffectiveWeight()
 	}
 }
 
@@ -59,6 +64,7 @@ func (r *Resolver) AddRuntimeFile(path string) error {
 			return fmt.Errorf("rulecat: %s: rule %q has invalid category %q", path, id, raw)
 		}
 		r.cats[id] = cat
+		r.weights[id] = model.DefaultWeight(cat)
 	}
 	return nil
 }
@@ -70,6 +76,16 @@ func (r *Resolver) Category(ruleID string) model.Category {
 		return c
 	}
 	return model.CategoryWeakSignal
+}
+
+// Weight returns the evidence weight for ruleID: the rule's effective
+// weight if classified, else the weak_signal default (the same default
+// Category() falls back to). Used by the verdict engine.
+func (r *Resolver) Weight(ruleID string) int {
+	if w, ok := r.weights[ruleID]; ok {
+		return w
+	}
+	return model.DefaultWeight(model.CategoryWeakSignal)
 }
 
 // Len returns the number of classified rule_ids (for diagnostics).
