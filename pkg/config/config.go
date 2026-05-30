@@ -140,7 +140,9 @@ type Config struct {
 //	detection  — every category emits (legacy behavior). Use for
 //	             trace-replay regression testing only.
 type DetectionConfig struct {
-	AlertMode string `yaml:"alert_mode"`
+	AlertMode      string `yaml:"alert_mode"`
+	FleetRarity    bool   `yaml:"fleet_rarity"`     // default false — fleet too small to matter by default
+	FleetMinCohort int    `yaml:"fleet_min_cohort"` // default 5
 }
 
 // normalize validates and defaults the detection config. Empty AlertMode
@@ -153,6 +155,9 @@ func (d *DetectionConfig) normalize() error {
 		// allowed
 	default:
 		return fmt.Errorf("detection.alert_mode: unknown %q (want visibility|detection)", d.AlertMode)
+	}
+	if d.FleetMinCohort <= 0 {
+		d.FleetMinCohort = 5
 	}
 	return nil
 }
@@ -972,7 +977,7 @@ func Default() Config {
 				GlobalPerSecond:  500,
 			},
 		},
-		Detection: DetectionConfig{AlertMode: "visibility"},
+		Detection: DetectionConfig{AlertMode: "visibility", FleetMinCohort: 5},
 	}
 }
 
