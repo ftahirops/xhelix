@@ -1,6 +1,7 @@
 package lineagescore
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -92,4 +93,18 @@ func TestEngine_CooldownExpiry_AllowsReEmit(t *testing.T) {
 	if e.Observe(Signal{PID: 5, RuleID: "c", Weight: 50, At: t0.Add(90 * time.Minute)}) == nil {
 		t.Fatal("after cooldown expiry with score still over threshold, must re-emit")
 	}
+}
+
+func TestEngine_ConcurrentObserve_NoRace(t *testing.T) {
+	now := time.Unix(1000, 0)
+	e := New(Opts{Threshold: 1000000, Window: time.Hour, LineageOf: func(p uint32) uint32 { return p }})
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			e.Observe(Signal{PID: uint32(n), RuleID: "r", Weight: 10, At: now})
+		}(i)
+	}
+	wg.Wait()
 }

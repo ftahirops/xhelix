@@ -84,3 +84,29 @@ func TestBus_NilGate_EmitsAll(t *testing.T) {
 		t.Fatal("nil gate must suppress nothing")
 	}
 }
+
+func TestBus_Router_SuppressAndSynth(t *testing.T) {
+	b := NewBus(nil, 16, nil)
+	b.SetRouter(func(a model.Alert) (bool, *model.Alert) {
+		if a.RuleID == "raw" {
+			// suppress original, emit a synthesized verdict
+			return false, &model.Alert{RuleID: "verdict.incident"}
+		}
+		return true, nil
+	})
+	// raw → suppressed (Send returns false) but synth enqueued
+	if b.Send(model.Alert{RuleID: "raw"}) {
+		t.Fatal("router suppression must return false for original")
+	}
+	if b.Suppressed() != 1 {
+		t.Fatalf("suppressed: got %d want 1", b.Suppressed())
+	}
+}
+
+func TestBus_Router_EmitOriginal(t *testing.T) {
+	b := NewBus(nil, 16, nil)
+	b.SetRouter(func(a model.Alert) (bool, *model.Alert) { return true, nil })
+	if !b.Send(model.Alert{RuleID: "x"}) {
+		t.Fatal("router emit=true must enqueue original")
+	}
+}

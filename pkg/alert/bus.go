@@ -20,6 +20,7 @@ type Bus struct {
 	dropped    atomic.Uint64
 	suppressed atomic.Uint64
 	gate       func(model.Alert) bool
+	router     func(model.Alert) (emit bool, synth *model.Alert)
 	wg         sync.WaitGroup
 	log        *slog.Logger
 }
@@ -47,6 +48,13 @@ func NewBus(sinks []model.Sink, capacity int, log *slog.Logger) *Bus {
 // everything. Safe to call once during startup before Run.
 func (b *Bus) SetGate(gate func(model.Alert) bool) { b.gate = gate }
 
+// SetRouter installs a routing function richer than SetGate: it returns
+// whether to emit the original alert AND an optional synthesized alert
+// to ALSO enqueue (e.g. a verdict.incident produced by correlating
+// several signals). The synthesized alert is enqueued directly, NOT
+// re-routed (no recursion). A router takes precedence over a gate.
+func (b *Bus) SetRouter(r func(model.Alert) (bool, *model.Alert)) { b.router = r }
+
 // Send enqueues an alert. Returns true if accepted, false if dropped.
 //
 // CRITICAL: callers continue to mutate event.Tags after this returns
@@ -56,10 +64,27 @@ func (b *Bus) SetGate(gate func(model.Alert) bool) { b.gate = gate }
 // observed crashes "fatal error: concurrent map iteration and map
 // write" during attack-sim runs on prod (2026-05-23).
 func (b *Bus) Send(a model.Alert) bool {
+	if b.router != nil {
+		emit, synth := b.router(a)
+		if synth != nil {
+			b.enqueue(*synth) // direct; never re-routed
+		}
+		if !emit {
+			b.suppressed.Add(1)
+			return false
+		}
+		return b.enqueue(a)
+	}
 	if b.gate != nil && !b.gate(a) {
 		b.suppressed.Add(1)
 		return false
 	}
+	return b.enqueue(a)
+}
+
+// enqueue snapshots tags and does the non-blocking channel send. Returns
+// true if accepted, false if dropped (queue full).
+func (b *Bus) enqueue(a model.Alert) bool {
 	if a.Event.Tags != nil {
 		snap := make(map[string]string, len(a.Event.Tags))
 		for k, v := range a.Event.Tags {

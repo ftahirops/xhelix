@@ -44,6 +44,11 @@ categories:
   brp.verify_protected_path: incident
 
   # --- hard denies (always alert; explicit policy / canary) ---
+  # verdict.incident is the synthesized alert the lineage verdict engine
+  # emits when a process lineage crosses the score threshold. It bypasses
+  # the bus router (enqueued directly), but is classified hard_deny so the
+  # replay tool and any future consumer treat it as always-emit.
+  verdict.incident: hard_deny
   brp.hard_deny: hard_deny
   egressguard.deny: hard_deny
   policy.global.deny: hard_deny

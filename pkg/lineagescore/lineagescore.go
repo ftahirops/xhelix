@@ -10,6 +10,7 @@ package lineagescore
 
 import (
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -60,7 +61,12 @@ type lineageState struct {
 }
 
 // Engine is the per-lineage score accumulator.
+//
+// The bus router calls Observe from multiple goroutines (alert.Bus.Send
+// is multi-goroutine), so Observe and Reset take mu. The scoring logic
+// itself remains deterministic given a fixed signal order.
 type Engine struct {
+	mu     sync.Mutex
 	opts   Opts
 	states map[uint32]*lineageState
 }
@@ -89,6 +95,8 @@ func (e *Engine) Observe(s Signal) *Verdict {
 	if s.Weight <= 0 {
 		return nil
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	root := e.opts.LineageOf(s.PID)
 	st := e.states[root]
 	if st == nil {
@@ -127,4 +135,8 @@ func (e *Engine) Observe(s Signal) *Verdict {
 }
 
 // Reset clears all state.
-func (e *Engine) Reset() { e.states = map[uint32]*lineageState{} }
+func (e *Engine) Reset() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.states = map[uint32]*lineageState{}
+}

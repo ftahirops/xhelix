@@ -71,6 +71,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/integrity"
 	"github.com/xhelix/xhelix/pkg/intel"
 	"github.com/xhelix/xhelix/pkg/kintegrity"
+	"github.com/xhelix/xhelix/pkg/lineagescore"
 	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/lockout"
 	"github.com/xhelix/xhelix/pkg/memscan"
@@ -1307,23 +1308,17 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 	}
 
-	// Verdict-foundation: install the category gate on the alert bus.
-	// In visibility mode (default) only hard_deny + incident categories
-	// emit; fact + weak_signal are suppressed. Covers BOTH YAML-rule
-	// alerts and runtime-emitted alerts (cap.gained, brp.hard_deny, ...)
-	// because the gate lives at the bus, the single alert chokepoint.
-	{
-		catResolver := rulecat.NewResolver()
-		catResolver.AddRules(bundledRules) // includes dlcf rules (merged above)
-		// runtime_categories.yaml lives one level up from core/.
-		runtimeCatPath := filepath.Join(bundledRulesDir, "..", "runtime_categories.yaml")
-		if err := catResolver.AddRuntimeFile(runtimeCatPath); err != nil {
-			log.Warn("rulecat: runtime categories load failed", "path", runtimeCatPath, "err", err)
-		}
-		bus.SetGate(catResolver.Gate(cfg.Detection.AlertMode))
-		log.Info("alert category gate installed",
-			"mode", cfg.Detection.AlertMode,
-			"classified_rules", catResolver.Len())
+	// Verdict-foundation: build the category resolver used by the alert-bus
+	// router. The router itself is installed below, after procTree exists
+	// (the lineage-root lookup needs it). Covers BOTH YAML-rule alerts and
+	// runtime-emitted alerts (cap.gained, brp.hard_deny, ...) because the
+	// router lives at the bus, the single alert chokepoint.
+	catResolver := rulecat.NewResolver()
+	catResolver.AddRules(bundledRules) // includes dlcf rules (merged above)
+	// runtime_categories.yaml lives one level up from core/.
+	runtimeCatPath := filepath.Join(bundledRulesDir, "..", "runtime_categories.yaml")
+	if err := catResolver.AddRuntimeFile(runtimeCatPath); err != nil {
+		log.Warn("rulecat: runtime categories load failed", "path", runtimeCatPath, "err", err)
 	}
 
 	// Correlator — uses the same emit so correlation incidents go
@@ -1366,6 +1361,53 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		log.Info("proctree bootstrapped from /proc", "pids", n)
 	}
 	ruleEngine.SetTreeFn(procTree.Ancestors)
+
+	// Verdict-engine v1: incident/weak_signal alerts feed a per-lineage
+	// score engine; the raw alert is suppressed and a synthesized
+	// verdict.incident is emitted only when a lineage crosses threshold.
+	// hard_deny always emits; fact always suppressed. detection mode
+	// bypasses everything (emit all). The router lives at the bus so it
+	// covers every emit site, not just the dispatch loop.
+	lineageEng := lineagescore.New(lineagescore.Opts{
+		Threshold: 80,
+		Window:    time.Hour,
+		LineageOf: func(pid uint32) uint32 {
+			// Ancestors returns the chain from pid upward to PID 1,
+			// inclusive (graph.go: index 0 is pid itself, the loop walks
+			// PPID upward, so the LAST element is the outermost ancestor
+			// closest to PID 1). The lineage root is that last element.
+			anc := procTree.Ancestors(pid, 16)
+			if len(anc) == 0 {
+				return pid
+			}
+			return anc[len(anc)-1].PID // outermost ancestor = lineage root
+		},
+	})
+	mode := cfg.Detection.AlertMode
+	bus.SetRouter(func(a model.Alert) (bool, *model.Alert) {
+		if mode == "detection" {
+			return true, nil
+		}
+		switch catResolver.Category(a.RuleID) {
+		case model.CategoryHardDeny:
+			return true, nil
+		case model.CategoryFact:
+			return false, nil
+		default: // incident, weak_signal
+			v := lineageEng.Observe(lineagescore.Signal{
+				PID:    a.Event.PID,
+				RuleID: a.RuleID,
+				Weight: catResolver.Weight(a.RuleID),
+				At:     a.Event.Time,
+				Reason: a.Reason,
+			})
+			if v == nil {
+				return false, nil // not enough evidence yet
+			}
+			return false, synthVerdictAlert(a, v)
+		}
+	})
+	log.Info("verdict-engine v1 router installed", "mode", mode, "threshold", 80, "classified_rules", catResolver.Len())
 
 	// Per-process connection visibility (NETVISIBILITY F1–F4 wiring).
 	// cgroupClassifier resolves /proc/<pid>/cgroup → user/system/
@@ -3744,4 +3786,21 @@ func tryDecodeKey(raw []byte) []byte {
 		return b
 	}
 	return nil
+}
+
+// synthVerdictAlert builds the synthesized verdict.incident alert emitted
+// when a process lineage crosses the score threshold. It carries the
+// triggering event and a human-readable chain of contributing signals.
+func synthVerdictAlert(trigger model.Alert, v *lineagescore.Verdict) *model.Alert {
+	parts := make([]string, 0, len(v.Contributors))
+	for _, c := range v.Contributors {
+		parts = append(parts, fmt.Sprintf("%s(+%d)", c.RuleID, c.Weight))
+	}
+	return &model.Alert{
+		Event:  trigger.Event,
+		RuleID: "verdict.incident",
+		Reason: fmt.Sprintf("lineage %d crossed score %d: %s",
+			v.LineageRoot, v.Score, strings.Join(parts, " -> ")),
+		Class: 1,
+	}
 }
