@@ -143,6 +143,20 @@ type DetectionConfig struct {
 	AlertMode      string `yaml:"alert_mode"`
 	FleetRarity    bool   `yaml:"fleet_rarity"`     // default false — fleet too small to matter by default
 	FleetMinCohort int    `yaml:"fleet_min_cohort"` // default 5
+
+	// OnlineReputation enables optional external IP-reputation lookups
+	// (VirusTotal / AbuseIPDB). DEFAULT OFF. When enabled, destination
+	// IPs are sent to a third-party service — this PUBLISHES egress
+	// metadata externally and is not appropriate for air-gapped hosts.
+	OnlineReputation OnlineReputationConfig `yaml:"online_reputation"`
+}
+
+// OnlineReputationConfig controls optional external IP-reputation lookups.
+// Enabled defaults to false: when false, NO external request is ever made.
+type OnlineReputationConfig struct {
+	Enabled   bool   `yaml:"enabled"`     // default false — no external calls
+	Provider  string `yaml:"provider"`    // "virustotal" | "abuseipdb"
+	APIKeyEnv string `yaml:"api_key_env"` // env var holding the API key
 }
 
 // normalize validates and defaults the detection config. Empty AlertMode
@@ -158,6 +172,16 @@ func (d *DetectionConfig) normalize() error {
 	}
 	if d.FleetMinCohort <= 0 {
 		d.FleetMinCohort = 5
+	}
+	if d.OnlineReputation.Enabled {
+		switch d.OnlineReputation.Provider {
+		case "virustotal", "abuseipdb":
+		default:
+			return fmt.Errorf("detection.online_reputation.provider: unknown %q (want virustotal|abuseipdb)", d.OnlineReputation.Provider)
+		}
+		if d.OnlineReputation.APIKeyEnv == "" {
+			return fmt.Errorf("detection.online_reputation.api_key_env must be set when online_reputation.enabled is true")
+		}
 	}
 	return nil
 }
