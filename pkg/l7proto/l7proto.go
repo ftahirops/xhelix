@@ -21,6 +21,7 @@ const (
 	ProtoSSH      Proto = "ssh"
 	ProtoDNS      Proto = "dns"
 	ProtoQUIC     Proto = "quic"
+	ProtoUDPOther Proto = "udp-other"
 	ProtoTLSOther Proto = "tls-other"
 	ProtoRaw      Proto = "raw"
 )
@@ -33,6 +34,10 @@ type Signals struct {
 	ALPN            string // "h2","grpc","http/1.1",... (EO.5b)
 	HTTPRequestLine string // from SSL uprobe (decrypted)
 	PayloadPrefix   []byte // first decrypted bytes (HTTP/2 preface etc.)
+	// QUICConfirmed is set by the EO.5c eBPF peek when the UDP/443
+	// payload carries a QUIC long-header + known version. Without it,
+	// UDP/443 is labeled udp-other (not a false "quic" port guess).
+	QUICConfirmed bool
 }
 
 var http2Preface = []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
@@ -61,9 +66,14 @@ func Classify(s Signals) Proto {
 		case 53:
 			return ProtoDNS
 		case 443:
-			return ProtoQUIC
+			// quic ONLY when the eBPF peek confirmed a QUIC long-header
+			// (EO.5c); otherwise it's unconfirmed UDP/443, not a guess.
+			if s.QUICConfirmed {
+				return ProtoQUIC
+			}
+			return ProtoUDPOther
 		}
-		return ProtoRaw
+		return ProtoUDPOther
 	}
 	switch s.DstPort {
 	case 22:

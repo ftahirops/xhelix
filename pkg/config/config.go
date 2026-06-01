@@ -454,6 +454,10 @@ type ProcScrapeSensorConfig struct {
 type EBPFSensorConfig struct {
 	Enabled       bool `yaml:"enabled"`
 	RingbufSizeMB uint `yaml:"ringbuf_size_mb"`
+	// DeepCapture gates EO.5c deep L7 capture (QUIC long-header peek on
+	// udp/443, raw first-payload). DEFAULT false — new hot-path eBPF that
+	// must be soak-validated for verifier acceptance + overhead before use.
+	DeepCapture bool `yaml:"deep_capture"`
 }
 
 type FIMSensorConfig struct {
