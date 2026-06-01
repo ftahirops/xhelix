@@ -14,28 +14,31 @@ import (
 // to answer "which PIDs touched this country in the last N minutes",
 // even for processes that have since exited.
 type ProcEvent struct {
-	Time     time.Time
-	Binary   string
-	Comm     string
-	PID      uint32
-	PPID     uint32
-	UID      uint32
-	DestIP   string
-	DestPort uint16
-	SrcPort  uint16
-	Role     string
-	BytesOut uint64
-	BytesIn  uint64
-	SNI      string
+	Time           time.Time
+	Binary         string
+	Comm           string
+	PID            uint32
+	PPID           uint32
+	UID            uint32
+	DestIP         string
+	DestPort       uint16
+	SrcPort        uint16
+	Role           string
+	BytesOut       uint64
+	BytesIn        uint64
+	SNI            string
+	ContainerID    string
+	ContainerClass string
+	Unit           string
 }
 
 // recentRing is a bounded FIFO of ProcEvent for short-term forensic
 // recall. Drops oldest on overflow. Independent of the aggregated
 // FlowKey ring — keeps PID cardinality OUT of the aggregation path.
 type recentRing struct {
-	mu  sync.Mutex
-	buf []ProcEvent
-	cap int
+	mu   sync.Mutex
+	buf  []ProcEvent
+	cap  int
 	head int // next write
 	n    int
 }
@@ -99,7 +102,10 @@ func (l *Ledger) observeRecent(ev Event, cidr string) {
 		DestIP: ipString(ev.DestIP), DestPort: ev.DestPort,
 		SrcPort: ev.SrcPort, Role: ev.Role,
 		BytesOut: ev.BytesOut, BytesIn: ev.BytesIn,
-		SNI: ev.SNI,
+		SNI:            ev.SNI,
+		ContainerID:    ev.ContainerID,
+		ContainerClass: ev.ContainerClass,
+		Unit:           ev.Unit,
 	})
 	_ = cidr
 }
@@ -213,11 +219,11 @@ func (l *Ledger) loadRecent(maxAge time.Duration) {
 // listening service, "client" when the remote end is. Uses two
 // signals in priority order:
 //
-//   1. The host-wide listening-port cache (authoritative for custom
-//      apps on non-standard ports — refreshed from /proc/net/tcp
-//      every 15s).
-//   2. A static well-known-port set (fallback when the cache is
-//      empty, e.g. very early after daemon start).
+//  1. The host-wide listening-port cache (authoritative for custom
+//     apps on non-standard ports — refreshed from /proc/net/tcp
+//     every 15s).
+//  2. A static well-known-port set (fallback when the cache is
+//     empty, e.g. very early after daemon start).
 func inferRole(srcPort, dstPort uint16) string {
 	// Authoritative: this host is listening on srcPort → we are the
 	// server in this flow; bytes are replies.
