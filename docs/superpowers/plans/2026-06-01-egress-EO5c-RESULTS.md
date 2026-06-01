@@ -33,3 +33,37 @@ only after QUIC (T1-T4) validates.
 The QUIC path is **written and compile-verified end-to-end, off by default**. It is
 **not runtime-proven**; that is one dev-box load test away (T4) and is the genuinely
 risky step. T1's honest-quic relabel is the part that delivers value immediately.
+
+---
+
+## EO5c-T4 — LIVE validation on dev box (2026-06-01, executed)
+
+Deployed new binary + new `xhelix-progs.o` to dev box; staged: loaded with
+DeepCapture OFF first (verifier test), then ON for functional test.
+
+**Results:**
+- ✅ **Kernel verifier ACCEPTS the QUIC peek** — the new `.o` (with the msg_iter
+  walk compiled in) loads clean; daemon active, eBPF sensor + uprobes attached,
+  net events flowing, 0 restarts. The #1 risk is cleared.
+- ✅ **Stable with DeepCapture ON** — 0 restarts, no eBPF errors, no perf collapse.
+- ✅ **End-to-end QUIC confirmed** — connected UDP/443 datagrams with a QUIC v1
+  long-header classified as `l7_protocol: "quic"` in the recent ring (`python3 →
+  quic`). Non-QUIC and TCP traffic unaffected.
+- ✅ **Bug found + fixed by this live test:** `l7proto.Classify` checked
+  `QUICConfirmed` *inside* the `L4=="udp"` branch, but `net_bytes` events carry no
+  L4 tag, so it never ran. Moved the check to the top (a confirmed long-header is
+  authoritative regardless of L4). Committed.
+
+**Honest caveats / limits found live:**
+1. The peek's port gate reads dst port from the **socket** (`skc_dport`), so it
+   only fires for **connected** UDP sockets (real QUIC clients connect; an
+   unconnected `sendto()` QUIC sender is missed). Acceptable for browser/curl QUIC.
+2. **connstate is TCP-only** — the live "Connections" view shows UDP flows masked
+   onto TCP tuples; UDP/QUIC visibility is via the ledger recent ring, not the
+   connections endpoint. Noted for EO.7 UI work.
+3. **Sustained perf/overhead soak NOT done** — only a brief stability check.
+   DeepCapture restored to **OFF** after the test pending a proper overhead soak.
+
+**Disposition:** QUIC eBPF is functionally validated (loads, stable, classifies
+correctly). DeepCapture is OFF by default; re-enable for a measured overhead soak
+before recommending it generally. Prod untouched.
