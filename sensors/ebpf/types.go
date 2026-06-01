@@ -108,6 +108,9 @@ type Backend interface {
 	Stop(ctx context.Context) error
 	Healthy() bool
 	Drops() uint64
+	DropRingbuf() uint64
+	DropConsumerFull() uint64
+	DropDecode() uint64
 }
 
 // Config carries operator-tunable knobs.
