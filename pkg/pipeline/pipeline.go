@@ -36,6 +36,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/cdndetect"
 	"github.com/xhelix/xhelix/pkg/flowstats"
+	"github.com/xhelix/xhelix/pkg/l7proto"
 	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
@@ -469,6 +470,23 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			}
 			le.ParentComm = parentComm
 			le.ServiceRole = string(servicerole.Classify(le.Binary, le.Comm, "", 0))
+			// L7 protocol classification from already-captured signals.
+			var payloadPrefix []byte
+			if pb := ev.Tags["payload_b64"]; pb != "" {
+				if dec, err := base64.StdEncoding.DecodeString(pb); err == nil {
+					if len(dec) > 32 {
+						dec = dec[:32]
+					}
+					payloadPrefix = dec
+				}
+			}
+			le.L7Protocol = string(l7proto.Classify(l7proto.Signals{
+				L4:              le.Protocol,
+				DstPort:         le.DestPort,
+				SNI:             le.SNI,
+				HTTPRequestLine: ev.Tags["http_request_line"],
+				PayloadPrefix:   payloadPrefix,
+			}))
 			p.EgressLedger.Observe(le)
 		}
 	}
