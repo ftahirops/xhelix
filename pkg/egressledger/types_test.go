@@ -21,3 +21,15 @@ func TestEvent_ServiceRoleParentComm(t *testing.T) {
 		t.Fatalf("metrics fields not retained: %+v", m)
 	}
 }
+
+func TestEvent_L7Protocol(t *testing.T) {
+	e := Event{L7Protocol: "http"}
+	if e.L7Protocol != "http" {
+		t.Fatalf("event L7Protocol not retained: %+v", e)
+	}
+	var m FlowMetrics
+	m.L7Protocol = "tls"
+	if m.L7Protocol != "tls" {
+		t.Fatalf("metrics L7Protocol not retained: %+v", m)
+	}
+}

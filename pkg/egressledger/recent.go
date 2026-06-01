@@ -32,6 +32,7 @@ type ProcEvent struct {
 	Unit           string
 	ServiceRole    string
 	ParentComm     string
+	L7Protocol     string
 }
 
 // recentRing is a bounded FIFO of ProcEvent for short-term forensic
@@ -110,6 +111,7 @@ func (l *Ledger) observeRecent(ev Event, cidr string) {
 		Unit:           ev.Unit,
 		ServiceRole:    ev.ServiceRole,
 		ParentComm:     ev.ParentComm,
+		L7Protocol:     ev.L7Protocol,
 	})
 	_ = cidr
 }

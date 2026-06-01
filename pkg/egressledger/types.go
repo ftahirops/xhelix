@@ -42,6 +42,9 @@ type FlowMetrics struct {
 	// grouping aggregates by role without inflating the FlowKey.
 	ServiceRole string
 	ParentComm  string
+	// L7Protocol: last observed application-layer protocol for this key
+	// (descriptive enrichment, NOT part of the FlowKey).
+	L7Protocol string
 }
 
 // FlowRecord is a (bucket, key, metrics) triple returned by queries.
@@ -95,6 +98,9 @@ type Event struct {
 	// pkg/servicerole; parent process comm). NOT part of FlowKey.
 	ServiceRole string
 	ParentComm  string
+	// L7Protocol is descriptive enrichment (application-layer protocol).
+	// NOT part of FlowKey.
+	L7Protocol string
 	// SrcPort — local port. Used at observe time to decide Role when
 	// the caller didn't set it. Not stored.
 	SrcPort uint16

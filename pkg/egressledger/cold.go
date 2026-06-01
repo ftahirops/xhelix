@@ -29,6 +29,7 @@ type parquetRow struct {
 	DestClass      string `parquet:"dest_class,zstd"`
 	ServiceRole    string `parquet:"service_role,zstd"`
 	ParentComm     string `parquet:"parent_comm,zstd"`
+	L7Protocol     string `parquet:"l7_protocol,zstd"`
 	FirstSeenNS    int64  `parquet:"first_seen_ns"`
 	LastSeenNS     int64  `parquet:"last_seen_ns"`
 	Connects       uint64 `parquet:"connects"`
@@ -54,6 +55,7 @@ func recordToRow(r FlowRecord) parquetRow {
 		DestClass:      r.Key.DestClass,
 		ServiceRole:    r.Metrics.ServiceRole,
 		ParentComm:     r.Metrics.ParentComm,
+		L7Protocol:     r.Metrics.L7Protocol,
 		FirstSeenNS:    r.Metrics.FirstSeen.UnixNano(),
 		LastSeenNS:     r.Metrics.LastSeen.UnixNano(),
 		Connects:       r.Metrics.Connects,
@@ -90,6 +92,7 @@ func rowToRecord(p parquetRow) FlowRecord {
 			VerifyEvents: p.VerifyEvents,
 			ServiceRole:  p.ServiceRole,
 			ParentComm:   p.ParentComm,
+			L7Protocol:   p.L7Protocol,
 		},
 		Bucket: time.Unix(0, p.BucketUnixNano),
 	}

@@ -164,6 +164,9 @@ func mergeRecord(a, b FlowRecord) FlowRecord {
 	if b.Metrics.ParentComm != "" {
 		out.Metrics.ParentComm = b.Metrics.ParentComm
 	}
+	if b.Metrics.L7Protocol != "" {
+		out.Metrics.L7Protocol = b.Metrics.L7Protocol
+	}
 	return out
 }
 

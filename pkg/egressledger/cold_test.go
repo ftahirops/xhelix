@@ -34,6 +34,7 @@ func TestColdRoundTripServiceRoleParentComm(t *testing.T) {
 			BytesIn:     200,
 			ServiceRole: "database",
 			ParentComm:  "sshd",
+			L7Protocol:  "tls",
 		},
 		Bucket: bucket,
 	}
@@ -56,6 +57,9 @@ func TestColdRoundTripServiceRoleParentComm(t *testing.T) {
 	if got[0].Metrics.ParentComm != "sshd" {
 		t.Errorf("ParentComm: got %q want %q", got[0].Metrics.ParentComm, "sshd")
 	}
+	if got[0].Metrics.L7Protocol != "tls" {
+		t.Errorf("L7Protocol: got %q want %q", got[0].Metrics.L7Protocol, "tls")
+	}
 }
 
 // TestColdRowConverterRoundTrip is the lowest-level guard: recordToRow ->
@@ -65,6 +69,7 @@ func TestColdRowConverterRoundTrip(t *testing.T) {
 		Metrics: FlowMetrics{
 			ServiceRole: "cache",
 			ParentComm:  "systemd",
+			L7Protocol:  "redis",
 		},
 		Bucket: time.Unix(0, 1),
 	}
@@ -74,6 +79,9 @@ func TestColdRowConverterRoundTrip(t *testing.T) {
 	}
 	if got.Metrics.ParentComm != "systemd" {
 		t.Errorf("ParentComm: got %q want %q", got.Metrics.ParentComm, "systemd")
+	}
+	if got.Metrics.L7Protocol != "redis" {
+		t.Errorf("L7Protocol: got %q want %q", got.Metrics.L7Protocol, "redis")
 	}
 }
 
@@ -88,7 +96,7 @@ func TestColdOldFileTolerance(t *testing.T) {
 		Binary:         "/bin/curl",
 		DestPort:       443,
 		Protocol:       "tcp",
-		// ServiceRole and ParentComm intentionally left zero ("").
+		// ServiceRole, ParentComm and L7Protocol intentionally left zero ("").
 	}
 	rec := rowToRecord(old)
 	if rec.Metrics.ServiceRole != "" {
@@ -96,6 +104,9 @@ func TestColdOldFileTolerance(t *testing.T) {
 	}
 	if rec.Metrics.ParentComm != "" {
 		t.Errorf("old-file ParentComm: got %q want empty", rec.Metrics.ParentComm)
+	}
+	if rec.Metrics.L7Protocol != "" {
+		t.Errorf("old-file L7Protocol: got %q want empty", rec.Metrics.L7Protocol)
 	}
 
 	// And it survives an actual disk write/read too.
