@@ -215,6 +215,30 @@ func parseCgroupFile(data []byte) Info {
 	return classifyPath(last)
 }
 
+// isContainerPath reports whether the cgroup path is a container PAYLOAD,
+// not a host daemon. It deliberately does NOT match on a bare "/docker" or
+// "/containerd" substring, because the daemons' own systemd units
+// ("/system.slice/docker.service", "/system.slice/containerd.service")
+// contain those substrings yet are system services, not containers. A real
+// container is identified by its kubepods/lxc/machine slice or by a leaf
+// scope segment with a known container-runtime prefix (docker-<id>.scope,
+// cri-containerd-<id>.scope, crio-<id>.scope, libpod-<id>.scope).
+func isContainerPath(p string) bool {
+	if strings.Contains(p, "/kubepods") ||
+		strings.Contains(p, "/lxc/") ||
+		strings.HasPrefix(p, "/machine.slice/") {
+		return true
+	}
+	parts := strings.Split(p, "/")
+	leaf := parts[len(parts)-1]
+	for _, pfx := range []string{"docker-", "cri-containerd-", "crio-", "libpod-", "containerd-"} {
+		if strings.HasPrefix(leaf, pfx) {
+			return true
+		}
+	}
+	return false
+}
+
 func classifyPath(p string) Info {
 	if p == "" || p == "/" {
 		return Info{Class: ClassKernel, RawPath: p}
@@ -222,11 +246,7 @@ func classifyPath(p string) Info {
 	out := Info{RawPath: p}
 
 	switch {
-	case strings.Contains(p, "/kubepods"),
-		strings.Contains(p, "/docker"),
-		strings.Contains(p, "/containerd"),
-		strings.Contains(p, "/lxc/"),
-		strings.Contains(p, "/machine.slice/"):
+	case isContainerPath(p):
 		out.Class = ClassContainer
 		out.ContainerID = extractContainerID(p)
 		return out

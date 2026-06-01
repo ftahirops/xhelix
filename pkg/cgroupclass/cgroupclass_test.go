@@ -45,6 +45,18 @@ func TestClassifyPath(t *testing.T) {
 			wantCID:   "9f8e7d6c5b4a3210fedcba9876543210fedcba9876543210fedcba9876543210",
 		},
 		{
+			name:      "docker daemon service is NOT a container",
+			path:      "/system.slice/docker.service",
+			wantClass: ClassSystem,
+			wantUnit:  "docker.service",
+		},
+		{
+			name:      "containerd daemon service is NOT a container",
+			path:      "/system.slice/containerd.service",
+			wantClass: ClassSystem,
+			wantUnit:  "containerd.service",
+		},
+		{
 			name:      "kubepods cri-containerd",
 			path:      "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod1234.slice/cri-containerd-abc123.scope",
 			wantClass: ClassContainer,
