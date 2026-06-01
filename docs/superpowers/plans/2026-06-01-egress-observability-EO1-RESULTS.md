@@ -40,7 +40,37 @@ reading run.go.
 | `make vet` | **PASS** |
 | `make static-check` | **PASS** — all binaries statically linked |
 | `make build` | **PASS** |
-| Container id appears on a real container's egress (live) | **DEFERRED** — requires redeploy, which interrupts the running soak; pending operator consent |
+| Container id appears on a real container's egress (live) | **PASS (2026-06-01 18:28Z)** — see below |
+
+## Live verification (dev box 135.181.79.27, commit a77bb65)
+
+Deployed `sudo install` + `systemctl restart xhelix` (clean start, verdict engine
+`classified_rules=119`). Started a throwaway container
+`docker run --rm -d --name eo1-live alpine` looping `wget https://example.com`
+(full id `a94c15b637e8fa14…`, short `a94c15b637e8`). The `/api/egress/country?country=CA`
+drilldown (example.com → Cloudflare/CA) showed **47 `ssl_client` flows all attributed
+to the container**:
+```
+container_id:    a94c15b637e8fa1482f0b668757310e6968ee2b0bc44bcfafbdfe8c6c34a55fd
+container_class: container
+display:         a94c15b637e8
+```
+User-session processes correctly tagged `user` (with `session-NNN.scope`), system
+daemons tagged `system`. End-to-end confirmed: a Docker container's egress is now
+named by its container id in the UI. Test container stopped after capture; the
+shadow soak continued uninterrupted (cron reads the persistent alert log).
+
+## Bug surfaced by the live deploy (NOT in EO.1 code — pre-existing in pkg/cgroupclass)
+
+`dockerd` and `docker-proxy` (the Docker daemon itself, cgroup
+`/system.slice/docker.service`) are MISCLASSIFIED as `container_class=container`
+with `container_id="docker.service"`. Root cause: the path heuristic in
+`pkg/cgroupclass` treats any path containing `/docker` as a container, catching
+`docker.service` (a system unit) as well as real `docker-<64hex>.scope` payloads.
+Fix (small, follow-up): require the `docker-<hex>.scope` / `cri-containerd-` /
+`crio-` / `kubepods` payload patterns and explicitly exclude `*.service` units.
+This is a real false-attribution bug that EO.1 made visible; logged for a quick
+follow-up, not fixed in this phase.
 
 ## Design notes / deviations
 
