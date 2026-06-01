@@ -122,6 +122,10 @@ type FlowFilter struct {
 	// FlowMetrics (from pkg/servicerole). Empty = any.
 	ServiceRole string
 
+	// L7Protocol filters by the descriptive application-layer protocol
+	// recorded on FlowMetrics. Empty = any.
+	L7Protocol string
+
 	// Visibility filters by public/internal classification. Empty (zero
 	// value) and "any" both mean no filter. "public" excludes private/
 	// loopback/link-local destinations. "internal" includes ONLY

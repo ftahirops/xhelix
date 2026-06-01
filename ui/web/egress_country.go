@@ -61,6 +61,7 @@ type HistoricalPID struct {
 	Binary      string    `json:"binary"`
 	ParentComm  string    `json:"parent_comm,omitempty"`
 	ServiceRole string    `json:"service_role,omitempty"`
+	L7Protocol  string    `json:"l7_protocol,omitempty"`
 	UID        uint32    `json:"uid"`
 	FirstSeen  time.Time `json:"first_seen"`
 	LastSeen   time.Time `json:"last_seen"`
@@ -600,6 +601,7 @@ func (s *Server) handleEgressCountry(w http.ResponseWriter, r *http.Request) {
 					Container:      containerCell(r.ContainerClass, r.ContainerID),
 					ServiceRole:    r.ServiceRole,
 					ParentComm:     r.ParentComm,
+					L7Protocol:     r.L7Protocol,
 				}, dests: map[string]struct{}{}}
 				byPID[r.PID] = ag
 			}

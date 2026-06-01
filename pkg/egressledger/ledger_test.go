@@ -123,6 +123,37 @@ func TestLedgerFilterServiceRole(t *testing.T) {
 	}
 }
 
+func TestLedgerFilterL7Protocol(t *testing.T) {
+	l := newTestLedger(t, 14)
+	defer l.Close()
+	now := time.Now()
+	l.Observe(Event{
+		Time:       now,
+		Binary:     "nginx",
+		DestIP:     net.ParseIP("203.0.113.1"),
+		DestPort:   443,
+		Protocol:   "tcp",
+		Connect:    true,
+		L7Protocol: "https",
+	})
+	l.Observe(Event{
+		Time:       now,
+		Binary:     "sshd",
+		DestIP:     net.ParseIP("203.0.113.2"),
+		DestPort:   22,
+		Protocol:   "tcp",
+		Connect:    true,
+		L7Protocol: "ssh",
+	})
+	got := l.QueryLive(FlowFilter{UID: -1, CGroupID: -1, DestPort: -1, L7Protocol: "ssh"})
+	if len(got) != 1 {
+		t.Fatalf("l7_protocol filter: want 1 row, got %d", len(got))
+	}
+	if got[0].Key.Binary != "sshd" || got[0].Metrics.L7Protocol != "ssh" {
+		t.Fatalf("l7_protocol filter returned wrong row: %+v", got[0])
+	}
+}
+
 func TestLedgerTickRollsHotToWarm(t *testing.T) {
 	l := newTestLedger(t, 14)
 	defer l.Close()

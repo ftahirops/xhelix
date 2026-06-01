@@ -57,12 +57,14 @@ func TestHistoricalPIDServiceRoleJSON(t *testing.T) {
 		Binary:      "/usr/sbin/mysqld",
 		ServiceRole: "database",
 		ParentComm:  "systemd",
+		L7Protocol:  "mysql",
 	}
 
 	h := HistoricalPID{
 		PID: e.PID, Comm: e.Comm, Binary: e.Binary,
 		ServiceRole: e.ServiceRole,
 		ParentComm:  e.ParentComm,
+		L7Protocol:  e.L7Protocol,
 	}
 
 	b, err := json.Marshal(h)
@@ -76,5 +78,8 @@ func TestHistoricalPIDServiceRoleJSON(t *testing.T) {
 	}
 	if !strings.Contains(js, `"parent_comm":"systemd"`) {
 		t.Errorf("missing parent_comm in JSON: %s", js)
+	}
+	if !strings.Contains(js, `"l7_protocol":"mysql"`) {
+		t.Errorf("missing l7_protocol in JSON: %s", js)
 	}
 }

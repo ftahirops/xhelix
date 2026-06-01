@@ -227,7 +227,7 @@ func (s *Server) handleEgressProcessDetail(w http.ResponseWriter, r *http.Reques
 		for _, e := range rec {
 			ag := byPID[e.PID]
 			if ag == nil {
-				ag = &pidAgg{h: &HistoricalPID{PID: e.PID, PPID: e.PPID, Comm: e.Comm, Binary: e.Binary, UID: e.UID, FirstSeen: e.Time, LastSeen: e.Time, ContainerID: e.ContainerID, ContainerClass: e.ContainerClass, Unit: e.Unit, Container: containerCell(e.ContainerClass, e.ContainerID), ServiceRole: e.ServiceRole, ParentComm: e.ParentComm}, dests: map[string]struct{}{}}
+				ag = &pidAgg{h: &HistoricalPID{PID: e.PID, PPID: e.PPID, Comm: e.Comm, Binary: e.Binary, UID: e.UID, FirstSeen: e.Time, LastSeen: e.Time, ContainerID: e.ContainerID, ContainerClass: e.ContainerClass, Unit: e.Unit, Container: containerCell(e.ContainerClass, e.ContainerID), ServiceRole: e.ServiceRole, ParentComm: e.ParentComm, L7Protocol: e.L7Protocol}, dests: map[string]struct{}{}}
 				byPID[e.PID] = ag
 			}
 			if e.Time.Before(ag.h.FirstSeen) { ag.h.FirstSeen = e.Time }
