@@ -161,6 +161,19 @@ func TestClassifyMissingProc(t *testing.T) {
 	}
 }
 
+func TestNewWithReaderContainer(t *testing.T) {
+	c := NewWithReader(8, func(path string) ([]byte, error) {
+		return []byte("0::/system.slice/docker-9f8e7d6c5b4a3210fedcba9876543210fedcba9876543210fedcba9876543210.scope\n"), nil
+	})
+	info := c.Classify(1234)
+	if info.Class.String() != "container" {
+		t.Fatalf("class = %s, want container", info.Class)
+	}
+	if info.ContainerID == "" {
+		t.Fatalf("container id empty, want non-empty")
+	}
+}
+
 type fakeErr struct{}
 
 func (fakeErr) Error() string { return "no such file" }

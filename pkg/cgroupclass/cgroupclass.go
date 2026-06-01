@@ -88,6 +88,15 @@ func New(cap int) *Classifier {
 	}
 }
 
+// NewWithReader is New with an injectable file reader (for tests).
+func NewWithReader(cap int, read func(string) ([]byte, error)) *Classifier {
+	c := New(cap)
+	if read != nil {
+		c.read = read
+	}
+	return c
+}
+
 // Classify returns the Info for pid. On any read error it returns
 // {Class: ClassUnknown}. A pid with no /proc entry (already exited
 // or kernel thread) is reported as ClassKernel when the cgroup file
