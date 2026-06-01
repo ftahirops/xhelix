@@ -35,6 +35,10 @@ type GeoIPLookup interface {
 // doesn't import it. ip may be nil → returns "unknown".
 type DestClassify interface {
 	Classify(ip net.IP, sni string, port uint16) string
+	// ClassFromPTR maps a reverse-DNS name to a cdn/cloud class + operator
+	// org, or ("","") if no known suffix matches. Enriches the IP-info
+	// view from rDNS.
+	ClassFromPTR(ptr string) (class, org string)
 }
 
 // ConnSnap is a closure-form provider for connstate.Snapshot(). We

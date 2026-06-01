@@ -17,24 +17,43 @@ import (
 	"github.com/xhelix/xhelix/pkg/egresspolicy"
 	"github.com/xhelix/xhelix/pkg/geoip"
 	"github.com/xhelix/xhelix/pkg/proctree"
+	"github.com/xhelix/xhelix/pkg/rdnscache"
 	"github.com/xhelix/xhelix/pkg/threatintel"
 	"github.com/xhelix/xhelix/ui/web"
 )
 
 // systemReverseDNS satisfies web.ReverseDNSResolver using the
-// goroutine-safe net.DefaultResolver. The handler enforces a 2s
-// timeout via the supplied context.
-type systemReverseDNS struct{}
+// goroutine-safe net.DefaultResolver, fronted by a TTL'd PTR cache so the
+// dashboard does not re-resolve the same IP on every page load. The
+// handler still enforces a 2s timeout via the supplied context.
+type systemReverseDNS struct{ cache *rdnscache.Cache }
 
-func (systemReverseDNS) Lookup(ctx context.Context, ip string) (string, error) {
-	names, err := net.DefaultResolver.LookupAddr(ctx, ip)
-	if err != nil {
-		return "", err
+func newSystemReverseDNS() systemReverseDNS {
+	raw := func(ctx context.Context, ip string) (string, error) {
+		names, err := net.DefaultResolver.LookupAddr(ctx, ip)
+		if err != nil {
+			return "", err
+		}
+		if len(names) == 0 {
+			return "", nil
+		}
+		return names[0], nil
 	}
-	if len(names) == 0 {
-		return "", nil
+	return systemReverseDNS{cache: rdnscache.New(time.Hour, 8192, raw)}
+}
+
+func (s systemReverseDNS) Lookup(ctx context.Context, ip string) (string, error) {
+	if s.cache == nil { // defensive: zero-value still works, uncached
+		names, err := net.DefaultResolver.LookupAddr(ctx, ip)
+		if err != nil || len(names) == 0 {
+			return "", err
+		}
+		return names[0], nil
 	}
-	return names[0], nil
+	if name, ok := s.cache.Lookup(ctx, ip); ok {
+		return name, nil
+	}
+	return "", nil
 }
 
 // threatIntelAdapter satisfies web.ThreatIntelHits. Returns the feed
@@ -204,6 +223,15 @@ func (a destclassWebAdapter) Classify(ip net.IP, sni string, port uint16) string
 	}
 	d := a.c.Classify(ip, sni, port)
 	return string(d.Class)
+}
+
+// ClassFromPTR maps a reverse-DNS name to a cdn/cloud class + operator org.
+func (a destclassWebAdapter) ClassFromPTR(ptr string) (class, org string) {
+	cls, o := destclass.ClassFromPTR(ptr)
+	if cls == destclass.ClassUnknown {
+		return "", ""
+	}
+	return string(cls), o
 }
 
 // connstateToConnView projects connstate.Conn into the smaller view

@@ -3110,7 +3110,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				// intel hooks the loaded feed if available; dnsobs has no
 				// daemon-side provider yet — leave nil, the UI just won't
 				// show "related domains".
-				webServer.SetReverseDNS(systemReverseDNS{})
+				webServer.SetReverseDNS(newSystemReverseDNS())
 				if threatSet != nil {
 					webServer.SetThreatIntel(threatIntelAdapter{s: threatSet})
 				}

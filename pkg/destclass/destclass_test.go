@@ -210,3 +210,26 @@ func TestClassify_OrgTier(t *testing.T) {
 		t.Errorf("no-org default = %q want unknown", got.Class)
 	}
 }
+
+func TestClassFromPTR(t *testing.T) {
+	cases := []struct {
+		ptr   string
+		class Class
+		org   string
+	}{
+		{"server-1.cloudfront.net", ClassCDN, "Amazon CloudFront"},
+		{"ec2-1-2-3-4.compute.amazonaws.com", ClassCloudProvider, "Amazon AWS"},
+		{"lb.1e100.net", ClassCloudProvider, "Google"},
+		{"a23-1-2-3.akamaiedge.net", ClassCDN, "Akamai"},
+		{"x.fastly.net", ClassCDN, "Fastly"},
+		{"static.123.45.67.89.clients.your-server.de", ClassCloudProvider, "Hetzner"},
+		{"random.example.org", ClassUnknown, ""},
+		{"", ClassUnknown, ""},
+	}
+	for _, c := range cases {
+		gc, go_ := ClassFromPTR(c.ptr)
+		if gc != c.class || go_ != c.org {
+			t.Errorf("ClassFromPTR(%q) = (%q,%q) want (%q,%q)", c.ptr, gc, go_, c.class, c.org)
+		}
+	}
+}

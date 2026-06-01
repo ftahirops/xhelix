@@ -325,6 +325,51 @@ func (c *Classifier) Classify(ip net.IP, sni string, port uint16) Decision {
 	}
 }
 
+// ptrSuffix maps a known reverse-DNS (PTR) suffix to a class + operator
+// name. Ordered most-specific-first is not required since suffix match is
+// exact-tail; keep entries non-overlapping.
+var ptrSuffixes = []struct {
+	suffix string
+	class  Class
+	org    string
+}{
+	{"1e100.net", ClassCloudProvider, "Google"},
+	{"googleusercontent.com", ClassCloudProvider, "Google"},
+	{"cloudfront.net", ClassCDN, "Amazon CloudFront"},
+	{"compute.amazonaws.com", ClassCloudProvider, "Amazon AWS"},
+	{"amazonaws.com", ClassCloudProvider, "Amazon AWS"},
+	{"akamaitechnologies.com", ClassCDN, "Akamai"},
+	{"akamaiedge.net", ClassCDN, "Akamai"},
+	{"akamai.net", ClassCDN, "Akamai"},
+	{"fastly.net", ClassCDN, "Fastly"},
+	{"fastlylb.net", ClassCDN, "Fastly"},
+	{"cloudflare.com", ClassCDN, "Cloudflare"},
+	{"cloudapp.azure.com", ClassCloudProvider, "Microsoft Azure"},
+	{"cloudapp.net", ClassCloudProvider, "Microsoft Azure"},
+	{"your-server.de", ClassCloudProvider, "Hetzner"},
+	{"clients.your-server.de", ClassCloudProvider, "Hetzner"},
+	{"digitalocean.com", ClassCloudProvider, "DigitalOcean"},
+	{"linodeusercontent.com", ClassCloudProvider, "Linode"},
+	{"ovh.net", ClassCloudProvider, "OVH"},
+}
+
+// ClassFromPTR maps a reverse-DNS name to a cdn/cloud class + operator name,
+// or (ClassUnknown, "") if no known suffix matches. Pure; suitable for the
+// dashboard/IP-info enrichment path (NOT the hot classify path, which has
+// no PTR available without a blocking lookup).
+func ClassFromPTR(ptr string) (Class, string) {
+	p := strings.ToLower(strings.TrimRight(ptr, "."))
+	if p == "" {
+		return ClassUnknown, ""
+	}
+	for _, e := range ptrSuffixes {
+		if p == e.suffix || strings.HasSuffix(p, "."+e.suffix) {
+			return e.class, e.org
+		}
+	}
+	return ClassUnknown, ""
+}
+
 // classByOrg maps an ASN org name to a cdn/cloud class by keyword, or ""
 // if the org is not a recognised cloud/CDN operator.
 func classByOrg(org string) Class {

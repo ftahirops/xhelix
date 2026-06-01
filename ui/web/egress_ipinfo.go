@@ -319,6 +319,18 @@ func (s *Server) handleEgressIPInfo(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		cancel()
+		// rDNS-suffix enrichment: when the reverse name reveals a known
+		// cloud/CDN operator, fill in class/org if not already known.
+		if info.ReverseDNS != "" && s.destclass != nil {
+			if cls, org := s.destclass.ClassFromPTR(info.ReverseDNS); cls != "" {
+				if info.Class == "" || info.Class == "unknown" {
+					info.Class = cls
+				}
+				if info.Org == "" {
+					info.Org = org
+				}
+			}
+		}
 	}
 	// Related domains (recent names that resolved to this IP).
 	if s.dnsobs != nil {
