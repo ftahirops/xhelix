@@ -40,6 +40,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
+	"github.com/xhelix/xhelix/pkg/servicerole"
 	"github.com/xhelix/xhelix/pkg/integrity"
 	"github.com/xhelix/xhelix/pkg/verify"
 	"github.com/xhelix/xhelix/pkg/burstdet"
@@ -455,6 +456,19 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				le.ContainerClass = ci.Class.String()
 				le.Unit = ci.Unit
 			}
+			// service-role + parent-comm enrichment (descriptive; not in FlowKey).
+			// parent_comm derivation mirrors the LOTL block: prefer the tag,
+			// else resolve via proctree. app_kind isn't stamped yet at this
+			// site (AppIdent runs later), so pass "" — the binary table is
+			// the primary signal for Classify.
+			parentComm := ev.Tags["parent_comm"]
+			if parentComm == "" && p.ProcTree != nil && ev.ParentPID != 0 {
+				if anc := p.ProcTree.Ancestors(ev.ParentPID, 1); len(anc) > 0 {
+					parentComm = anc[0].Comm
+				}
+			}
+			le.ParentComm = parentComm
+			le.ServiceRole = string(servicerole.Classify(le.Binary, le.Comm, "", 0))
 			p.EgressLedger.Observe(le)
 		}
 	}
