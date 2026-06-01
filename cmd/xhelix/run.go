@@ -3789,10 +3789,21 @@ func dispatch(
 		// intelMgr would still satisfy the interface (typed-nil trap)
 		// and panic inside Classify — guard with explicit nil check.
 		DestClassifier: func() *destclass.Classifier {
+			var dc *destclass.Classifier
 			if intelMgr != nil {
-				return destclass.New(destclass.WithIntel(intelMgr))
+				dc = destclass.New(destclass.WithIntel(intelMgr))
+			} else {
+				dc = destclass.New()
 			}
-			return destclass.New()
+			// Org-based fallback: when CIDR/SNI tables miss, the geoip
+			// ASN org name still reveals major cloud/CDN operators. Uses
+			// a seed-loaded geoip instance (the seed already carries the
+			// major cloud/CDN ASN orgs); operator CSV enrichment of the
+			// org tier is a future hoist of the daemon-level geoDB.
+			orgGeo := geoip.NewInMemory()
+			orgGeo.Load(geoip.SeedEntries())
+			dc.SetOrgProvider(geoOrgAdapter{db: orgGeo})
+			return dc
 		}(),
 		EgressPolicy:     egressPolicyEng,
 		TrustZone:        trustMgr,
@@ -3863,4 +3874,19 @@ func synthVerdictAlert(trigger model.Alert, v *lineagescore.Verdict) *model.Aler
 			v.Tier, v.LineageRoot, v.Score, strings.Join(parts, " -> ")),
 		Class: 1,
 	}
+}
+
+// geoOrgAdapter adapts a *geoip.InMemory to destclass.OrgProvider, exposing
+// the ASN org name for org-based cloud/CDN classification (EO.4).
+type geoOrgAdapter struct{ db *geoip.InMemory }
+
+func (g geoOrgAdapter) OrgOf(ip net.IP) (org, asn string, ok bool) {
+	if g.db == nil || ip == nil {
+		return "", "", false
+	}
+	r, found := g.db.Lookup(ip.String())
+	if !found || r.ASNOrg == "" {
+		return "", "", false
+	}
+	return r.ASNOrg, r.ASN, true
 }

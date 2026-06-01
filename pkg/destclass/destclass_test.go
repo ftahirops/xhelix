@@ -176,3 +176,37 @@ func TestExtraSuffixesAndCIDRs(t *testing.T) {
 		t.Errorf("extra CIDR should match; got %s", d.Class)
 	}
 }
+
+type fakeOrg struct{ org, asn string }
+
+func (f fakeOrg) OrgOf(net.IP) (string, string, bool) {
+	if f.org == "" {
+		return "", "", false
+	}
+	return f.org, f.asn, true
+}
+
+func TestClassify_OrgTier(t *testing.T) {
+	ip := net.ParseIP("203.0.113.10") // public, not in any static table
+	cases := []struct {
+		org  string
+		want Class
+	}{
+		{"Cloudflare, Inc.", ClassCDN},
+		{"Amazon.com, Inc.", ClassCloudProvider},
+		{"Akamai Technologies", ClassCDN},
+		{"Hetzner Online GmbH", ClassCloudProvider},
+		{"Some Random ISP LLC", ClassUnknown}, // org known but not cloud/cdn -> falls through
+	}
+	for _, c := range cases {
+		cl := New(WithOrgProvider(fakeOrg{org: c.org, asn: "AS0"}))
+		got := cl.Classify(ip, "", 443)
+		if got.Class != c.want {
+			t.Errorf("org %q -> %q, want %q", c.org, got.Class, c.want)
+		}
+	}
+	// no org provider / no match -> unknown, unchanged behavior
+	if got := New().Classify(ip, "", 443); got.Class != ClassUnknown {
+		t.Errorf("no-org default = %q want unknown", got.Class)
+	}
+}
