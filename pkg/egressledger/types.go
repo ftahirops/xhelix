@@ -77,6 +77,15 @@ type Event struct {
 	PID  uint32
 	PPID uint32
 	Comm string
+	// ContainerID / ContainerClass / Unit describe the cgroup origin of
+	// the process. ContainerClass is "container"|"user"|"system"|
+	// "kernel"|"unknown" (cgroupclass.Class.String()); ContainerID is the
+	// docker/containerd/cri-o id when ContainerClass=="container"; Unit is
+	// the systemd unit. Recorded in the recent-events ring (NOT the FlowKey
+	// — would explode cardinality and force a store-schema change).
+	ContainerID    string
+	ContainerClass string
+	Unit           string
 	// SrcPort — local port. Used at observe time to decide Role when
 	// the caller didn't set it. Not stored.
 	SrcPort uint16
