@@ -25,12 +25,20 @@ import (
 
 // Config is the operator-facing knob set.
 type Config struct {
-	// MemoryLimitMB caps the Go heap. 0 = don't set. Recommended
-	// 256-512 for a single-host daemon; SoftMemoryLimit (SetMemoryLimit)
-	// makes the runtime aggressively GC instead of OOMing.
+	// MemoryLimitMB is a Go soft memory limit (SetMemoryLimit). 0 = don't
+	// set (recommended default).
+	//
+	// CRITICAL: it MUST sit comfortably ABOVE the live heap. With the geoip
+	// table loaded (~1.1M CIDR entries) the live heap is ~600MB+, so a limit
+	// at/below that pins the GC into continuous collection — SetMemoryLimit
+	// makes the runtime GC ever harder chasing a limit it cannot reach,
+	// burning ~90% CPU in gcBgMarkWorker (observed 2026-06-01: limit=512MB
+	// vs live=591MB → ~3.5 cores, all GC; raising to 2048MB dropped it to
+	// ~0.25 cores). If you set this at all, use >= 1536 or leave 0. See ERRORS.md.
 	MemoryLimitMB int64 `yaml:"memory_limit_mb"`
-	// GCPercent is the GOGC equivalent. 0 = leave default (100).
-	// Lower = more frequent GC, less peak memory, more CPU.
+	// GCPercent is the GOGC equivalent. 0 = leave default (100). Lower =
+	// more frequent GC, less peak memory, MORE CPU. Do not set this low on a
+	// daemon with a large stable live heap (geoip) — prefer 100-200 or 0.
 	GCPercent int `yaml:"gc_percent"`
 }
 
