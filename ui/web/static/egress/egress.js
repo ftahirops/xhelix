@@ -2927,9 +2927,24 @@ window.addEventListener('DOMContentLoaded', () => {
   loadPrefs();
 
   // Sidebar nav.
+  const sidebarEl = document.querySelector('.sidebar');
+  const navScrim = document.getElementById('sidebar-scrim');
+  const closeSidebar = () => {
+    if (sidebarEl) sidebarEl.classList.remove('open');
+    if (navScrim) navScrim.classList.remove('show');
+  };
   document.querySelectorAll('.nav-item').forEach(el => {
-    el.addEventListener('click', e => { e.preventDefault(); go(el.dataset.route); });
+    el.addEventListener('click', e => { e.preventDefault(); go(el.dataset.route); closeSidebar(); });
   });
+  // Hamburger (mobile/tablet) — toggle the off-canvas sidebar.
+  const navToggle = document.getElementById('nav-toggle');
+  if (navToggle && sidebarEl) {
+    navToggle.addEventListener('click', () => {
+      const open = sidebarEl.classList.toggle('open');
+      if (navScrim) navScrim.classList.toggle('show', open);
+    });
+  }
+  if (navScrim) navScrim.addEventListener('click', closeSidebar);
 
   // Range picker.
   document.querySelectorAll('.range-picker .rng').forEach(b => {
