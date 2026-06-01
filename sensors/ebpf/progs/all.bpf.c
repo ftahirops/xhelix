@@ -183,6 +183,17 @@ struct {
     __type(value, __u8);
 } xh_panic SEC(".maps");
 
+/* xh_deepcapture gates EO.5c deep L7 payload peeking (QUIC long-header on
+   udp/443). Set to 1 by userspace only when Sensors.EBPF.DeepCapture is on.
+   Default 0 → the peek is a no-op, so this program is byte-for-byte the
+   previous behavior until an operator opts in (and soak-validates). */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u8);
+} xh_deepcapture SEC(".maps");
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 1 << 18);
@@ -218,6 +229,50 @@ static __always_inline int xh_is_panic(void) {
     __u32 zero = 0;
     __u8 *p = bpf_map_lookup_elem(&xh_panic, &zero);
     return p && *p;
+}
+
+static __always_inline int xh_deepcapture_on(void) {
+    __u32 zero = 0;
+    __u8 *p = bpf_map_lookup_elem(&xh_deepcapture, &zero);
+    return p && *p;
+}
+
+/* xh_quic_peek reads the first 5 bytes of a udp_sendmsg payload and reports
+   whether it is a QUIC long-header packet with a known version. Walks the
+   msghdr iov_iter: ITER_UBUF(0) carries the user pointer directly in
+   __ubuf_iovec.iov_base; ITER_IOVEC(1) carries a kernel pointer to an iovec
+   array whose [0].iov_base is the user pointer. Other iter types (kvec/bvec/
+   xarray) are kernel buffers and are skipped. Verifier-safe: fixed 5-byte
+   stack buffer, fixed indexing, user pointer arithmetic not tracked. */
+static __always_inline __u8 xh_quic_peek(struct msghdr *msg) {
+    if (!msg) return 0;
+    __u8 it = 0;
+    BPF_CORE_READ_INTO(&it, msg, msg_iter.iter_type);
+    __u64 off = 0;
+    BPF_CORE_READ_INTO(&off, msg, msg_iter.iov_offset);
+    const void *ubase = 0;
+    if (it == 0 /* ITER_UBUF */) {
+        BPF_CORE_READ_INTO(&ubase, msg, msg_iter.__ubuf_iovec.iov_base);
+    } else if (it == 1 /* ITER_IOVEC */) {
+        const struct iovec *iov = 0;
+        BPF_CORE_READ_INTO(&iov, msg, msg_iter.__iov);
+        if (!iov) return 0;
+        BPF_CORE_READ_INTO(&ubase, iov, iov_base);
+    } else {
+        return 0;
+    }
+    if (!ubase) return 0;
+    __u8 head[5] = {0};
+    if (bpf_probe_read_user(head, 5, (const void *)((__u64)ubase + off)) < 0)
+        return 0;
+    if (!(head[0] & 0x80)) return 0; /* not a long-header packet */
+    __u32 ver = ((__u32)head[1] << 24) | ((__u32)head[2] << 16) |
+                ((__u32)head[3] << 8) | (__u32)head[4];
+    if (ver == 0x00000001 ||              /* QUIC v1  (RFC 9000) */
+        ver == 0x6b3343cf ||              /* QUIC v2  (RFC 9369) */
+        (ver & 0xff000000) == 0xff000000) /* draft-ietf-quic-* */
+        return 1;
+    return 0;
 }
 
 static __always_inline void xh_fill_hdr(struct xh_event_hdr *h, __u32 kind) {
@@ -727,7 +782,8 @@ int tp_sys_enter_mprotect(struct trace_event_raw_sys_enter *ctx) {
    threshold filter (size >= 64) skips keepalives + tiny ACKs that
    would otherwise drown the ringbuf on busy hosts. */
 static __always_inline void xh_emit_net_bytes(struct sock *sk,
-                                              __u32 size, __u8 dir) {
+                                              __u32 size, __u8 dir,
+                                              __u8 quic) {
     if (xh_is_self()) return;
     if (size < 64) return;
     if (!sk) return;
@@ -762,7 +818,8 @@ static __always_inline void xh_emit_net_bytes(struct sock *sk,
     e->sport = sport_host;
     e->bytes = size;
     e->dir = dir;
-    e->_pad[0] = e->_pad[1] = e->_pad[2] = 0;
+    e->_pad[0] = quic; /* 1 = QUIC long-header confirmed (EO.5c) */
+    e->_pad[1] = e->_pad[2] = 0;
     bpf_ringbuf_submit(e, 0);
 }
 
@@ -770,7 +827,7 @@ SEC("kprobe/tcp_sendmsg")
 int kprobe_tcp_sendmsg(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
     __u32 size = (__u32)PT_REGS_PARM3(ctx);
-    xh_emit_net_bytes(sk, size, 0 /* out */);
+    xh_emit_net_bytes(sk, size, 0 /* out */, 0);
     return 0;
 }
 
@@ -778,7 +835,7 @@ SEC("kprobe/tcp_recvmsg")
 int kprobe_tcp_recvmsg(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
     __u32 size = (__u32)PT_REGS_PARM3(ctx);
-    xh_emit_net_bytes(sk, size, 1 /* in */);
+    xh_emit_net_bytes(sk, size, 1 /* in */, 0);
     return 0;
 }
 
@@ -789,7 +846,18 @@ SEC("kprobe/udp_sendmsg")
 int kprobe_udp_sendmsg(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
     __u32 size = (__u32)PT_REGS_PARM3(ctx);
-    xh_emit_net_bytes(sk, size, 0);
+    __u8 quic = 0;
+    /* EO.5c: gated payload peek — only when DeepCapture is enabled, and
+       only for udp/443, to confirm QUIC vs other UDP. Default off → no-op. */
+    if (xh_deepcapture_on()) {
+        __u16 dport = 0;
+        BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
+        if (bpf_ntohs(dport) == 443) {
+            struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
+            quic = xh_quic_peek(msg);
+        }
+    }
+    xh_emit_net_bytes(sk, size, 0, quic);
     return 0;
 }
 
@@ -797,7 +865,7 @@ SEC("kprobe/udp_recvmsg")
 int kprobe_udp_recvmsg(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
     __u32 size = (__u32)PT_REGS_PARM3(ctx);
-    xh_emit_net_bytes(sk, size, 1);
+    xh_emit_net_bytes(sk, size, 1, 0);
     return 0;
 }
 

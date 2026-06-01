@@ -342,6 +342,8 @@ func decodeNetBytesEvent(b []byte, ev *model.Event) {
 	sport := binary.LittleEndian.Uint16(b[22:24])
 	bytes := binary.LittleEndian.Uint32(b[24:28])
 	dir := b[28]
+	// b[29] = _pad[0]: EO.5c QUIC long-header confirmation (udp/443, gated).
+	quicConfirmed := len(b) > 29 && b[29] == 1
 
 	switch family {
 	case 2:
@@ -362,6 +364,9 @@ func decodeNetBytesEvent(b []byte, ev *model.Event) {
 		ev.Tags["dir"] = "out"
 	} else {
 		ev.Tags["dir"] = "in"
+	}
+	if quicConfirmed {
+		ev.Tags["quic_confirmed"] = "1"
 	}
 }
 
