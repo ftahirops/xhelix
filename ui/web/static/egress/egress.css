@@ -587,6 +587,22 @@ pre.whois-pre {
 .susp-score { font-size: 28px; font-weight: 700; line-height: 1; }
 .susp-bd { display: none; margin-top: 12px; font-family: var(--mono); font-size: 12px; }
 .susp-banner.expanded .susp-bd { display: block; }
+
+/* Capture-loss banner: persistent strip below the topbar that makes
+   eBPF capture loss visible. It does NOT prevent loss — copy says so. */
+.capture-loss-banner {
+  margin: 0 20px 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--warn);
+  border-left: 4px solid var(--warn);
+  background: #2a1f0d;
+  color: var(--warn);
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.capture-loss-banner .cl-decode { color: var(--fg-2, #999); }
 .susp-bd-row { display: flex; gap: 12px; padding: 2px 0; align-items: baseline; }
 .susp-bd-delta { width: 50px; text-align: right; color: var(--err); font-weight: 700; }
 .susp-bd-delta.neg { color: var(--ok); }

@@ -293,11 +293,14 @@ func (s *Server) handleSensors(w http.ResponseWriter, r *http.Request) {
 	for _, sn := range s.Sensors {
 		h := sn.Health()
 		out = append(out, map[string]interface{}{
-			"name":       sn.Name(),
-			"healthy":    h.Healthy,
-			"reason":     h.Reason,
-			"drop_count": h.DropCount,
-			"last_event": h.LastEvent,
+			"name":               sn.Name(),
+			"healthy":            h.Healthy,
+			"reason":             h.Reason,
+			"drop_count":         h.DropCount,
+			"drop_ringbuf":       h.DropRingbuf,
+			"drop_consumer_full": h.DropConsumerFull,
+			"drop_decode":        h.DropDecode,
+			"last_event":         h.LastEvent,
 		})
 	}
 	writeJSON(w, out)

@@ -217,6 +217,31 @@ async function fetchJSON(url) {
   }
 }
 
+// Capture-loss banner: poll /api/sensors, find the ebpf sensor, and surface
+// ringbuf/consumer-full drops. This makes loss VISIBLE — it does not prevent
+// it (the kernel already dropped the events before userspace saw them).
+async function refreshCaptureLoss() {
+  const el = document.getElementById('capture-loss-banner');
+  if (!el) return;
+  const sensors = await fetchJSON('/api/sensors?_=' + Date.now());
+  if (!Array.isArray(sensors)) return;
+  const ebpf = sensors.find(s => s && s.name === 'ebpf');
+  if (!ebpf) { el.style.display = 'none'; return; }
+  const r = ebpf.drop_ringbuf || 0;
+  const c = ebpf.drop_consumer_full || 0;
+  const d = ebpf.drop_decode || 0;
+  if (r > 0 || c > 0) {
+    let msg = `⚠ Capture loss: ringbuf overflow ${fmtNum(r)}, consumer-full ${fmtNum(c)} — some egress traffic may be missing from this view.`;
+    if (d > 0) {
+      msg += ` <span class="cl-decode">(+${fmtNum(d)} decode errors)</span>`;
+    }
+    el.innerHTML = msg;
+    el.style.display = '';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 function debounce(fn, ms) {
   let t = null;
   return function () {
@@ -2951,6 +2976,15 @@ window.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     go(href);
   });
+
+  // Capture-loss banner: poll independently of the per-route refresh so it
+  // stays current on every page. Honors pause + hidden-tab like the main
+  // refresh loop.
+  refreshCaptureLoss();
+  setInterval(() => {
+    if (state.paused || document.hidden) return;
+    refreshCaptureLoss();
+  }, 5000);
 
   // Host info best-effort.
   try {
