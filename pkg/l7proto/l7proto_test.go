@@ -24,6 +24,7 @@ func TestClassify(t *testing.T) {
 		{"dns-udp", "udp", 53, "", "", nil, "", false, ProtoDNS},
 		{"quic-udp443-confirmed", "udp", 443, "", "", nil, "", true, ProtoQUIC},
 		{"udp443-unconfirmed", "udp", 443, "", "", nil, "", false, ProtoUDPOther},
+		{"quic-confirmed-no-l4", "", 0, "", "", nil, "", true, ProtoQUIC},
 		{"udp-other-port", "udp", 1234, "", "", nil, "", false, ProtoUDPOther},
 		{"tls-other", "tcp", 443, "", "", nil, "", false, ProtoTLSOther},
 		{"raw", "tcp", 9999, "", "", nil, "", false, ProtoRaw},

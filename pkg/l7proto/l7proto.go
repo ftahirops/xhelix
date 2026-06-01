@@ -44,6 +44,13 @@ var http2Preface = []byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
 
 // Classify returns the best-effort L7 protocol for a flow.
 func Classify(s Signals) Proto {
+	// A confirmed QUIC long-header (EO.5c eBPF peek) is authoritative and
+	// independent of L4 tagging — check it first. (net_bytes events do not
+	// carry an L4 tag today, so the udp branch below can't be relied on for
+	// this.)
+	if s.QUICConfirmed {
+		return ProtoQUIC
+	}
 	switch strings.ToLower(s.ALPN) {
 	case "grpc":
 		return ProtoGRPC
