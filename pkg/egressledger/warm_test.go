@@ -40,3 +40,17 @@ func TestWarmRoundTripServiceRoleParentComm(t *testing.T) {
 		t.Errorf("ParentComm: got %q want %q", got.Metrics.ParentComm, "sshd")
 	}
 }
+
+func TestMergeRecord_CarriesServiceRoleParentComm(t *testing.T) {
+	a := FlowRecord{Metrics: FlowMetrics{ServiceRole: "web", ParentComm: "init"}}
+	b := FlowRecord{Metrics: FlowMetrics{ServiceRole: "database", ParentComm: "sshd"}}
+	got := mergeRecord(a, b)
+	if got.Metrics.ServiceRole != "database" || got.Metrics.ParentComm != "sshd" {
+		t.Fatalf("merge dropped descriptive fields: %+v", got.Metrics)
+	}
+	// empty incoming must NOT erase an existing value
+	got2 := mergeRecord(b, FlowRecord{Metrics: FlowMetrics{}})
+	if got2.Metrics.ServiceRole != "database" || got2.Metrics.ParentComm != "sshd" {
+		t.Fatalf("empty incoming erased existing: %+v", got2.Metrics)
+	}
+}

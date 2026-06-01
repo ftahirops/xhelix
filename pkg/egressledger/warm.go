@@ -155,6 +155,15 @@ func mergeRecord(a, b FlowRecord) FlowRecord {
 	}
 	out.Metrics.DenyEvents += b.Metrics.DenyEvents
 	out.Metrics.VerifyEvents += b.Metrics.VerifyEvents
+	// Descriptive enrichment: last-observed-non-empty wins (consistent with
+	// the hot-ring merge). Without this, merging same-key records would drop
+	// the newer record's service_role/parent_comm.
+	if b.Metrics.ServiceRole != "" {
+		out.Metrics.ServiceRole = b.Metrics.ServiceRole
+	}
+	if b.Metrics.ParentComm != "" {
+		out.Metrics.ParentComm = b.Metrics.ParentComm
+	}
 	return out
 }
 
