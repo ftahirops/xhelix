@@ -27,6 +27,8 @@ type parquetRow struct {
 	SNI            string `parquet:"sni,zstd"`
 	DNSName        string `parquet:"dns_name,zstd"`
 	DestClass      string `parquet:"dest_class,zstd"`
+	ServiceRole    string `parquet:"service_role,zstd"`
+	ParentComm     string `parquet:"parent_comm,zstd"`
 	FirstSeenNS    int64  `parquet:"first_seen_ns"`
 	LastSeenNS     int64  `parquet:"last_seen_ns"`
 	Connects       uint64 `parquet:"connects"`
@@ -50,6 +52,8 @@ func recordToRow(r FlowRecord) parquetRow {
 		SNI:            r.Key.SNI,
 		DNSName:        r.Key.DNSName,
 		DestClass:      r.Key.DestClass,
+		ServiceRole:    r.Metrics.ServiceRole,
+		ParentComm:     r.Metrics.ParentComm,
 		FirstSeenNS:    r.Metrics.FirstSeen.UnixNano(),
 		LastSeenNS:     r.Metrics.LastSeen.UnixNano(),
 		Connects:       r.Metrics.Connects,
@@ -84,6 +88,8 @@ func rowToRecord(p parquetRow) FlowRecord {
 			DistinctDsts: p.DistinctDsts,
 			DenyEvents:   p.DenyEvents,
 			VerifyEvents: p.VerifyEvents,
+			ServiceRole:  p.ServiceRole,
+			ParentComm:   p.ParentComm,
 		},
 		Bucket: time.Unix(0, p.BucketUnixNano),
 	}
