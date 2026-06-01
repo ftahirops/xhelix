@@ -151,6 +151,16 @@ func (b *linuxBackend) loadELF(parent context.Context, path string) error {
 		_ = m.Update(uint32(0), pid, ebpf.UpdateAny)
 	}
 
+	// EO.5c: enable the gated QUIC payload peek only when DeepCapture is set.
+	// Default (false) leaves the in-kernel peek a no-op.
+	if m := coll.Maps["xh_deepcapture"]; m != nil {
+		var v uint8
+		if b.cfg.DeepCapture {
+			v = 1
+		}
+		_ = m.Update(uint32(0), v, ebpf.UpdateAny)
+	}
+
 	// Populate bad-ips map from config
 	if m := coll.Maps["xh_bad_ips"]; m != nil && len(b.cfg.BadIPs) > 0 {
 		for _, ipStr := range b.cfg.BadIPs {

@@ -2688,6 +2688,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			WatchPaths:    cfg.Sensors.FIM.WatchPaths,
 			BadIPs:        badIPs,
 			SelfPID:       uint32(os.Getpid()),
+			DeepCapture:   cfg.Sensors.EBPF.DeepCapture,
 		}
 		ebpf := ebpfsensor.New(ebpfCfg)
 		activeSensors = append(activeSensors, ebpf)

@@ -494,6 +494,7 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				ALPN:            alpn,
 				HTTPRequestLine: ev.Tags["http_request_line"],
 				PayloadPrefix:   payloadPrefix,
+				QUICConfirmed:   ev.Tags["quic_confirmed"] == "1",
 			}))
 			p.EgressLedger.Observe(le)
 		}

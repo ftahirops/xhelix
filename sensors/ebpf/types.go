@@ -119,4 +119,8 @@ type Config struct {
 	WatchPaths    []string
 	BadIPs        []string
 	SelfPID       uint32
+	// DeepCapture turns on the EO.5c gated payload peek (QUIC long-header
+	// on udp/443) by setting the xh_deepcapture map after load. Default
+	// false → the in-kernel peek is a no-op.
+	DeepCapture bool
 }
