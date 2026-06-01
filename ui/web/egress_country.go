@@ -57,9 +57,10 @@ type CountryDetail struct {
 type HistoricalPID struct {
 	PID        uint32    `json:"pid"`
 	PPID       uint32    `json:"ppid,omitempty"`
-	Comm       string    `json:"comm"`
-	Binary     string    `json:"binary"`
-	ParentComm string    `json:"parent_comm,omitempty"`
+	Comm        string    `json:"comm"`
+	Binary      string    `json:"binary"`
+	ParentComm  string    `json:"parent_comm,omitempty"`
+	ServiceRole string    `json:"service_role,omitempty"`
 	UID        uint32    `json:"uid"`
 	FirstSeen  time.Time `json:"first_seen"`
 	LastSeen   time.Time `json:"last_seen"`
@@ -597,6 +598,8 @@ func (s *Server) handleEgressCountry(w http.ResponseWriter, r *http.Request) {
 					ContainerClass: r.ContainerClass,
 					Unit:           r.Unit,
 					Container:      containerCell(r.ContainerClass, r.ContainerID),
+					ServiceRole:    r.ServiceRole,
+					ParentComm:     r.ParentComm,
 				}, dests: map[string]struct{}{}}
 				byPID[r.PID] = ag
 			}

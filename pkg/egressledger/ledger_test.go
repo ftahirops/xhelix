@@ -92,6 +92,37 @@ func TestLedgerFilters(t *testing.T) {
 	}
 }
 
+func TestLedgerFilterServiceRole(t *testing.T) {
+	l := newTestLedger(t, 14)
+	defer l.Close()
+	now := time.Now()
+	l.Observe(Event{
+		Time:        now,
+		Binary:      "mysqld",
+		DestIP:      net.ParseIP("203.0.113.1"),
+		DestPort:    3306,
+		Protocol:    "tcp",
+		Connect:     true,
+		ServiceRole: "database",
+	})
+	l.Observe(Event{
+		Time:        now,
+		Binary:      "nginx",
+		DestIP:      net.ParseIP("203.0.113.2"),
+		DestPort:    443,
+		Protocol:    "tcp",
+		Connect:     true,
+		ServiceRole: "web",
+	})
+	got := l.QueryLive(FlowFilter{UID: -1, CGroupID: -1, DestPort: -1, ServiceRole: "database"})
+	if len(got) != 1 {
+		t.Fatalf("service_role filter: want 1 row, got %d", len(got))
+	}
+	if got[0].Key.Binary != "mysqld" || got[0].Metrics.ServiceRole != "database" {
+		t.Fatalf("service_role filter returned wrong row: %+v", got[0])
+	}
+}
+
 func TestLedgerTickRollsHotToWarm(t *testing.T) {
 	l := newTestLedger(t, 14)
 	defer l.Close()

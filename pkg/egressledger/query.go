@@ -32,6 +32,9 @@ func matchFilter(r FlowRecord, f FlowFilter) bool {
 	if f.DenyOnly && r.Metrics.DenyEvents == 0 {
 		return false
 	}
+	if f.ServiceRole != "" && r.Metrics.ServiceRole != f.ServiceRole {
+		return false
+	}
 	if f.Visibility == "public" || f.Visibility == "internal" {
 		isPublic := IsPublicDestClass(r.Key.DestClass)
 		if r.Key.DestClass == "" {

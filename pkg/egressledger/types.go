@@ -112,6 +112,10 @@ type FlowFilter struct {
 	DestClass string
 	DenyOnly  bool
 
+	// ServiceRole filters by the descriptive service role recorded on
+	// FlowMetrics (from pkg/servicerole). Empty = any.
+	ServiceRole string
+
 	// Visibility filters by public/internal classification. Empty (zero
 	// value) and "any" both mean no filter. "public" excludes private/
 	// loopback/link-local destinations. "internal" includes ONLY

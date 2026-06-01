@@ -46,3 +46,35 @@ func TestHistoricalPIDContainerJSON(t *testing.T) {
 		t.Errorf("missing full container_id in JSON: %s", js)
 	}
 }
+
+// TestHistoricalPIDServiceRoleJSON asserts that ServiceRole + ParentComm
+// from a recent ProcEvent survive the ProcEvent→HistoricalPID mapping and
+// appear in the JSON the egress drilldowns serve.
+func TestHistoricalPIDServiceRoleJSON(t *testing.T) {
+	e := egressledger.ProcEvent{
+		PID:         4321,
+		Comm:        "mysqld",
+		Binary:      "/usr/sbin/mysqld",
+		ServiceRole: "database",
+		ParentComm:  "systemd",
+	}
+
+	h := HistoricalPID{
+		PID: e.PID, Comm: e.Comm, Binary: e.Binary,
+		ServiceRole: e.ServiceRole,
+		ParentComm:  e.ParentComm,
+	}
+
+	b, err := json.Marshal(h)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	js := string(b)
+
+	if !strings.Contains(js, `"service_role":"database"`) {
+		t.Errorf("missing service_role in JSON: %s", js)
+	}
+	if !strings.Contains(js, `"parent_comm":"systemd"`) {
+		t.Errorf("missing parent_comm in JSON: %s", js)
+	}
+}
