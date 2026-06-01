@@ -480,10 +480,18 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 					payloadPrefix = dec
 				}
 			}
+			// ALPN hint (EO.5b): the dpi sniffer records the client-
+			// offered ALPN onto the Conn row from the TLS ClientHello.
+			// Prefer the tag if present, else consult connstate.
+			alpn := ev.Tags["alpn"]
+			if alpn == "" && p.ConnTable != nil && ev.PID != 0 {
+				alpn = lookupALPNFromConnstate(p.ConnTable, ev.PID, ev.Tags["dst_ip"], le.DestPort)
+			}
 			le.L7Protocol = string(l7proto.Classify(l7proto.Signals{
 				L4:              le.Protocol,
 				DstPort:         le.DestPort,
 				SNI:             le.SNI,
+				ALPN:            alpn,
 				HTTPRequestLine: ev.Tags["http_request_line"],
 				PayloadPrefix:   payloadPrefix,
 			}))

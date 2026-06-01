@@ -147,6 +147,11 @@ type Conn struct {
 	// flow carries a TLS handshake the sniffer could observe.
 	SNI string
 
+	// ALPN is the client-offered ALPN (hint), populated by sensors/dpi
+	// from the TLS ClientHello. It is the client's OFFERED protocol
+	// list, not the negotiated one — treat as a strong hint.
+	ALPN string
+
 	// Counters (best-effort; eBPF doesn't yet emit byte counts —
 	// these get populated by the conntrack reconciler in Phase 2).
 	BytesOut uint64
@@ -400,6 +405,33 @@ func (t *Table) AttachSNI(tup Tuple, sni string) {
 		if k.Proto == tup.Proto && k.DstAddr == tup.DstAddr && k.DstPort == tup.DstPort {
 			if c.SNI == "" {
 				c.SNI = sni
+			}
+			return
+		}
+	}
+}
+
+// AttachALPN stamps the TLS ClientHello client-offered ALPN hint onto
+// an existing flow. Lookup mirrors AttachSNI exactly: full tuple first,
+// then a per-PID-independent dst-IP+port fallback for any src-port.
+// Only sets when currently empty.
+func (t *Table) AttachALPN(tup Tuple, alpn string) {
+	if alpn == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if c, ok := t.conns[tup]; ok {
+		if c.ALPN == "" {
+			c.ALPN = alpn
+		}
+		return
+	}
+	// Fallback: walk conns with matching dst tuple but any src-port.
+	for k, c := range t.conns {
+		if k.Proto == tup.Proto && k.DstAddr == tup.DstAddr && k.DstPort == tup.DstPort {
+			if c.ALPN == "" {
+				c.ALPN = alpn
 			}
 			return
 		}
