@@ -67,6 +67,29 @@ type HistoricalPID struct {
 	BytesOut   uint64    `json:"bytes_out"`
 	BytesIn    uint64    `json:"bytes_in"`
 	StillAlive bool      `json:"still_alive"`
+
+	ContainerID    string `json:"container_id,omitempty"`
+	ContainerClass string `json:"container_class,omitempty"`
+	Unit           string `json:"unit,omitempty"`
+	// Container is the display token for the "Container" cell: short
+	// container id when ContainerClass=="container", else the class token.
+	Container string `json:"container,omitempty"`
+}
+
+// containerCell renders the "Container" display token: the first 12 chars
+// of the container id (full id if shorter) when class=="container",
+// otherwise the class token (e.g. "user"/"system"). Empty for "unknown".
+func containerCell(class, id string) string {
+	if class == "container" {
+		if len(id) > 12 {
+			return id[:12]
+		}
+		return id
+	}
+	if class == "unknown" || class == "" {
+		return ""
+	}
+	return class
 }
 
 // LiveProcInfo is one row in the "running processes with a socket to
@@ -570,6 +593,10 @@ func (s *Server) handleEgressCountry(w http.ResponseWriter, r *http.Request) {
 					PID: r.PID, PPID: r.PPID, Comm: r.Comm,
 					Binary: r.Binary, UID: r.UID,
 					FirstSeen: r.Time, LastSeen: r.Time,
+					ContainerID:    r.ContainerID,
+					ContainerClass: r.ContainerClass,
+					Unit:           r.Unit,
+					Container:      containerCell(r.ContainerClass, r.ContainerID),
 				}, dests: map[string]struct{}{}}
 				byPID[r.PID] = ag
 			}

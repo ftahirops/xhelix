@@ -855,7 +855,7 @@ async function renderProcess(view) {
     ${(detail.historical_pids||[]).length ? `<div class="card" style="margin-bottom:12px">
       <div class="card-head"><h2>Historical PIDs (${esc(detail.historical_pids.length)})</h2><div class="right">includes exited</div></div>
       <div class="tbl-wrap" style="border:0">
-        <table class="tbl"><thead><tr><th>PID</th><th>Parent</th><th>Status</th><th class="num">Out</th><th class="num">In</th><th>Window</th><th>Dests</th></tr></thead><tbody>
+        <table class="tbl"><thead><tr><th>PID</th><th>Parent</th><th>Container</th><th>Status</th><th class="num">Out</th><th class="num">In</th><th>Window</th><th>Dests</th></tr></thead><tbody>
         ${detail.historical_pids.map(h => {
           const tm0 = new Date(h.first_seen).toISOString().slice(11,19);
           const tm1 = new Date(h.last_seen).toISOString().slice(11,19);
@@ -863,6 +863,7 @@ async function renderProcess(view) {
           return `<tr class="clickable" data-pid="${esc(h.pid)}">
             <td class="mono" style="color:var(--accent)"><strong>${esc(h.pid)}</strong>${h.ppid?'<span class="dim"> (←'+esc(h.ppid)+')</span>':''}</td>
             <td class="mono dim">${esc(h.parent_comm||'?')}</td>
+            <td class="mono dim">${esc(h.container||'')}</td>
             <td>${status}</td>
             <td class="num">${fmtBytes(h.bytes_out)}</td>
             <td class="num dim">${fmtBytes(h.bytes_in)}</td>
@@ -1400,6 +1401,7 @@ async function renderCountryDetail(view) {
           <td class="mono"><strong>${esc(h.pid)}</strong>${h.ppid?'<span class="dim"> (←'+esc(h.ppid)+')</span>':''}</td>
           <td class="mono">${esc(h.comm||h.binary)}</td>
           <td class="mono dim">${esc(h.parent_comm||'?')}</td>
+          <td class="mono dim">${esc(h.container||'')}</td>
           <td>${status}</td>
           <td class="num">${fmtBytes(h.bytes_out)}</td>
           <td class="num dim">${fmtBytes(h.bytes_in)}</td>
@@ -1414,7 +1416,7 @@ async function renderCountryDetail(view) {
         </div>
         <div class="tbl-wrap" style="border:0">
           <table class="tbl"><thead><tr>
-            <th>PID (PPID)</th><th>Comm</th><th>Parent</th><th>Status</th>
+            <th>PID (PPID)</th><th>Comm</th><th>Parent</th><th>Container</th><th>Status</th>
             <th class="num">Out</th><th class="num">In</th><th>Span</th><th>Dests</th>
           </tr></thead><tbody>${rows}</tbody></table>
         </div></div>`;
