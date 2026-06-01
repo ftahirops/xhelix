@@ -446,6 +446,15 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				decision := p.DestClassifier.Classify(le.DestIP, le.SNI, le.DestPort)
 				le.DestClass = string(decision.Class)
 			}
+			// Stamp the originating pid's cgroup origin (container id /
+			// class / systemd unit) so per-container egress is
+			// attributable. Optional; nil classifier leaves fields empty.
+			if p.CGroupClassifier != nil && ev.PID != 0 {
+				ci := p.CGroupClassifier.Classify(ev.PID)
+				le.ContainerID = ci.ContainerID
+				le.ContainerClass = ci.Class.String()
+				le.Unit = ci.Unit
+			}
 			p.EgressLedger.Observe(le)
 		}
 	}
