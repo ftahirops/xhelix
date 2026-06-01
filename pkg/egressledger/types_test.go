@@ -8,3 +8,16 @@ func TestEvent_ContainerFields(t *testing.T) {
 		t.Fatalf("container fields not retained: %+v", e)
 	}
 }
+
+func TestEvent_ServiceRoleParentComm(t *testing.T) {
+	e := Event{ServiceRole: "database", ParentComm: "systemd"}
+	if e.ServiceRole != "database" || e.ParentComm != "systemd" {
+		t.Fatalf("fields not retained: %+v", e)
+	}
+	var m FlowMetrics
+	m.ServiceRole = "web"
+	m.ParentComm = "sshd"
+	if m.ServiceRole != "web" || m.ParentComm != "sshd" {
+		t.Fatalf("metrics fields not retained: %+v", m)
+	}
+}

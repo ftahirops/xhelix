@@ -26,3 +26,25 @@ func TestRecentRingRetainsContainerFields(t *testing.T) {
 		t.Fatalf("ContainerClass not retained: got %q", snap[0].ContainerClass)
 	}
 }
+
+func TestRecentRingRetainsServiceRoleParentComm(t *testing.T) {
+	r := newRecentRing(8)
+	r.push(ProcEvent{
+		Time:        time.Now(),
+		Binary:      "/usr/bin/postgres",
+		PID:         5151,
+		DestIP:      "203.0.113.2",
+		ServiceRole: "database",
+		ParentComm:  "sshd",
+	})
+	snap := r.snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("want 1 row, got %d", len(snap))
+	}
+	if snap[0].ServiceRole != "database" {
+		t.Fatalf("ServiceRole not retained: got %q", snap[0].ServiceRole)
+	}
+	if snap[0].ParentComm != "sshd" {
+		t.Fatalf("ParentComm not retained: got %q", snap[0].ParentComm)
+	}
+}

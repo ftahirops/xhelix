@@ -59,6 +59,12 @@ func (h *hotRing) observe(t time.Time, key FlowKey, ev *Event) {
 	if ev.Verify {
 		m.VerifyEvents++
 	}
+	if ev.ServiceRole != "" {
+		m.ServiceRole = ev.ServiceRole
+	}
+	if ev.ParentComm != "" {
+		m.ParentComm = ev.ParentComm
+	}
 }
 
 // slide removes buckets older than (now - window) and returns the evicted

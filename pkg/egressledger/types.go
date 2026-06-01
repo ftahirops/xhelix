@@ -37,6 +37,11 @@ type FlowMetrics struct {
 	DistinctDsts uint32
 	DenyEvents   uint64
 	VerifyEvents uint64
+	// ServiceRole / ParentComm: last observed for this key (descriptive;
+	// the key already pins binary/uid/cgroup so role is stable). Enables
+	// grouping aggregates by role without inflating the FlowKey.
+	ServiceRole string
+	ParentComm  string
 }
 
 // FlowRecord is a (bucket, key, metrics) triple returned by queries.
@@ -86,6 +91,10 @@ type Event struct {
 	ContainerID    string
 	ContainerClass string
 	Unit           string
+	// ServiceRole / ParentComm are descriptive enrichment (role from
+	// pkg/servicerole; parent process comm). NOT part of FlowKey.
+	ServiceRole string
+	ParentComm  string
 	// SrcPort — local port. Used at observe time to decide Role when
 	// the caller didn't set it. Not stored.
 	SrcPort uint16
