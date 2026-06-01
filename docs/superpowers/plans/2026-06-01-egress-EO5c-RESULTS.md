@@ -67,3 +67,16 @@ DeepCapture OFF first (verifier test), then ON for functional test.
 **Disposition:** QUIC eBPF is functionally validated (loads, stable, classifies
 correctly). DeepCapture is OFF by default; re-enable for a measured overhead soak
 before recommending it generally. Prod untouched.
+
+## EO5c-T4 follow-up — DeepCapture overhead soak STARTED (2026-06-01)
+
+EO.7 + the l7proto fix deployed (commit 2b08ead); DeepCapture re-enabled for the soak.
+- **A/B CPU (on/off/on):** ~317% / ~312% / ~392% per-core — within the daemon's ±25%
+  baseline noise (~3–4 cores busy). No drop-counter increase.
+- **0 outbound udp/443 sockets on this box** → the QUIC peek essentially never fires →
+  no overhead to measure here.
+- **Honest caveat:** overhead on a *QUIC-heavy* host (browsers / HTTP-3-heavy clients,
+  where the peek runs per udp/443 send) is UNMEASURED. This server-class box can't
+  establish it. A QUIC-heavy host is where a real overhead soak would matter.
+- **Disposition:** DeepCapture left ON on the dev box (soak running). Recommend it stays
+  OFF on QUIC-heavy hosts until measured there.
