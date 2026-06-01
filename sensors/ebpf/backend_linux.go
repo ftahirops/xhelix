@@ -33,8 +33,12 @@ type linuxBackend struct {
 	mu      sync.Mutex
 	started atomic.Bool
 	healthy atomic.Bool
-	drops   atomic.Uint64
-	cancel  context.CancelFunc
+
+	dropRingbuf      atomic.Uint64 // ringbuf read error (incl. overflow/lost samples)
+	dropConsumerFull atomic.Uint64 // downstream channel full — consumer too slow
+	dropDecode       atomic.Uint64 // event decode failure
+
+	cancel context.CancelFunc
 	out     chan<- model.Event
 
 	// eBPF objects (nil when ELF not loaded)
@@ -100,7 +104,13 @@ func (b *linuxBackend) Stop(ctx context.Context) error {
 }
 
 func (b *linuxBackend) Healthy() bool { return b.healthy.Load() }
-func (b *linuxBackend) Drops() uint64 { return b.drops.Load() }
+
+func (b *linuxBackend) Drops() uint64 {
+	return b.dropRingbuf.Load() + b.dropConsumerFull.Load() + b.dropDecode.Load()
+}
+func (b *linuxBackend) DropRingbuf() uint64      { return b.dropRingbuf.Load() }
+func (b *linuxBackend) DropConsumerFull() uint64 { return b.dropConsumerFull.Load() }
+func (b *linuxBackend) DropDecode() uint64       { return b.dropDecode.Load() }
 
 // loadELF loads a compiled eBPF object and attaches programs.
 func (b *linuxBackend) loadELF(parent context.Context, path string) error {
@@ -261,12 +271,12 @@ func (b *linuxBackend) readLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			b.drops.Add(1)
+			b.dropRingbuf.Add(1)
 			continue
 		}
 		ev, err := Decode(rec.RawSample)
 		if err != nil {
-			b.drops.Add(1)
+			b.dropDecode.Add(1)
 			continue
 		}
 		select {
@@ -274,7 +284,7 @@ func (b *linuxBackend) readLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			b.drops.Add(1)
+			b.dropConsumerFull.Add(1)
 		}
 	}
 }
