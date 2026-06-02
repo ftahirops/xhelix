@@ -69,12 +69,32 @@
         <div id="crumbs" class="crumbs">Egress</div>
       </div>
       <div class="topbar-right">
-        <div class="range-picker">
-          <button class="rng" data-hours="1">1h</button>
-          <button class="rng active" data-hours="6">6h</button>
-          <button class="rng" data-hours="24">24h</button>
-          <button class="rng" data-hours="168">7d</button>
-        </div>
+        <select class="range-select" id="range-select" title="Time window">
+          <optgroup label="Minutes">
+            <option value="5">5m</option>
+            <option value="15">15m</option>
+            <option value="30">30m</option>
+          </optgroup>
+          <optgroup label="Hours">
+            <option value="60">1h</option>
+            <option value="120">2h</option>
+            <option value="180">3h</option>
+            <option value="240">4h</option>
+            <option value="300">5h</option>
+            <option value="360" selected>6h</option>
+            <option value="480">8h</option>
+            <option value="720">12h</option>
+            <option value="1440">24h</option>
+          </optgroup>
+          <optgroup label="Days">
+            <option value="2880">2d</option>
+            <option value="4320">3d</option>
+            <option value="5760">4d</option>
+            <option value="7200">5d</option>
+            <option value="8640">6d</option>
+            <option value="10080">7d</option>
+          </optgroup>
+        </select>
         <button class="btn-ghost" id="pause-btn" title="Pause refresh">⏸ Pause</button>
         <div class="refresh-ind" id="refresh-ind"></div>
       </div>

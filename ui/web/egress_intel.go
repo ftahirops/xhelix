@@ -450,6 +450,7 @@ type OverviewResp struct {
 	BlockedCount24h uint64        `json:"blocked_count_24h"`
 	ActiveAppCount  int           `json:"active_app_count"`
 	OpenAlertsCount int           `json:"open_alerts_count"`
+	WindowMin       int           `json:"window_min"` // the time window (minutes) this series covers
 }
 
 // AppCard is one tile in the Portmaster-style apps grid. Each card
@@ -601,33 +602,53 @@ func (s *Server) handleEgressOverview(w http.ResponseWriter, r *http.Request) {
 		resp.TopDenied = resp.TopDenied[:10]
 	}
 
-	// 24h stacked-area: query timeline for last 24h, bucket by hour×class.
+	// Window-aware stacked-area: the time window comes from ?mins= (default
+	// 60, clamped 5..10080=7d). The series is bucketed into ~60 points so the
+	// chart actually changes with the range picker. Bucket size has a 60s
+	// floor (the ledger's finest hot-tier granularity).
+	windowMin := 60
+	if v := r.URL.Query().Get("mins"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			windowMin = n
+		}
+	}
+	if windowMin < 5 {
+		windowMin = 5
+	}
+	if windowMin > 10080 {
+		windowMin = 10080
+	}
+	resp.WindowMin = windowMin
+	bucketSec := int64(windowMin) // windowMin*60/60 → ~60 buckets across window
+	if bucketSec < 60 {
+		bucketSec = 60
+	}
 	end := time.Now()
-	start := end.Add(-24 * time.Hour)
+	start := end.Add(-time.Duration(windowMin) * time.Minute)
 	tl := s.egress.QueryTimeline(start, end, egressledger.FlowFilter{
 		UID: -1, CGroupID: -1, DestPort: -1,
 		Visibility: vis,
 	})
-	hourly := map[int64]map[string]uint64{}
+	byBucket := map[int64]map[string]uint64{}
 	for _, r := range tl {
-		h := r.Bucket.Truncate(time.Hour).Unix()
-		if hourly[h] == nil {
-			hourly[h] = map[string]uint64{}
+		b := (r.Bucket.Unix() / bucketSec) * bucketSec
+		if byBucket[b] == nil {
+			byBucket[b] = map[string]uint64{}
 		}
 		cls := r.Key.DestClass
 		if cls == "" {
 			cls = "unknown"
 		}
-		hourly[h][cls] += r.Metrics.BytesOut
+		byBucket[b][cls] += r.Metrics.BytesOut
 	}
-	hours := make([]int64, 0, len(hourly))
-	for h := range hourly {
-		hours = append(hours, h)
+	bkeys := make([]int64, 0, len(byBucket))
+	for b := range byBucket {
+		bkeys = append(bkeys, b)
 	}
-	sort.Slice(hours, func(i, j int) bool { return hours[i] < hours[j] })
-	for _, h := range hours {
+	sort.Slice(bkeys, func(i, j int) bool { return bkeys[i] < bkeys[j] })
+	for _, b := range bkeys {
 		resp.HourlyByClass = append(resp.HourlyByClass, HourlyClassPoint{
-			Hour: h, Bytes: hourly[h],
+			Hour: b, Bytes: byBucket[b],
 		})
 	}
 

@@ -675,3 +675,11 @@ pre.whois-pre {
 .pid-grid .kpi-label { font-size:10px; color: var(--dim); letter-spacing:0.5px; }
 .pid-grid > div > div { font-size:12px; word-break:break-all; }
 
+
+/* Time-window selector (replaces the old button row) */
+.range-select {
+  background: var(--bg-1); color: var(--text-0);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 4px 8px; font-size: 12px; cursor: pointer; max-width: 110px;
+}
+.range-select:focus { outline: none; border-color: var(--accent); }

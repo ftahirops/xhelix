@@ -255,7 +255,8 @@ function debounce(fn, ms) {
 
 const state = {
   route: '/egress',
-  hours: 6,
+  windowMin: 360,   // selected time window in minutes (default 6h)
+  hours: 6,         // derived from windowMin (>=1) for hours-based endpoints
   paused: false,
   refreshTimer: null,
   livePage: 0,
@@ -270,10 +271,24 @@ const state = {
   visibility: 'public',
 };
 
+// Window helpers: the picker selects state.windowMin (minutes). Hours-based
+// endpoints get a derived integer-hours value (sub-hour windows round up to 1h
+// for those table queries; the time-series chart uses the exact minutes).
+function winHours() { return Math.max(1, Math.ceil((state.windowMin || 60) / 60)); }
+function fmtWindow(m) {
+  m = m || state.windowMin || 60;
+  if (m < 60) return m + 'm';
+  if (m < 1440) return (m % 60 === 0 ? (m / 60) : (m / 60).toFixed(1)) + 'h';
+  return (m % 1440 === 0 ? (m / 1440) : (m / 1440).toFixed(1)) + 'd';
+}
+function setWindow(m) { state.windowMin = m; state.hours = winHours(); }
+
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem('xhelix.egress') || '{}');
-    if (p.hours) state.hours = p.hours;
+    if (typeof p.windowMin === 'number' && p.windowMin > 0) state.windowMin = p.windowMin;
+    else if (p.hours) state.windowMin = p.hours * 60; // migrate old pref
+    state.hours = winHours();
     if (typeof p.livePageSize === 'number') state.livePageSize = p.livePageSize;
     if (typeof p.liveSearch === 'string') state.liveSearch = p.liveSearch;
     if (typeof p.sidebarCollapsed === 'boolean') state.sidebarCollapsed = p.sidebarCollapsed;
@@ -285,7 +300,7 @@ function loadPrefs() {
 function savePrefs() {
   try {
     localStorage.setItem('xhelix.egress', JSON.stringify({
-      hours: state.hours,
+      windowMin: state.windowMin,
       livePageSize: state.livePageSize,
       liveSearch: state.liveSearch || '',
       sidebarCollapsed: !!state.sidebarCollapsed,
@@ -450,7 +465,7 @@ function render() {
 // ─── Overview ──────────────────────────────────────────────────
 
 async function renderOverview(view) {
-  const data = await fetchJSON('/api/egress/overview?_=1' + visibilityParam());
+  const data = await fetchJSON('/api/egress/overview?_=1&mins=' + state.windowMin + visibilityParam());
   if (!data) {
     view.innerHTML = `<div class="placeholder"><strong>No data</strong>egress ledger is empty or unreachable.</div>`;
     return;
@@ -528,7 +543,7 @@ async function renderOverview(view) {
         <div class="chart-legend">${legend}</div>
       </div>
       <div class="card chart-card">
-        <div class="card-head"><h2>Destination countries</h2><div class="right">top 40 · ${esc(state.hours)}h</div></div>
+        <div class="card-head"><h2>Destination countries</h2><div class="right">top 40 · ${esc(fmtWindow())}</div></div>
         ${worldHTML}
       </div>
     </div>
@@ -721,7 +736,7 @@ async function refreshLive(view) {
 async function renderProcess(view) {
   if (!state.selectedBinary) {
     // Show binary picker.
-    const data = await fetchJSON('/api/egress/overview?_=1' + visibilityParam());
+    const data = await fetchJSON('/api/egress/overview?_=1&mins=' + state.windowMin + visibilityParam());
     const bins = (data && data.top_binaries) || [];
     view.innerHTML = `
       <h1>Per-process</h1>
@@ -806,7 +821,7 @@ async function renderProcess(view) {
     <div class="toolbar">
       <button class="btn-ghost" id="back">← back</button>
       <h1 class="mono" style="margin:0">${esc(binary)}</h1>
-      <span class="pill dim">last ${esc(state.hours || 24)}h</span>
+      <span class="pill dim">last ${esc(fmtWindow())}</span>
       <div class="spacer"></div>
       <button class="btn-ghost" id="p-allow">Allow all</button>
       <button class="btn-ghost" id="p-block">Block all</button>
@@ -1132,7 +1147,7 @@ async function renderCountries(view) {
     </div>
 
     <div class="card chart-card" style="margin-bottom:12px">
-      <div class="card-head"><h2>Geographic distribution</h2><div class="right">last ${esc(state.hours)}h</div></div>
+      <div class="card-head"><h2>Geographic distribution</h2><div class="right">last ${esc(fmtWindow())}</div></div>
       ${Charts.worldGrid(data, { limit: 60 })}
     </div>
 
@@ -1661,7 +1676,7 @@ async function renderCompanies(view) {
       <h1>Companies &amp; ASNs</h1>
       <div class="spacer"></div>
       ${visibilityChip()}
-      <span class="pill dim">${data.length} orgs · ${esc(state.hours)}h window</span>
+      <span class="pill dim">${data.length} orgs · ${esc(fmtWindow())} window</span>
     </div>
 
     <div class="grid grid-4" style="margin-bottom:12px">
@@ -2946,19 +2961,17 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   if (navScrim) navScrim.addEventListener('click', closeSidebar);
 
-  // Range picker.
-  document.querySelectorAll('.range-picker .rng').forEach(b => {
-    if (parseInt(b.dataset.hours, 10) === state.hours) {
-      document.querySelectorAll('.range-picker .rng').forEach(x => x.classList.remove('active'));
-      b.classList.add('active');
-    }
-    b.addEventListener('click', () => {
-      state.hours = parseInt(b.dataset.hours, 10);
-      document.querySelectorAll('.range-picker .rng').forEach(x => x.classList.remove('active'));
-      b.classList.add('active');
+  // Range picker (time window in minutes).
+  const rangeSel = document.getElementById('range-select');
+  if (rangeSel) {
+    rangeSel.value = String(state.windowMin || 360);
+    // If the persisted window isn't an exact option, fall back to 6h.
+    if (rangeSel.value !== String(state.windowMin)) { setWindow(360); rangeSel.value = '360'; }
+    rangeSel.addEventListener('change', () => {
+      setWindow(parseInt(rangeSel.value, 10) || 360);
       savePrefs(); render();
     });
-  });
+  }
 
   // Pause — also dim the refresh indicator while paused so the
   // operator can tell from peripheral vision that auto-refresh is off.
