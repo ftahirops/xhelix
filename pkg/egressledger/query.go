@@ -76,34 +76,39 @@ func (l *Ledger) QueryTimeline(start, end time.Time, filter FlowFilter) []FlowRe
 		return nil
 	}
 	now := time.Now()
-	width := end.Sub(start)
-	ageAtEnd := now.Sub(end)
 	var out []FlowRecord
-
-	// Tier selection: pick the tier where the data actually lives.
-	// Hot only holds the last HotWindow; older data is in warm or cold.
-	switch {
-	case ageAtEnd < l.opts.HotWindow && width <= 2*time.Hour:
-		rows := l.hot.snapshotRange(start, end)
-		for _, r := range rows {
-			if matchFilter(r, filter) {
-				out = append(out, r)
-			}
+	add := func(r FlowRecord) {
+		if matchFilter(r, filter) {
+			out = append(out, r)
 		}
-	case ageAtEnd < l.opts.WarmRetention:
-		_ = l.warm.scan(start, end, func(r FlowRecord) bool {
-			if matchFilter(r, filter) {
-				out = append(out, r)
-			}
-			return true
-		})
-	default:
-		_ = l.cold.scan(start, end, func(r FlowRecord) bool {
-			if matchFilter(r, filter) {
-				out = append(out, r)
-			}
-			return true
-		})
+	}
+
+	// A query window can span multiple tiers (e.g. "last 7d" reaches hot +
+	// warm + cold). Scan EVERY tier whose stored range overlaps [start,end]
+	// and union the results. After Tick() each bucket lives in exactly one
+	// tier (hot→warm→cold migration deletes from the prior tier), so the
+	// union does not double-count.
+	//
+	// The OLD code picked a single tier by the window's end-age, so any query
+	// ending at "now" only ever hit hot/warm and the cold parquet history was
+	// never returned — every long window looked identical (same warm slice).
+	hotStart := now.Add(-l.opts.HotWindow)
+
+	// Tiers are disjoint in time: hot.slide() evicts to warm (deletes from
+	// hot), and the hourly cold-roll drains warm→cold (deletes from warm), so
+	// a bucket lives in exactly one tier. Warm only retains ~the last hour
+	// before draining to cold, so cold holds everything older than ~1h — NOT
+	// just older than WarmRetention. Scan hot for the recent edge, and BOTH
+	// warm and cold whenever the window reaches older than the hot window;
+	// their disjointness means the union doesn't double-count.
+	if end.After(hotStart) {
+		for _, r := range l.hot.snapshotRange(start, end) {
+			add(r)
+		}
+	}
+	if start.Before(hotStart) {
+		_ = l.warm.scan(start, end, func(r FlowRecord) bool { add(r); return true })
+		_ = l.cold.scan(start, end, func(r FlowRecord) bool { add(r); return true })
 	}
 
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Bucket.Before(out[j].Bucket) })
