@@ -22,9 +22,13 @@ func mkEvent(ts time.Time, binary, ip string) Event {
 func TestHotRingObserveMerges(t *testing.T) {
 	// Exact-IP bucketing: two identical IPs merge; different IPs do not.
 	h := newHotRing(time.Minute, 60*time.Minute)
+	// Same timestamp for both — now + now.Add(10s) could straddle a 1-minute
+	// hot bucket boundary (when now lands near :50+), splitting the merge into
+	// 2 rows (flaky). Identical times keep them in one bucket; the merge math
+	// is what's under test.
 	now := time.Now()
 	ev1 := mkEvent(now, "nginx", "203.0.113.1")
-	ev2 := mkEvent(now.Add(10*time.Second), "nginx", "203.0.113.1")
+	ev2 := mkEvent(now, "nginx", "203.0.113.1")
 
 	k := FlowKey{Binary: "nginx", DestCIDR: cidr16(ev1.DestIP), DestPort: 443, Protocol: "tcp"}
 	h.observe(ev1.Time, k, &ev1)

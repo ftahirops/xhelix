@@ -47,10 +47,13 @@ func TestLedgerObserveQueryLive(t *testing.T) {
 	l := newTestLedger(t, 14)
 	defer l.Close()
 
+	// One fixed timestamp for all three observes. Spreading them across
+	// now+0/+1/+2s previously straddled a 1-minute hot bucket boundary when
+	// the wall clock landed near :59, yielding 2 rows instead of 1 (flaky).
 	now := time.Now()
 	for i := 0; i < 3; i++ {
 		l.Observe(Event{
-			Time:     now.Add(time.Duration(i) * time.Second),
+			Time:     now,
 			Binary:   "nginx",
 			DestIP:   net.ParseIP("203.0.113.1"),
 			DestPort: 443,

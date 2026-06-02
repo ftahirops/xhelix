@@ -148,13 +148,22 @@
 
   function _axisX(w, h, pad, xMin, xMax, ticks) {
     let s = '';
+    // Adaptive label format keyed to the actual span, so the axis matches the
+    // selected window: HH:MM for short ranges, MM/DD HHh for multi-day. (Was
+    // hardcoded "HH:00" regardless of range — useless for 5m or 7d windows.)
+    const spanSec = Math.max(1, xMax - xMin);
+    const p2 = n => n.toString().padStart(2, '0');
+    const fmt = (t) => {
+      const d = new Date(t * 1000);
+      if (spanSec <= 36 * 3600) return p2(d.getHours()) + ':' + p2(d.getMinutes());            // <=36h: HH:MM
+      return p2(d.getMonth() + 1) + '/' + p2(d.getDate()) + ' ' + p2(d.getHours()) + 'h';        // multi-day: MM/DD HHh
+    };
     for (let i = 0; i <= ticks; i++) {
       const x = pad.l + (i / ticks) * (w - pad.l - pad.r);
       const t = xMin + (i / ticks) * (xMax - xMin);
-      const d = new Date(t * 1000);
-      const label = d.getHours().toString().padStart(2, '0') + ':00';
+      const label = fmt(t);
       s += `<line x1="${x}" x2="${x}" y1="${h - pad.b}" y2="${h - pad.b + 3}" stroke="#3a4256" stroke-width=".5"/>`;
-      s += `<text x="${x}" y="${h - pad.b + 16}" text-anchor="middle" fill="#6b7283" font-size="10" font-family="ui-monospace,monospace">${label}</text>`;
+      s += `<text x="${x}" y="${h - pad.b + 16}" text-anchor="middle" fill="#6b7283" font-size="9.5" font-family="ui-monospace,monospace">${label}</text>`;
     }
     return s;
   }
