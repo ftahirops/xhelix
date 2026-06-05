@@ -982,7 +982,12 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				rebuildEvery = 6 * time.Hour
 			}
 			go func() {
-				flushT := time.NewTicker(10 * time.Minute)
+				// Poll for ready-to-score windows every 2 min (was 10).
+				// FlushReady only returns completed hour-windows aged past
+				// keep_hours, so tighter polling just trims post-completion
+				// latency before scoreOneWindow runs — it does not add load
+				// (empty ticks are cheap) and does not change window size.
+				flushT := time.NewTicker(2 * time.Minute)
 				pruneT := time.NewTicker(time.Hour)
 				rebuildT := time.NewTicker(rebuildEvery)
 				defer flushT.Stop()
