@@ -631,8 +631,15 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		if p.SpawnBurst != nil && ev.Sensor == "ebpf.proc" &&
 			ev.Tags["kind"] == "proc_spawn" && ev.ParentPID != 0 {
 			if cross, count := p.SpawnBurst.Observe(ev.ParentPID, now); cross {
+				// Warn, not High: a standalone spawn burst has a high
+				// benign base rate on multi-service / control-panel hosts
+				// (package managers, plesk maintenance, shell scripts
+				// spawning coreutils — see prod FP analysis 2026-06-05).
+				// It stays a full input to correlation chains, which
+				// elevate genuinely malicious bursts to a High
+				// verdict.incident; only the raw rule is de-escalated.
 				p.emitBurst(ev, "process_spawn_burst", ev.ParentPID, count,
-					"PID spawned >threshold children in window")
+					"PID spawned >threshold children in window", model.SeverityWarn)
 			}
 		}
 		// File-read burst: any ebpf event whose kind is file_open
@@ -642,8 +649,10 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		if p.FileReadBurst != nil && ev.Sensor == "ebpf" &&
 			ev.Tags["kind"] == "file_open" {
 			if cross, count := p.FileReadBurst.Observe(ev.PID, now); cross {
+				// High: mass file-read bursts are ransomware/staging-shaped
+				// and far higher-signal than spawn bursts.
 				p.emitBurst(ev, "file_read_burst", ev.PID, count,
-					"PID opened >threshold files in window")
+					"PID opened >threshold files in window", model.SeverityHigh)
 			}
 		}
 		// File-mediated taint inheritance (T02 commit 3): on file_open
@@ -2293,11 +2302,11 @@ func isCronPath(path string) bool {
 // file-read-burst and process-spawn-burst share the same shape;
 // the rule engine doesn't need an explicit rule because the burst
 // IS the detection.
-func (p *Pipeline) emitBurst(triggerEv model.Event, ruleID string, pid uint32, count int, reason string) {
+func (p *Pipeline) emitBurst(triggerEv model.Event, ruleID string, pid uint32, count int, reason string, sev model.Severity) {
 	if p.Emit == nil {
 		return
 	}
-	ev := model.NewEvent("burstdet", model.SeverityHigh)
+	ev := model.NewEvent("burstdet", sev)
 	ev.Time = time.Now().UTC()
 	ev.Host = triggerEv.Host
 	ev.PID = pid

@@ -32,10 +32,11 @@ import (
 // allowed — those are the program reading its own /proc entry,
 // which the kernel actually permits unconditionally.
 type Allowlist struct {
-	mu         sync.RWMutex
-	Comms      map[string]struct{}
-	Images     map[string]struct{}
-	ImageGlobs []string
+	mu           sync.RWMutex
+	Comms        map[string]struct{}
+	CommPrefixes []string // e.g. "systemd-" matches the whole generator family
+	Images       map[string]struct{}
+	ImageGlobs   []string
 }
 
 // Default returns the baked-in allowlist. Reflects what
@@ -55,6 +56,11 @@ func Default() *Allowlist {
 		// init / service manager.
 		"systemd", "init", "systemd-logind", "systemd-userdbd",
 		"systemd-resolve", "systemd-network", "systemd-journal",
+		"systemctl", "needrestart", "cloud-id", "cloud-init",
+		// Plesk control-panel + ImunifyAV agents that read /proc as
+		// part of normal operation (observed firing cred_proc_scrape
+		// FPs on prod 2026-06-05). comm is 16-char-truncated kernel-side.
+		"sw-engine", "filwrpr", "imunify-notifie", "timed-trigger",
 		// classic process inspection.
 		"ps", "pgrep", "pidof", "top", "htop", "btop", "atop",
 		"glances", "iotop", "nethogs",
@@ -72,11 +78,23 @@ func Default() *Allowlist {
 	} {
 		a.Comms[c] = struct{}{}
 	}
-	// Image globs handled with filepath.Match.
+	// Comm prefixes — match a whole family by leading substring.
+	// systemd's generators (systemd-fstab-generator, systemd-detect-virt,
+	// systemd-getty-generator, …) all read /proc/<*>/environ at boot and
+	// share the "systemd-" comm prefix; listing each truncated 16-char
+	// name individually is brittle, so we match the family.
+	a.CommPrefixes = []string{"systemd-"}
+	// Image globs handled with filepath.Match. NOTE filepath.Match's '*'
+	// does NOT cross '/', so a single "/usr/lib/systemd/*" misses the
+	// generators that live in subdirs — enumerate the generator dirs.
 	a.ImageGlobs = []string{
 		"/usr/lib/xhelix/*",
 		"/usr/local/bin/xhelix*",
 		"/usr/lib/systemd/*",
+		"/usr/lib/systemd/system-generators/*",
+		"/usr/lib/systemd/user-generators/*",
+		"/lib/systemd/*",
+		"/lib/systemd/system-generators/*",
 	}
 	return a
 }
@@ -115,6 +133,8 @@ func (a *Allowlist) LoadFile(path string) error {
 		switch strings.TrimSpace(k) {
 		case "comm":
 			a.Comms[v] = struct{}{}
+		case "comm_prefix":
+			a.CommPrefixes = append(a.CommPrefixes, v)
 		case "image":
 			a.Images[v] = struct{}{}
 		case "glob":
@@ -136,6 +156,11 @@ func (a *Allowlist) IsAllowed(comm, image string) bool {
 	if comm != "" {
 		if _, ok := a.Comms[comm]; ok {
 			return true
+		}
+		for _, p := range a.CommPrefixes {
+			if strings.HasPrefix(comm, p) {
+				return true
+			}
 		}
 	}
 	if image != "" {
