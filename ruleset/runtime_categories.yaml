@@ -31,6 +31,7 @@ categories:
   baseline.rate_spike: weak_signal
 
   # --- incidents (alert when chain-confirmed) ---
+  webdrop.php_drop: incident
   revshell.detected: incident
   shell_with_socket_fd: incident
   webshell.argv: incident

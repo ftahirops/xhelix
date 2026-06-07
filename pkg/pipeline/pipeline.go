@@ -80,6 +80,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/source"
 	"github.com/xhelix/xhelix/pkg/store"
 	"github.com/xhelix/xhelix/pkg/trustzone"
+	"github.com/xhelix/xhelix/pkg/webdrop"
 	"github.com/xhelix/xhelix/pkg/webshellguard"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/pkg/snicheck"
@@ -705,6 +706,39 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			if score := cronclassify.Suspicion(tags); score > 0 {
 				ev.Tags["cron_suspicion"] = fmt.Sprintf("%d", score)
 			}
+		}
+	}
+
+	// WebDrop: web-server worker writing PHP into a docroot.
+	// Catches the in-process dropper pattern (file_put_contents from php-fpm)
+	// that webshellguard (argv-based) misses. inotify doesn't carry the writer
+	// pid/comm, so we recover it from BRPWriterCache when available.
+	if (ev.Sensor == "fim" || ev.Sensor == "fim.drift") && ev.Tags != nil &&
+		(ev.Tags["create"] == "true" || ev.Tags["write"] == "true") {
+		filePath := ev.Tags["path"]
+		spec := webdrop.Spec{Path: filePath}
+		if p.BRPWriterCache != nil && filePath != "" {
+			if w, ok := p.BRPWriterCache.Lookup(filePath, ev.Time); ok {
+				spec.ActorComm = w.Comm
+				spec.ActorExe = w.ExePath
+			}
+		}
+		if v := webdrop.Scan(spec); v.Hit {
+			wdEv := model.NewEvent("webdrop", webdropModelSeverity(v.Severity))
+			wdEv.Host = ev.Host
+			wdEv.Time = ev.Time
+			wdEv.Comm = spec.ActorComm
+			wdEv.Image = spec.ActorExe
+			wdEv.Tags = map[string]string{
+				"path":    filePath,
+				"signals": strings.Join(v.Signals, "; "),
+			}
+			p.Emit(model.Alert{
+				Event:  wdEv,
+				RuleID: "webdrop.php_drop",
+				Reason: v.Reason + ": " + strings.Join(v.Signals, "; "),
+				Mode:   model.ModeDetect,
+			})
 		}
 	}
 
@@ -2342,4 +2376,16 @@ func parseIPOrNil(s string) net.IP {
 		return nil
 	}
 	return net.ParseIP(s)
+}
+
+// webdropModelSeverity maps pkg/webdrop severity to model.Severity.
+func webdropModelSeverity(s webdrop.Severity) model.Severity {
+	switch s {
+	case webdrop.SeverityCritical:
+		return model.SeverityCritical
+	case webdrop.SeverityHigh:
+		return model.SeverityHigh
+	default:
+		return model.SeverityWarn
+	}
 }
