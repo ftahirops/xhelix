@@ -253,6 +253,22 @@ func readProcCgroup(pid int32) string {
 	return ""
 }
 
+// execDenyRuleID maps an execguard deny reason to a stable, low-cardinality
+// rule ID for the deny ledger's by-rule aggregation. Execguard rules carry
+// only a free-text Reason; this collapses them into a handful of IDs.
+func execDenyRuleID(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "redzone:"):
+		return "redzone_exec"
+	case strings.Contains(reason, "/tmp"):
+		return "exec_from_tmp"
+	case reason == "":
+		return "execguard_deny"
+	default:
+		return "execguard_deny"
+	}
+}
+
 // scoreOneWindow runs both the set-diff scorer and the rate detector
 // against one freshly-flushed baseline Window, and synthesises an
 // Alert through the response pipeline whenever either fires.

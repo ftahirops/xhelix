@@ -39,6 +39,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/pkglifecycle"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
@@ -141,6 +142,9 @@ type foundationContext struct {
 	// AppRegistry stores declared app stacks and provides the cgroup→app
 	// mapping for per-app event attribution (P-UI).
 	AppRegistry *appregistry.Registry
+	// DenyLedger records exec-guard red-zone blocks bucketed by app for
+	// the per-app health view (P4). In-memory, bounded, non-persistent.
+	DenyLedger *denyledger.Ledger
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
 	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
@@ -553,6 +557,11 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 			slog.Info("appregistry ready", "path", path)
 		}
 	}
+
+	// Deny ledger (P4). In-memory, no persistence — bounded ring per app.
+	// Fed from the execguard deny callback in run.go.
+	fc.DenyLedger = denyledger.New()
+	slog.Info("denyledger ready", "scope", "in-memory per-app")
 
 	return fc, nil
 }

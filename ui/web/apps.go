@@ -64,6 +64,41 @@ type DiscoveredServiceView struct {
 	SampleComm  string `json:"sample_comm"`
 }
 
+// AppHealthProvider supplies per-app deny/block health (P4). Wired by the
+// daemon via SetAppHealth. Nil-safe — the /health endpoint returns a
+// clean zero-state when unwired.
+type AppHealthProvider interface {
+	// AppHealth returns the deny stats for one app, or nil if no denies
+	// have been recorded for it.
+	AppHealth(name string) *AppHealthView
+}
+
+// AppHealthView is the per-app deny/block summary.
+type AppHealthView struct {
+	App         string            `json:"app"`
+	Status      string            `json:"status"` // clean|active|noisy
+	TotalDenies uint64            `json:"total_denies"`
+	ByRule      map[string]uint64 `json:"by_rule"`
+	ByBinary    map[string]uint64 `json:"by_binary"`
+	FirstDeny   time.Time         `json:"first_deny,omitempty"`
+	LastDeny    time.Time         `json:"last_deny,omitempty"`
+	Recent      []DenyEventView   `json:"recent"`
+}
+
+// DenyEventView is one recorded deny in the recent ring.
+type DenyEventView struct {
+	Time       time.Time `json:"time"`
+	Binary     string    `json:"binary"`
+	RuleID     string    `json:"rule_id"`
+	Reason     string    `json:"reason"`
+	CgroupPath string    `json:"cgroup_path,omitempty"`
+}
+
+// SetAppHealth wires an AppHealthProvider into the server.
+func (s *Server) SetAppHealth(p AppHealthProvider) {
+	s.appHealth = p
+}
+
 // SetAppRegistry wires an AppRegistryProvider into the server.
 // All /apps/* and /api/apps/* handlers return 503 until this is called.
 func (s *Server) SetAppRegistry(p AppRegistryProvider) {
@@ -265,6 +300,20 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case sub == "health" && r.Method == http.MethodGet:
+		// Confirm the app exists first so a typo returns 404, not a
+		// misleading clean health card.
+		app, err := p.Get(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if app == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, s.appHealthFor(name))
+
 	case sub == "mode" && r.Method == http.MethodPatch:
 		var req struct {
 			Mode string `json:"mode"`
@@ -301,6 +350,23 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// appHealthFor returns the deny health for an app, or a clean zero-state
+// when no provider is wired or the app has recorded no denies.
+func (s *Server) appHealthFor(name string) AppHealthView {
+	if s.appHealth != nil {
+		if h := s.appHealth.AppHealth(name); h != nil {
+			return *h
+		}
+	}
+	return AppHealthView{
+		App:      name,
+		Status:   "clean",
+		ByRule:   map[string]uint64{},
+		ByBinary: map[string]uint64{},
+		Recent:   []DenyEventView{},
 	}
 }
 
@@ -408,6 +474,31 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
   </table>
 </section>
 <section>
+  <h3>Deny Health <span id="healthStatus" class="mode-badge mode-observe">–</span></h3>
+  <div class="health-summary">
+    <div class="hstat"><div class="hlabel">Total Denies</div><div id="hTotal" class="hvalue">–</div></div>
+    <div class="hstat"><div class="hlabel">Last Deny</div><div id="hLast" class="hvalue muted">–</div></div>
+  </div>
+  <div id="healthBody" style="display:none">
+    <div class="health-cols">
+      <div>
+        <h4>By Rule</h4>
+        <table><tbody id="byRuleBody"></tbody></table>
+      </div>
+      <div>
+        <h4>By Binary</h4>
+        <table><tbody id="byBinaryBody"></tbody></table>
+      </div>
+    </div>
+    <h4 style="margin-top:16px">Recent Blocks</h4>
+    <table>
+      <thead><tr><th>Time</th><th>Binary</th><th>Rule</th><th>Reason</th></tr></thead>
+      <tbody id="recentDenyBody"></tbody>
+    </table>
+  </div>
+  <div id="healthClean" class="muted" style="font-size:13px">No denies recorded — app is running clean.</div>
+</section>
+<section>
   <h3>Live Egress <span id="flowCount" class="count">–</span></h3>
   <div id="egressStatus" class="muted" style="margin-bottom:12px;font-size:12px"></div>
   <table id="egressTable" style="display:none">
@@ -491,9 +582,66 @@ function esc(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
+async function loadHealth() {
+  try {
+    const r = await fetch("/api/apps/" + appName + "/health");
+    if (!r.ok) return;
+    const h = await r.json();
+    const badge = document.getElementById("healthStatus");
+    badge.textContent = h.status;
+    badge.className = "mode-badge " + statusClass(h.status);
+    document.getElementById("hTotal").textContent = h.total_denies || 0;
+    document.getElementById("hLast").textContent =
+      h.last_deny && h.total_denies ? new Date(h.last_deny).toLocaleString() : "never";
+    if (!h.total_denies) {
+      document.getElementById("healthBody").style.display = "none";
+      document.getElementById("healthClean").style.display = "";
+      return;
+    }
+    document.getElementById("healthClean").style.display = "none";
+    document.getElementById("healthBody").style.display = "";
+    fillCounts("byRuleBody", h.by_rule);
+    fillCounts("byBinaryBody", h.by_binary);
+    const tbody = document.getElementById("recentDenyBody");
+    tbody.innerHTML = "";
+    (h.recent || []).forEach(e => {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td class="muted">' + new Date(e.time).toLocaleTimeString() + '</td>' +
+        '<td class="mono">' + esc(e.binary) + '</td>' +
+        '<td><span class="stype stype-php-fpm">' + esc(e.rule_id) + '</span></td>' +
+        '<td class="muted">' + esc(e.reason) + '</td>';
+      tbody.appendChild(tr);
+    });
+  } catch(e) { /* leave placeholder */ }
+}
+
+function fillCounts(id, m) {
+  const tbody = document.getElementById(id);
+  tbody.innerHTML = "";
+  const entries = Object.entries(m || {}).sort((a,b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    tbody.innerHTML = '<tr><td class="muted">none</td></tr>';
+    return;
+  }
+  entries.forEach(([k, v]) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = '<td class="mono">' + esc(k) + '</td><td style="text-align:right">' + v + '</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function statusClass(s) {
+  if (s === "noisy") return "mode-locked";
+  if (s === "active") return "mode-guarded";
+  return "mode-shadow"; // clean
+}
+
 // Load on page open and refresh every 30s.
 loadEgress();
+loadHealth();
 setInterval(loadEgress, 30000);
+setInterval(loadHealth, 30000);
 </script>
 </main></body></html>`
 
@@ -753,4 +901,11 @@ select{background:var(--border);color:var(--fg);border:1px solid var(--border);
 .sel-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
 .chip{background:var(--border);border-radius:4px;padding:3px 10px;font-size:12px}
 .selected-svcs{margin-bottom:12px}
+.health-summary{display:flex;gap:32px;margin-bottom:16px}
+.hstat{display:flex;flex-direction:column;gap:4px}
+.hlabel{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+.hvalue{font-size:22px;font-weight:600}
+.health-cols{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.health-cols h4,section h4{font-size:12px;color:var(--mut);text-transform:uppercase;
+  letter-spacing:.5px;margin-bottom:8px}
 `

@@ -18,6 +18,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/netban"
@@ -562,6 +563,38 @@ func toWebApps(apps []appregistry.App) []web.AppView {
 		})
 	}
 	return out
+}
+
+// daemonAppHealthProvider adapts *denyledger.Ledger to web.AppHealthProvider.
+type daemonAppHealthProvider struct {
+	ledger *denyledger.Ledger
+}
+
+func (d *daemonAppHealthProvider) AppHealth(name string) *web.AppHealthView {
+	h := d.ledger.AppHealth(name)
+	if h == nil {
+		return nil
+	}
+	recent := make([]web.DenyEventView, 0, len(h.Recent))
+	for _, e := range h.Recent {
+		recent = append(recent, web.DenyEventView{
+			Time:       e.Time,
+			Binary:     e.Binary,
+			RuleID:     e.RuleID,
+			Reason:     e.Reason,
+			CgroupPath: e.CgroupPath,
+		})
+	}
+	return &web.AppHealthView{
+		App:         h.AppName,
+		Status:      h.Status,
+		TotalDenies: h.TotalDenies,
+		ByRule:      h.ByRule,
+		ByBinary:    h.ByBinary,
+		FirstDeny:   h.FirstDeny,
+		LastDeny:    h.LastDeny,
+		Recent:      recent,
+	}
 }
 
 // hush unused imports if a particular config branch isn't taken.

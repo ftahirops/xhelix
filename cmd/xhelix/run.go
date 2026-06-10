@@ -671,6 +671,18 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		execGuard = execguard.New(func(path string, pid int, d execguard.Decision, reason string) {
 			if d == execguard.Deny {
 				log.Warn("execguard: DENIED", "path", path, "pid", pid, "reason", reason)
+				// Record into the per-app deny ledger (P4). Resolve the
+				// blocked PID's cgroup → declared app so the health view
+				// can attribute the block. Unattributed denies land in
+				// the "_unknown" bucket.
+				if foundation.DenyLedger != nil {
+					cgroup := readProcCgroup(int32(pid))
+					app := ""
+					if foundation.AppRegistry != nil && cgroup != "" {
+						app = foundation.AppRegistry.AppForCgroup(cgroup)
+					}
+					foundation.DenyLedger.Record(app, path, execDenyRuleID(reason), cgroup, reason, time.Now())
+				}
 			}
 		})
 		rules := buildExecGuardRules(cfg.ExecGuard.DenyPaths)
@@ -3004,6 +3016,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Wire app registry into the web UI (P-UI).
 	if foundation.AppRegistry != nil {
 		webServer.SetAppRegistry(&daemonAppRegistryProvider{reg: foundation.AppRegistry})
+	}
+	// Wire per-app deny health into the web UI (P4).
+	if foundation.DenyLedger != nil {
+		webServer.SetAppHealth(&daemonAppHealthProvider{ledger: foundation.DenyLedger})
 	}
 
 	// SBOM periodic diff

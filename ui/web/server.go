@@ -101,6 +101,8 @@ type Server struct {
 	maintenance MaintenanceProvider
 	// appRegistry is the P-UI app registry. Wired via SetAppRegistry. Nil-safe.
 	appRegistry AppRegistryProvider
+	// appHealth is the P4 per-app deny ledger. Wired via SetAppHealth. Nil-safe.
+	appHealth AppHealthProvider
 	mu     sync.RWMutex
 	alerts []model.Alert
 }
