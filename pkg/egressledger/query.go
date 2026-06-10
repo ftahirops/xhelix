@@ -38,6 +38,9 @@ func matchFilter(r FlowRecord, f FlowFilter) bool {
 	if f.L7Protocol != "" && r.Metrics.L7Protocol != f.L7Protocol {
 		return false
 	}
+	if f.App != "" && !strings.Contains(r.Metrics.App, f.App) {
+		return false
+	}
 	if f.Visibility == "public" || f.Visibility == "internal" {
 		isPublic := IsPublicDestClass(r.Key.DestClass)
 		if r.Key.DestClass == "" {

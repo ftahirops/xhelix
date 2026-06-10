@@ -149,6 +149,7 @@ func parseFilter(r *http.Request) egressledger.FlowFilter {
 		DestClass:  q.Get("dest_class"),
 		DenyOnly:   q.Get("deny_only") == "1" || q.Get("deny_only") == "true",
 		Visibility: parseVisibility(q.Get("visibility")),
+		App:        q.Get("app"),
 	}
 	if v := q.Get("uid"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {

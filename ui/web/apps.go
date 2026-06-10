@@ -407,6 +407,18 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
     <tbody>{{SVC_ROWS}}</tbody>
   </table>
 </section>
+<section>
+  <h3>Live Egress <span id="flowCount" class="count">–</span></h3>
+  <div id="egressStatus" class="muted" style="margin-bottom:12px;font-size:12px"></div>
+  <table id="egressTable" style="display:none">
+    <thead><tr>
+      <th>Binary</th><th>Dest</th><th>Port</th><th>Proto</th>
+      <th>SNI / DNS</th><th>Bytes Out</th><th>Conns</th><th>Class</th>
+    </tr></thead>
+    <tbody id="egressBody"></tbody>
+  </table>
+  <div id="egressEmpty" class="muted" style="font-size:13px">No egress flows recorded yet for this app.</div>
+</section>
 <script>
 const appName = "{{APP_NAME}}";
 async function setMode(mode) {
@@ -429,6 +441,59 @@ async function deleteApp() {
   if (r.ok || r.status === 204) { window.location = "/apps"; }
   else { alert("Delete failed"); }
 }
+
+async function loadEgress() {
+  const status = document.getElementById("egressStatus");
+  status.textContent = "Loading…";
+  try {
+    const r = await fetch("/api/egress/live?app=" + encodeURIComponent(appName) + "&visibility=all");
+    if (!r.ok) { status.textContent = "Egress unavailable (" + r.status + ")"; return; }
+    const flows = await r.json();
+    document.getElementById("flowCount").textContent = flows ? flows.length : 0;
+    if (!flows || flows.length === 0) {
+      document.getElementById("egressTable").style.display = "none";
+      document.getElementById("egressEmpty").style.display = "";
+      status.textContent = "";
+      return;
+    }
+    document.getElementById("egressEmpty").style.display = "none";
+    const tbody = document.getElementById("egressBody");
+    tbody.innerHTML = "";
+    flows.forEach(f => {
+      const k = f.key || {}, m = f.metrics || {};
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td class="mono">' + esc(k.binary || "") + '</td>' +
+        '<td class="mono">' + esc(k.dest_cidr || "") + '</td>' +
+        '<td>' + (k.dest_port || "") + '</td>' +
+        '<td>' + esc(k.protocol || "") + '</td>' +
+        '<td class="muted">' + esc(k.sni || k.dns_name || "") + '</td>' +
+        '<td>' + fmtBytes(m.bytes_out || 0) + '</td>' +
+        '<td>' + (m.connects || 0) + '</td>' +
+        '<td><span class="stype stype-' + esc(k.dest_class||"custom") + '">' + esc(k.dest_class || "–") + '</span></td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById("egressTable").style.display = "";
+    status.textContent = "Last updated: " + new Date().toLocaleTimeString();
+  } catch(e) {
+    status.textContent = "Error: " + e;
+  }
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n/1024).toFixed(1) + " KB";
+  if (n < 1073741824) return (n/1048576).toFixed(1) + " MB";
+  return (n/1073741824).toFixed(2) + " GB";
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// Load on page open and refresh every 30s.
+loadEgress();
+setInterval(loadEgress, 30000);
 </script>
 </main></body></html>`
 

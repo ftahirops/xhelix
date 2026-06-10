@@ -38,6 +38,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/l7proto"
 	"github.com/xhelix/xhelix/pkg/longwindow"
+	"github.com/xhelix/xhelix/pkg/pkglifecycle"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
@@ -182,6 +183,11 @@ type Pipeline struct {
 	// event.Tags["app_id"] for downstream analytics + grouping.
 	AppIdent *appident.Identifier
 
+	// AppLookup resolves a PID to its declared app name from the app
+	// registry (P-UI P3). Called at the egress write site to stamp
+	// FlowMetrics.App for per-app egress attribution. Nil-safe.
+	AppLookup func(pid uint32) string
+
 	// VhostCorr correlates inbound HTTP requests with subsequent
 	// outbound connects so analytics can attribute outbound bytes
 	// to the originating virtual host. Nil-safe.
@@ -286,6 +292,14 @@ type Pipeline struct {
 	// (e.g. dropped_binary_lifecycle) can suppress on legitimate
 	// package installs. Phase K.2. Nil-safe.
 	PkgMgr *pkgmgr.Store
+
+	// PkgLifecycle detects npm/yarn/pnpm lifecycle script execution by
+	// reading /proc/<pid>/environ on spawn. Stamps install_script=true
+	// (plus npm_package_name, npm_lifecycle_event) on every event from
+	// a process inside a postinstall/preinstall lineage. This is the
+	// foundational context tag that npm supply-chain rules gate on.
+	// Nil-safe.
+	PkgLifecycle *pkglifecycle.Tagger
 
 	// IncidentGraph assembles correlated incidents from per-event and
 	// per-alert streams (Phase D.1). Pipeline calls Observe(event) at
@@ -497,6 +511,12 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				PayloadPrefix:   payloadPrefix,
 				QUICConfirmed:   ev.Tags["quic_confirmed"] == "1",
 			}))
+			// App registry attribution (P3). Resolve the originating PID
+			// to a declared app name so the egress dashboard can group
+			// flows per app. Cheap: pure in-memory cgroup→app index.
+			if p.AppLookup != nil && ev.PID != 0 {
+				le.App = p.AppLookup(ev.PID)
+			}
 			p.EgressLedger.Observe(le)
 		}
 	}
@@ -550,6 +570,25 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			ev.Tags["pkg_install_window"] = "true"
 		} else {
 			ev.Tags["pkg_install_window"] = "false"
+		}
+	}
+
+	// npm lifecycle context — stamps install_script=true on every event
+	// from a process inside an npm/yarn/pnpm postinstall lineage.
+	// CEL rules gate on event.tags["install_script"] == "true" to
+	// distinguish supply-chain malware from legitimate tool invocations.
+	if p.PkgLifecycle != nil && ev.PID != 0 {
+		if ctx := p.PkgLifecycle.Tag(ev.PID); ctx != nil {
+			if ev.Tags == nil {
+				ev.Tags = map[string]string{}
+			}
+			ev.Tags["install_script"] = "true"
+			if ctx.PackageName != "" {
+				ev.Tags["npm_package_name"] = ctx.PackageName
+			}
+			if ctx.LifecycleEvent != "" {
+				ev.Tags["npm_lifecycle_event"] = ctx.LifecycleEvent
+			}
 		}
 	}
 
@@ -864,8 +903,10 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				Container:     ev.Container,
 				PrimarySource: explicitSource,
 			})
+			p.PkgLifecycle.TagSpawn(ev.PID, ev.ParentPID)
 		case "ebpf.exit":
 			p.ProcTree.OnExit(ev.PID)
+			p.PkgLifecycle.OnExit(ev.PID)
 			if p.CGroupClassifier != nil {
 				p.CGroupClassifier.Forget(ev.PID)
 			}

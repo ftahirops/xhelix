@@ -435,6 +435,7 @@ type OverviewResp struct {
 	UniqueBins1h     int                 `json:"unique_binaries_1h"`
 	UniqueCountries  int                 `json:"unique_countries_1h"`
 	TopBinaries      []TopRow            `json:"top_binaries"`
+	TopApps          []TopRow            `json:"top_apps"`
 	TopDestinations  []TopRow            `json:"top_destinations"`
 	TopCountries     []TopRow            `json:"top_countries"`
 	TopDenied        []TopRow            `json:"top_denied"`
@@ -528,12 +529,18 @@ func (s *Server) handleEgressOverview(w http.ResponseWriter, r *http.Request) {
 	destClass := map[string]string{}
 	countries := map[string]uint64{}
 	denied := map[string]uint64{}
+	apps := map[string]uint64{}
+	appConn := map[string]uint64{}
 	for _, r := range live {
 		resp.BytesOut1h += r.Metrics.BytesOut
 		resp.BytesIn1h += r.Metrics.BytesIn
 		dests[r.Key.DestCIDR] = struct{}{}
 		bins[r.Key.Binary] += r.Metrics.BytesOut
 		binConn[r.Key.Binary] += r.Metrics.Connects
+		if r.Metrics.App != "" {
+			apps[r.Metrics.App] += r.Metrics.BytesOut
+			appConn[r.Metrics.App] += r.Metrics.Connects
+		}
 		dk := r.Key.DestCIDR + ":" + strconv.Itoa(int(r.Key.DestPort))
 		destBytes[dk] += r.Metrics.BytesOut
 		if r.Key.DestClass != "" {
@@ -566,6 +573,17 @@ func (s *Server) handleEgressOverview(w http.ResponseWriter, r *http.Request) {
 	})
 	if len(resp.TopBinaries) > 10 {
 		resp.TopBinaries = resp.TopBinaries[:10]
+	}
+	// Top apps (P3 — only populated when AppRegistry is wired).
+	resp.TopApps = []TopRow{}
+	for a, by := range apps {
+		resp.TopApps = append(resp.TopApps, TopRow{Label: a, Bytes: by, Connects: appConn[a]})
+	}
+	sort.Slice(resp.TopApps, func(i, j int) bool {
+		return resp.TopApps[i].Bytes > resp.TopApps[j].Bytes
+	})
+	if len(resp.TopApps) > 10 {
+		resp.TopApps = resp.TopApps[:10]
 	}
 	// Top destinations.
 	for dk, by := range destBytes {

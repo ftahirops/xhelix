@@ -45,6 +45,10 @@ type FlowMetrics struct {
 	// L7Protocol: last observed application-layer protocol for this key
 	// (descriptive enrichment, NOT part of the FlowKey).
 	L7Protocol string
+	// App is the declared app name from the app registry (P-UI P3).
+	// Last observed for this key — descriptive enrichment, NOT in FlowKey
+	// to avoid cardinality explosion when one binary serves multiple apps.
+	App string
 }
 
 // FlowRecord is a (bucket, key, metrics) triple returned by queries.
@@ -101,6 +105,9 @@ type Event struct {
 	// L7Protocol is descriptive enrichment (application-layer protocol).
 	// NOT part of FlowKey.
 	L7Protocol string
+	// App is the declared app name from the app registry (P-UI P3).
+	// Populated by the pipeline's AppLookup callback. NOT part of FlowKey.
+	App string
 	// SrcPort — local port. Used at observe time to decide Role when
 	// the caller didn't set it. Not stored.
 	SrcPort uint16
@@ -125,6 +132,10 @@ type FlowFilter struct {
 	// L7Protocol filters by the descriptive application-layer protocol
 	// recorded on FlowMetrics. Empty = any.
 	L7Protocol string
+
+	// App filters by the declared app name from the app registry (P3).
+	// Empty = any. Substring match against FlowMetrics.App.
+	App string
 
 	// Visibility filters by public/internal classification. Empty (zero
 	// value) and "any" both mean no filter. "public" excludes private/

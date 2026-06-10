@@ -3311,7 +3311,20 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.LongWindow,
 		foundation.CDNDNS,
 		foundation.FlowStats,
-		tlsLedger)
+		tlsLedger,
+		func() func(pid uint32) string {
+			if foundation.AppRegistry == nil {
+				return nil
+			}
+			ar := foundation.AppRegistry
+			return func(pid uint32) string {
+				cg := readProcCgroup(int32(pid))
+				if cg == "" {
+					return ""
+				}
+				return ar.AppForCgroup(cg)
+			}
+		}())
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -3451,6 +3464,7 @@ func dispatch(
 	cdnDNS *cdndetect.DNSCache,
 	flowStats *flowstats.Counters,
 	tlsPlaintext *tlsledger.Ledger,
+	appLookup func(pid uint32) string,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -3822,7 +3836,8 @@ func dispatch(
 		LongWindow:       longWindow,
 		CDNDNS:           cdnDNS,
 		FlowStats:        flowStats,
-		EgressLedger:     egressLedger,
+		EgressLedger: egressLedger,
+		AppLookup:    appLookup,
 		// DestClassifier drives smart per-class CIDR bucketing in the
 		// ledger (exact IP for raw/unknown/intel_bad; /16 for cdn/cloud).
 		// Wired with intelMgr so threat-intel-matched IPs classify as

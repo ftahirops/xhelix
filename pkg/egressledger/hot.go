@@ -68,6 +68,9 @@ func (h *hotRing) observe(t time.Time, key FlowKey, ev *Event) {
 	if ev.L7Protocol != "" {
 		m.L7Protocol = ev.L7Protocol
 	}
+	if ev.App != "" {
+		m.App = ev.App
+	}
 }
 
 // slide removes buckets older than (now - window) and returns the evicted
