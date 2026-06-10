@@ -18,6 +18,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/model"
@@ -458,7 +459,19 @@ func formatDuration(d time.Duration) string {
 // daemonAppRegistryProvider adapts *appregistry.Registry to
 // web.AppRegistryProvider, translating between the two type shapes.
 type daemonAppRegistryProvider struct {
-	reg *appregistry.Registry
+	reg      *appregistry.Registry
+	compiler *contractcompiler.Manager
+}
+
+// recompile re-runs the compiler for one app after a registry mutation.
+// Best-effort — a compile failure never blocks the registry write.
+func (d *daemonAppRegistryProvider) recompile(name string) {
+	if d.compiler == nil {
+		return
+	}
+	if app, err := d.reg.Get(name); err == nil && app != nil {
+		d.compiler.Recompile(*app)
+	}
 }
 
 func (d *daemonAppRegistryProvider) List() ([]web.AppView, error) {
@@ -502,6 +515,7 @@ func (d *daemonAppRegistryProvider) Create(req web.AppCreateReq) (*web.AppView, 
 	if err := d.reg.Create(app); err != nil {
 		return nil, err
 	}
+	d.recompile(req.Name)
 	created, err := d.reg.Get(req.Name)
 	if err != nil {
 		return nil, err
@@ -511,11 +525,21 @@ func (d *daemonAppRegistryProvider) Create(req web.AppCreateReq) (*web.AppView, 
 }
 
 func (d *daemonAppRegistryProvider) SetMode(name, mode string) error {
-	return d.reg.SetMode(name, appregistry.EnforcementMode(mode))
+	if err := d.reg.SetMode(name, appregistry.EnforcementMode(mode)); err != nil {
+		return err
+	}
+	d.recompile(name) // mode change → recompile (arms/disarms the policy hook)
+	return nil
 }
 
 func (d *daemonAppRegistryProvider) Delete(name string) error {
-	return d.reg.Delete(name)
+	if err := d.reg.Delete(name); err != nil {
+		return err
+	}
+	if d.compiler != nil {
+		d.compiler.Remove(name)
+	}
+	return nil
 }
 
 func (d *daemonAppRegistryProvider) Discover() ([]web.DiscoveredServiceView, error) {
@@ -595,6 +619,62 @@ func (d *daemonAppHealthProvider) AppHealth(name string) *web.AppHealthView {
 		LastDeny:    h.LastDeny,
 		Recent:      recent,
 	}
+}
+
+// daemonCompiledPolicyProvider adapts the contract compiler manager to
+// web.CompiledPolicyProvider (P5a). Recompile fetches the current app
+// from the registry so the view reflects edits made since startup.
+type daemonCompiledPolicyProvider struct {
+	compiler *contractcompiler.Manager
+	reg      *appregistry.Registry
+}
+
+func (d *daemonCompiledPolicyProvider) Policy(name string) (*web.CompiledPolicyView, error) {
+	cc := d.compiler.Get(name)
+	if cc == nil {
+		return nil, nil
+	}
+	return toCompiledPolicyView(cc, d.compiler.ShadowCount(name)), nil
+}
+
+func (d *daemonCompiledPolicyProvider) Recompile(name string) (*web.CompiledPolicyView, error) {
+	if d.reg == nil {
+		return nil, fmt.Errorf("registry unavailable")
+	}
+	app, err := d.reg.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	if app == nil {
+		return nil, nil
+	}
+	cc := d.compiler.Recompile(*app)
+	return toCompiledPolicyView(cc, d.compiler.ShadowCount(name)), nil
+}
+
+func toCompiledPolicyView(cc *contractcompiler.CompiledContract, shadow uint64) *web.CompiledPolicyView {
+	v := &web.CompiledPolicyView{
+		App:         cc.App,
+		Mode:        string(cc.Mode),
+		Source:      cc.Source,
+		CompiledAt:  cc.CompiledAt,
+		Warnings:    cc.Warnings,
+		ShadowCount: shadow,
+	}
+	for _, s := range cc.Services {
+		v.Services = append(v.Services, web.CompiledServiceView{
+			Unit:         s.Unit,
+			Kind:         s.Kind,
+			CgroupMatch:  s.CgroupMatch,
+			ExecAllow:    s.ExecAllow,
+			ExecDeny:     s.ExecDeny,
+			DenySyscalls: s.DenySyscalls,
+			WriteDeny:    s.WriteDeny,
+			SeccompText:  s.SeccompText,
+			AppArmorText: s.AppArmorText,
+		})
+	}
+	return v
 }
 
 // hush unused imports if a particular config branch isn't taken.

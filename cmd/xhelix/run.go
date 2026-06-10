@@ -58,6 +58,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/protectedsvc"
 	"github.com/xhelix/xhelix/pkg/protectsvcapi"
 	"github.com/xhelix/xhelix/pkg/appident"
+	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/destclass"
 	"github.com/xhelix/xhelix/pkg/diskwarden"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
@@ -702,6 +703,21 @@ func runDaemon(parent context.Context, cfgPath string) error {
 					return false
 				}
 				return mc.CoversExec(cgroup, binaryPath)
+			})
+		}
+		// Wire the compiled per-app exec-allowlist hook (P5a). For apps in
+		// locked/sealed mode, denies exec of any binary not in the app's
+		// declared set, scoped to its cgroup. Tighten-only — the red-zone
+		// floor above is never weakened, and maintenance grants still lift.
+		if foundation.Compiler != nil {
+			cm := foundation.Compiler
+			execGuard.SetPolicyHook(func(binaryPath string, pid int32) (bool, string) {
+				cgroup := readProcCgroup(pid)
+				if cgroup == "" {
+					return false, ""
+				}
+				d, reason := cm.ExecDecisionFor(binaryPath, cgroup)
+				return d == contractcompiler.DecisionDeny, reason
 			})
 		}
 		mounts := cfg.ExecGuard.MountPoints
@@ -3013,13 +3029,25 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		webServer.SetMaintenance(&daemonMaintenanceProvider{store: foundation.MaintenanceChains})
 	}
 
-	// Wire app registry into the web UI (P-UI).
+	// Wire app registry into the web UI (P-UI). The compiler is passed in
+	// so registry mutations (create/mode-change/delete) trigger a recompile
+	// of the affected app's contract (P5a).
 	if foundation.AppRegistry != nil {
-		webServer.SetAppRegistry(&daemonAppRegistryProvider{reg: foundation.AppRegistry})
+		webServer.SetAppRegistry(&daemonAppRegistryProvider{
+			reg:      foundation.AppRegistry,
+			compiler: foundation.Compiler,
+		})
 	}
 	// Wire per-app deny health into the web UI (P4).
 	if foundation.DenyLedger != nil {
 		webServer.SetAppHealth(&daemonAppHealthProvider{ledger: foundation.DenyLedger})
+	}
+	// Wire compiled-contract view into the web UI (P5a).
+	if foundation.Compiler != nil {
+		webServer.SetCompiledPolicy(&daemonCompiledPolicyProvider{
+			compiler: foundation.Compiler,
+			reg:      foundation.AppRegistry,
+		})
 	}
 
 	// SBOM periodic diff

@@ -103,6 +103,9 @@ type Server struct {
 	appRegistry AppRegistryProvider
 	// appHealth is the P4 per-app deny ledger. Wired via SetAppHealth. Nil-safe.
 	appHealth AppHealthProvider
+	// compiledPolicy is the P5a contract compiler view. Wired via
+	// SetCompiledPolicy. Nil-safe.
+	compiledPolicy CompiledPolicyProvider
 	mu     sync.RWMutex
 	alerts []model.Alert
 }

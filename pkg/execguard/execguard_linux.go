@@ -100,12 +100,20 @@ type IntegrityVerifier interface {
 // loop goroutine before respond() is called.
 type AllowOverride func(binaryPath string, pid int32) bool
 
+// PolicyHook is the compiled per-app exec-allowlist hook (P5a). It is
+// consulted only when rule evaluation produced Allow, and may TIGHTEN
+// that to Deny when a locked/sealed app forbids this exec inside its
+// cgroup. It never loosens a Deny — the red-zone floor always governs.
+// Returns (true, reason) to deny; (false, "") to leave the decision.
+type PolicyHook func(binaryPath string, pid int32) (deny bool, reason string)
+
 // Guard is the public API.
 type Guard struct {
 	mu      sync.RWMutex
 	rules   []Rule
 	cb      EventCallback
 	override AllowOverride
+	policyHook PolicyHook
 
 	verifier IntegrityVerifier
 	intMode  IntegrityMode
@@ -134,6 +142,15 @@ func New(cb EventCallback) *Guard {
 func (g *Guard) SetAllowOverride(fn AllowOverride) {
 	g.mu.Lock()
 	g.override = fn
+	g.mu.Unlock()
+}
+
+// SetPolicyHook registers the compiled per-app exec-allowlist hook
+// (P5a). Consulted after rule evaluation when the decision is Allow;
+// may tighten to Deny. Pass nil to clear. Safe to call after Start.
+func (g *Guard) SetPolicyHook(fn PolicyHook) {
+	g.mu.Lock()
+	g.policyHook = fn
 	g.mu.Unlock()
 }
 
@@ -322,9 +339,24 @@ func (g *Guard) handle(buf []byte) {
 				}
 			}
 		}
+		// Compiled per-app policy hook (P5a): may TIGHTEN an Allow to
+		// Deny when a locked/sealed app forbids this exec in its cgroup.
+		// Consulted only on Allow — red-zone Denies short-circuit and
+		// the floor is never weakened here.
+		if decision == Allow {
+			g.mu.RLock()
+			ph := g.policyHook
+			g.mu.RUnlock()
+			if ph != nil {
+				if deny, preason := ph(path, pid); deny {
+					decision = Deny
+					reason = preason
+				}
+			}
+		}
 		// Maintenance chain override: a signed grant may temporarily
-		// allow a red-zone binary. Checked only when rule-evaluation
-		// produced Deny, so non-red-zone execs are never slower.
+		// allow a red-zone binary OR a compiled-policy deny. Checked only
+		// when the decision is Deny, so non-denied execs are never slower.
 		if decision == Deny {
 			g.mu.RLock()
 			ov := g.override

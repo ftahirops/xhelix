@@ -99,6 +99,44 @@ func (s *Server) SetAppHealth(p AppHealthProvider) {
 	s.appHealth = p
 }
 
+// CompiledPolicyProvider supplies the compiled contract for an app (P5a).
+// Wired by the daemon via SetCompiledPolicy. Nil-safe.
+type CompiledPolicyProvider interface {
+	// Policy returns the cached compiled policy, or nil if none.
+	Policy(name string) (*CompiledPolicyView, error)
+	// Recompile re-runs the compiler and returns the fresh policy.
+	Recompile(name string) (*CompiledPolicyView, error)
+}
+
+// CompiledPolicyView is the web view of a compiled contract.
+type CompiledPolicyView struct {
+	App         string                `json:"app"`
+	Mode        string                `json:"mode"`
+	Source      string                `json:"source"`
+	CompiledAt  time.Time             `json:"compiled_at"`
+	ShadowCount uint64                `json:"shadow_count"`
+	Warnings    []string              `json:"warnings,omitempty"`
+	Services    []CompiledServiceView `json:"services"`
+}
+
+// CompiledServiceView is the web view of one compiled service.
+type CompiledServiceView struct {
+	Unit         string   `json:"unit"`
+	Kind         string   `json:"kind"`
+	CgroupMatch  string   `json:"cgroup_match"`
+	ExecAllow    []string `json:"exec_allow"`
+	ExecDeny     []string `json:"exec_deny"`
+	DenySyscalls []string `json:"deny_syscalls"`
+	WriteDeny    []string `json:"write_deny"`
+	SeccompText  string   `json:"seccomp_text,omitempty"`
+	AppArmorText string   `json:"apparmor_text,omitempty"`
+}
+
+// SetCompiledPolicy wires a CompiledPolicyProvider into the server.
+func (s *Server) SetCompiledPolicy(p CompiledPolicyProvider) {
+	s.compiledPolicy = p
+}
+
 // SetAppRegistry wires an AppRegistryProvider into the server.
 // All /apps/* and /api/apps/* handlers return 503 until this is called.
 func (s *Server) SetAppRegistry(p AppRegistryProvider) {
@@ -300,6 +338,38 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case sub == "policy" && r.Method == http.MethodGet:
+		if s.compiledPolicy == nil {
+			writeJSON(w, &CompiledPolicyView{App: name, Mode: "unknown", Services: []CompiledServiceView{}})
+			return
+		}
+		pol, err := s.compiledPolicy.Policy(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if pol == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, pol)
+
+	case sub == "recompile" && r.Method == http.MethodPost:
+		if s.compiledPolicy == nil {
+			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
+			return
+		}
+		pol, err := s.compiledPolicy.Recompile(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if pol == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, pol)
+
 	case sub == "health" && r.Method == http.MethodGet:
 		// Confirm the app exists first so a typo returns 404, not a
 		// misleading clean health card.
@@ -499,6 +569,17 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
   <div id="healthClean" class="muted" style="font-size:13px">No denies recorded — app is running clean.</div>
 </section>
 <section>
+  <h3>Compiled Profile <span id="polMode" class="mode-badge mode-observe">–</span>
+    <button class="btn-sm" style="float:right" onclick="recompile()">Recompile</button></h3>
+  <div id="polMeta" class="muted" style="font-size:12px;margin-bottom:10px"></div>
+  <div id="polStaged" class="staged-note" style="display:none">
+    Seccomp / AppArmor profiles below are <strong>staged for review — NOT enforced</strong>.
+    Arming them needs a service restart (P5a.2). Live enforcement in this build is
+    per-app exec allowlisting via execguard (no restart).
+  </div>
+  <div id="polServices"></div>
+</section>
+<section>
   <h3>Live Egress <span id="flowCount" class="count">–</span></h3>
   <div id="egressStatus" class="muted" style="margin-bottom:12px;font-size:12px"></div>
   <table id="egressTable" style="display:none">
@@ -637,9 +718,70 @@ function statusClass(s) {
   return "mode-shadow"; // clean
 }
 
+async function loadPolicy() {
+  try {
+    const r = await fetch("/api/apps/" + appName + "/policy");
+    if (!r.ok) { renderPolicyMissing(); return; }
+    renderPolicy(await r.json());
+  } catch(e) { renderPolicyMissing(); }
+}
+
+async function recompile() {
+  const r = await fetch("/api/apps/" + appName + "/recompile", {method:"POST"});
+  if (r.ok) renderPolicy(await r.json());
+  else alert("Recompile failed (" + r.status + ")");
+}
+
+function renderPolicyMissing() {
+  document.getElementById("polMeta").textContent = "No compiled contract yet.";
+  document.getElementById("polServices").innerHTML = "";
+}
+
+function renderPolicy(p) {
+  const badge = document.getElementById("polMode");
+  badge.textContent = p.mode;
+  badge.className = "mode-badge mode-" + esc(p.mode);
+  let meta = "source: " + esc(p.source) +
+    " · compiled " + (p.compiled_at ? new Date(p.compiled_at).toLocaleString() : "–");
+  if (p.mode === "shadow") meta += " · would-block count: " + (p.shadow_count || 0);
+  if (p.warnings && p.warnings.length) meta += " · ⚠ " + p.warnings.map(esc).join("; ");
+  document.getElementById("polMeta").innerHTML = meta;
+
+  // Staged note only matters in locked/sealed (artifacts written to disk).
+  document.getElementById("polStaged").style.display =
+    (p.mode === "locked" || p.mode === "sealed") ? "" : "none";
+
+  const host = document.getElementById("polServices");
+  host.innerHTML = "";
+  (p.services || []).forEach(s => {
+    const div = document.createElement("div");
+    div.className = "pol-svc";
+    div.innerHTML =
+      '<div class="pol-svc-head"><span class="mono">' + esc(s.unit) + '</span>' +
+      '<span class="stype stype-' + esc(s.kind || "custom") + '">' + esc(s.kind || "custom") + '</span></div>' +
+      '<div class="pol-grid">' +
+        polList("Exec Allow (live, scoped to cgroup)", s.exec_allow) +
+        polList("Exec Deny (red-zone floor)", s.exec_deny) +
+        polList("Deny Syscalls (staged)", s.deny_syscalls) +
+        polList("Write Deny (staged)", s.write_deny) +
+      '</div>';
+    host.appendChild(div);
+  });
+}
+
+function polList(label, items) {
+  items = items || [];
+  const shown = items.slice(0, 12).map(esc).join("<br>");
+  const more = items.length > 12 ? '<div class="muted">+' + (items.length - 12) + ' more</div>' : '';
+  return '<div class="pol-col"><div class="pol-label">' + esc(label) +
+    ' <span class="muted">(' + items.length + ')</span></div>' +
+    '<div class="pol-items mono">' + (shown || '<span class="muted">none</span>') + '</div>' + more + '</div>';
+}
+
 // Load on page open and refresh every 30s.
 loadEgress();
 loadHealth();
+loadPolicy();
 setInterval(loadEgress, 30000);
 setInterval(loadHealth, 30000);
 </script>
@@ -908,4 +1050,11 @@ select{background:var(--border);color:var(--fg);border:1px solid var(--border);
 .health-cols{display:grid;grid-template-columns:1fr 1fr;gap:24px}
 .health-cols h4,section h4{font-size:12px;color:var(--mut);text-transform:uppercase;
   letter-spacing:.5px;margin-bottom:8px}
+.staged-note{background:#2a2010;border:1px solid var(--warn);border-radius:6px;
+  padding:10px 12px;font-size:12px;color:#fbbf24;margin-bottom:14px}
+.pol-svc{border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px}
+.pol-svc-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.pol-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.pol-label{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.pol-items{font-size:12px;line-height:1.5;max-height:200px;overflow-y:auto}
 `

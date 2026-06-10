@@ -39,8 +39,10 @@ import (
 	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
+	"github.com/xhelix/xhelix/pkg/redzones"
 	"github.com/xhelix/xhelix/pkg/pkglifecycle"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
@@ -145,6 +147,9 @@ type foundationContext struct {
 	// DenyLedger records exec-guard red-zone blocks bucketed by app for
 	// the per-app health view (P4). In-memory, bounded, non-persistent.
 	DenyLedger *denyledger.Ledger
+	// Compiler turns declared apps + red zones into compiled contracts
+	// and answers the execguard per-app exec-allowlist hook (P5a).
+	Compiler *contractcompiler.Manager
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
 	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
@@ -562,6 +567,18 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Fed from the execguard deny callback in run.go.
 	fc.DenyLedger = denyledger.New()
 	slog.Info("denyledger ready", "scope", "in-memory per-app")
+
+	// Contract compiler (P5a). Compiles declared apps + the red-zone floor
+	// into per-app contracts; answers the execguard exec-allowlist hook.
+	// Staged seccomp/AppArmor artifacts (not armed) land under the dir.
+	fc.Compiler = contractcompiler.NewManager(
+		redzones.Default(), "/etc/xhelix/compiled", slog.Default())
+	if fc.AppRegistry != nil {
+		if apps, err := fc.AppRegistry.List(); err == nil {
+			fc.Compiler.RecompileAll(apps)
+			slog.Info("contractcompiler ready", "apps_compiled", len(apps))
+		}
+	}
 
 	return fc, nil
 }
