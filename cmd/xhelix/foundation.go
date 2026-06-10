@@ -38,6 +38,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/cdndetect"
 	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
+	"github.com/xhelix/xhelix/pkg/appregistry"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/pkglifecycle"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
@@ -137,6 +138,9 @@ type foundationContext struct {
 	// (Phase 2 of the behavioral compiler). Execguard checks it before
 	// blocking any red-zone exec to allow declared maintenance windows.
 	MaintenanceChains *maintenancechain.Store
+	// AppRegistry stores declared app stacks and provides the cgroup→app
+	// mapping for per-app event attribution (P-UI).
+	AppRegistry *appregistry.Registry
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
 	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
@@ -536,6 +540,20 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		}
 	}
 
+	// App Registry (P-UI). Best-effort: failure to open is logged but
+	// never blocks daemon startup. The registry is empty until an
+	// operator declares apps via the UI or API.
+	{
+		path := "/var/lib/xhelix/apps.db"
+		if ar, err := appregistry.Open(path); err != nil {
+			slog.Warn("appregistry: store unavailable; per-app attribution disabled",
+				"path", path, "err", err)
+		} else {
+			fc.AppRegistry = ar
+			slog.Info("appregistry ready", "path", path)
+		}
+	}
+
 	return fc, nil
 }
 
@@ -844,6 +862,9 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.MaintenanceChains != nil {
 		_ = fc.MaintenanceChains.Close()
+	}
+	if fc.AppRegistry != nil {
+		_ = fc.AppRegistry.Close()
 	}
 }
 

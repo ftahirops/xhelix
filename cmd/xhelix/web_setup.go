@@ -17,6 +17,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/doctor"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/appregistry"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/netban"
@@ -103,6 +104,7 @@ func startWebServer(
 	webSrv.RegisterSafetyRoutes(mux)
 	webSrv.RegisterZoneRoutes(mux)
 	webSrv.RegisterMaintenanceRoutes(mux)
+	webSrv.RegisterAppRoutes(mux)
 
 	// AuthGuard — bearer token + IP allow-list + rate limit + audit.
 	tokenFile := cfg.UI.TokenFile
@@ -450,6 +452,116 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh%dm", h, m)
 	}
 	return fmt.Sprintf("%dm", int(d.Minutes())+1)
+}
+
+// daemonAppRegistryProvider adapts *appregistry.Registry to
+// web.AppRegistryProvider, translating between the two type shapes.
+type daemonAppRegistryProvider struct {
+	reg *appregistry.Registry
+}
+
+func (d *daemonAppRegistryProvider) List() ([]web.AppView, error) {
+	apps, err := d.reg.List()
+	if err != nil {
+		return nil, err
+	}
+	return toWebApps(apps), nil
+}
+
+func (d *daemonAppRegistryProvider) Get(name string) (*web.AppView, error) {
+	a, err := d.reg.Get(name)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, nil
+	}
+	views := toWebApps([]appregistry.App{*a})
+	return &views[0], nil
+}
+
+func (d *daemonAppRegistryProvider) Create(req web.AppCreateReq) (*web.AppView, error) {
+	svcs := make([]appregistry.Service, 0, len(req.Services))
+	for _, s := range req.Services {
+		svcs = append(svcs, appregistry.Service{
+			Name:        s.Name,
+			CgroupMatch: s.CgroupMatch,
+			BinaryPath:  s.BinaryPath,
+			ServiceType: appregistry.ServiceType(s.ServiceType),
+			UnitName:    s.UnitName,
+		})
+	}
+	app := appregistry.App{
+		Name:        req.Name,
+		DisplayName: req.DisplayName,
+		Description: req.Description,
+		Mode:        appregistry.EnforcementMode(req.Mode),
+		Services:    svcs,
+	}
+	if err := d.reg.Create(app); err != nil {
+		return nil, err
+	}
+	created, err := d.reg.Get(req.Name)
+	if err != nil {
+		return nil, err
+	}
+	views := toWebApps([]appregistry.App{*created})
+	return &views[0], nil
+}
+
+func (d *daemonAppRegistryProvider) SetMode(name, mode string) error {
+	return d.reg.SetMode(name, appregistry.EnforcementMode(mode))
+}
+
+func (d *daemonAppRegistryProvider) Delete(name string) error {
+	return d.reg.Delete(name)
+}
+
+func (d *daemonAppRegistryProvider) Discover() ([]web.DiscoveredServiceView, error) {
+	svcs, err := appregistry.Discover()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.DiscoveredServiceView, 0, len(svcs))
+	for _, s := range svcs {
+		pids := make([]int32, len(s.PIDs))
+		copy(pids, s.PIDs)
+		out = append(out, web.DiscoveredServiceView{
+			CgroupPath:  s.CgroupPath,
+			UnitName:    s.UnitName,
+			BinaryPath:  s.BinaryPath,
+			ServiceType: string(s.ServiceType),
+			PIDs:        pids,
+			SampleComm:  s.SampleComm,
+		})
+	}
+	return out, nil
+}
+
+func toWebApps(apps []appregistry.App) []web.AppView {
+	out := make([]web.AppView, 0, len(apps))
+	for _, a := range apps {
+		svcs := make([]web.ServiceView, 0, len(a.Services))
+		for _, s := range a.Services {
+			svcs = append(svcs, web.ServiceView{
+				Name:        s.Name,
+				CgroupMatch: s.CgroupMatch,
+				BinaryPath:  s.BinaryPath,
+				ServiceType: string(s.ServiceType),
+				UnitName:    s.UnitName,
+			})
+		}
+		out = append(out, web.AppView{
+			Name:        a.Name,
+			DisplayName: a.DisplayName,
+			Description: a.Description,
+			Mode:        string(a.Mode),
+			Services:    svcs,
+			CreatedAt:   a.CreatedAt,
+			UpdatedAt:   a.UpdatedAt,
+		})
+	}
+	return out
 }
 
 // hush unused imports if a particular config branch isn't taken.

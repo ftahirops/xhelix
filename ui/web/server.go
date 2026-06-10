@@ -99,6 +99,8 @@ type Server struct {
 	// maintenance is the Phase-2 behavioral compiler maintenance chain
 	// store. Wired by the daemon via SetMaintenance. Nil-safe.
 	maintenance MaintenanceProvider
+	// appRegistry is the P-UI app registry. Wired via SetAppRegistry. Nil-safe.
+	appRegistry AppRegistryProvider
 	mu     sync.RWMutex
 	alerts []model.Alert
 }

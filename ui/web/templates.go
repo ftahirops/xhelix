@@ -149,6 +149,7 @@ const pageHeader = `
     <a href="/ui/bans" class="{{if eq .Active "bans"}}active{{end}}">Bans</a>
     <a href="/ui/rules" class="{{if eq .Active "rules"}}active{{end}}">Rules</a>
     <a href="/ui/doctor" class="{{if eq .Active "doctor"}}active{{end}}">Doctor</a>
+    <a href="/apps" class="{{if eq .Active "apps"}}active{{end}}">Apps</a>
   </nav>
   <div class="right">
     <span class="live">live</span>

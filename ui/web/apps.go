@@ -1,0 +1,691 @@
+package web
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// AppRegistryProvider is the interface the daemon wires to connect
+// pkg/appregistry into the web layer. The web package does not import
+// pkg/appregistry directly — this keeps the dependency one-directional.
+type AppRegistryProvider interface {
+	// List returns all declared apps.
+	List() ([]AppView, error)
+	// Get returns a single app, or nil if not found.
+	Get(name string) (*AppView, error)
+	// Create declares a new app.
+	Create(req AppCreateReq) (*AppView, error)
+	// SetMode changes the enforcement mode.
+	SetMode(name, mode string) error
+	// Delete removes an app.
+	Delete(name string) error
+	// Discover scans the running system for candidate services.
+	Discover() ([]DiscoveredServiceView, error)
+}
+
+// AppView is the web-layer representation of an app.
+type AppView struct {
+	Name        string        `json:"name"`
+	DisplayName string        `json:"display_name"`
+	Description string        `json:"description,omitempty"`
+	Mode        string        `json:"mode"`
+	Services    []ServiceView `json:"services"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}
+
+// ServiceView is one service within an app.
+type ServiceView struct {
+	Name        string `json:"name"`
+	CgroupMatch string `json:"cgroup_match"`
+	BinaryPath  string `json:"binary_path,omitempty"`
+	ServiceType string `json:"service_type"`
+	UnitName    string `json:"unit_name,omitempty"`
+}
+
+// AppCreateReq is the payload for POST /api/apps.
+type AppCreateReq struct {
+	Name        string        `json:"name"`
+	DisplayName string        `json:"display_name"`
+	Description string        `json:"description"`
+	Mode        string        `json:"mode"`
+	Services    []ServiceView `json:"services"`
+}
+
+// DiscoveredServiceView is a running process group surfaced by Discover().
+type DiscoveredServiceView struct {
+	CgroupPath  string `json:"cgroup_path"`
+	UnitName    string `json:"unit_name"`
+	BinaryPath  string `json:"binary_path"`
+	ServiceType string `json:"service_type"`
+	PIDs        []int32 `json:"pids"`
+	SampleComm  string `json:"sample_comm"`
+}
+
+// SetAppRegistry wires an AppRegistryProvider into the server.
+// All /apps/* and /api/apps/* handlers return 503 until this is called.
+func (s *Server) SetAppRegistry(p AppRegistryProvider) {
+	s.appRegistry = p
+}
+
+// RegisterAppRoutes mounts the app registry HTML and API routes on mux.
+// Called by the daemon's enterprise UI setup after auth is in place.
+func (s *Server) RegisterAppRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/apps", s.handleAppsPage)
+	mux.HandleFunc("/apps/", s.handleAppSubPage)
+	mux.HandleFunc("/api/apps", s.handleAPIApps)
+	mux.HandleFunc("/api/apps/", s.handleAPIAppsPath)
+}
+
+// =============================================================================
+// HTML pages
+// =============================================================================
+
+func (s *Server) handleAppsPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/apps" {
+		http.Redirect(w, r, "/apps", http.StatusFound)
+		return
+	}
+	p := s.appRegistry
+	if p == nil {
+		http.Error(w, "app registry not configured", http.StatusServiceUnavailable)
+		return
+	}
+	apps, err := p.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(appsPageHeader))
+	if len(apps) == 0 {
+		w.Write([]byte(`<div class="empty"><p>No apps declared yet.</p>
+<a href="/apps/new" class="btn">Discover &amp; Declare First App →</a></div>`))
+	} else {
+		w.Write([]byte(`<div class="cards">`))
+		for _, a := range apps {
+			svcCount := len(a.Services)
+			svcNames := make([]string, 0, svcCount)
+			for _, svc := range a.Services {
+				svcNames = append(svcNames, svc.Name)
+			}
+			displayName := a.DisplayName
+			if displayName == "" {
+				displayName = a.Name
+			}
+			w.Write([]byte(`<div class="card"><div class="card-top">` +
+				`<span class="app-name">` + htmlEscape(displayName) + `</span>` +
+				`<span class="mode-badge mode-` + htmlEscape(a.Mode) + `">` + htmlEscape(a.Mode) + `</span>` +
+				`</div><div class="card-body">` +
+				`<span class="svc-count">` + itoa(svcCount) + ` service` + plural(svcCount) + `</span>` +
+				`<span class="svc-names muted">` + htmlEscape(strings.Join(svcNames, " · ")) + `</span>` +
+				`</div><div class="card-foot">` +
+				`<a href="/apps/` + htmlEscape(a.Name) + `" class="btn-sm">View Details</a>` +
+				`</div></div>`))
+		}
+		w.Write([]byte(`</div>`))
+		w.Write([]byte(`<div class="actions"><a href="/apps/new" class="btn">+ Declare Another App</a></div>`))
+	}
+	w.Write([]byte(appsPageFooter))
+}
+
+func (s *Server) handleAppSubPage(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/apps/")
+	switch {
+	case path == "new":
+		s.handleAppsNewPage(w, r)
+	case path != "":
+		s.handleAppDetailPage(w, r, path)
+	default:
+		http.Redirect(w, r, "/apps", http.StatusFound)
+	}
+}
+
+func (s *Server) handleAppsNewPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(appsNewHTML))
+}
+
+func (s *Server) handleAppDetailPage(w http.ResponseWriter, r *http.Request, name string) {
+	p := s.appRegistry
+	if p == nil {
+		http.Error(w, "app registry not configured", http.StatusServiceUnavailable)
+		return
+	}
+	app, err := p.Get(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if app == nil {
+		http.NotFound(w, r)
+		return
+	}
+	displayName := app.DisplayName
+	if displayName == "" {
+		displayName = app.Name
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Build service rows
+	rows := ""
+	for _, svc := range app.Services {
+		rows += `<tr><td>` + htmlEscape(svc.Name) + `</td>` +
+			`<td><span class="stype stype-` + htmlEscape(svc.ServiceType) + `">` + htmlEscape(svc.ServiceType) + `</span></td>` +
+			`<td class="mono">` + htmlEscape(svc.CgroupMatch) + `</td>` +
+			`<td class="mono muted">` + htmlEscape(svc.BinaryPath) + `</td></tr>`
+	}
+	page := strings.NewReplacer(
+		"{{APP_NAME}}", htmlEscape(app.Name),
+		"{{APP_DISPLAY}}", htmlEscape(displayName),
+		"{{APP_MODE}}", htmlEscape(string(app.Mode)),
+		"{{APP_DESC}}", htmlEscape(app.Description),
+		"{{SVC_ROWS}}", rows,
+		"{{SVC_COUNT}}", itoa(len(app.Services)),
+	).Replace(appsDetailHTML)
+	w.Write([]byte(page))
+}
+
+// =============================================================================
+// API handlers
+// =============================================================================
+
+func (s *Server) handleAPIApps(w http.ResponseWriter, r *http.Request) {
+	p := s.appRegistry
+	if p == nil {
+		http.Error(w, `{"error":"app registry not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		apps, err := p.List()
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, apps)
+	case http.MethodPost:
+		var req AppCreateReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apiErr(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		app, err := p.Create(req)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, app)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
+	p := s.appRegistry
+	if p == nil {
+		http.Error(w, `{"error":"app registry not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	// Strip /api/apps/ prefix and parse the rest.
+	rest := strings.TrimPrefix(r.URL.Path, "/api/apps/")
+
+	// Special case: /api/apps/discover
+	if rest == "discover" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		svcs, err := p.Discover()
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if svcs == nil {
+			svcs = []DiscoveredServiceView{}
+		}
+		writeJSON(w, svcs)
+		return
+	}
+
+	// /api/apps/:name or /api/apps/:name/mode
+	parts := strings.SplitN(rest, "/", 2)
+	name := parts[0]
+	sub := ""
+	if len(parts) == 2 {
+		sub = parts[1]
+	}
+
+	if name == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch {
+	case sub == "mode" && r.Method == http.MethodPatch:
+		var req struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apiErr(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if err := p.SetMode(name, req.Mode); err != nil {
+			apiErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		app, _ := p.Get(name)
+		writeJSON(w, app)
+
+	case sub == "" && r.Method == http.MethodGet:
+		app, err := p.Get(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if app == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, app)
+
+	case sub == "" && r.Method == http.MethodDelete:
+		if err := p.Delete(name); err != nil {
+			apiErr(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func apiErr(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	data, _ := json.Marshal(map[string]string{"error": msg})
+	w.Write(data)
+}
+
+func htmlEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, `"`, "&#34;")
+	return s
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	buf := make([]byte, 0, 10)
+	for n > 0 {
+		buf = append([]byte{byte('0' + n%10)}, buf...)
+		n /= 10
+	}
+	return string(buf)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// =============================================================================
+// HTML templates
+// =============================================================================
+
+const appsPageHeader = `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><title>App Registry · xhelix</title>
+<style>` + appsCSS + `</style></head><body>
+<header>
+  <h1>xhelix<span class="tag">v0.0.5</span></h1>
+  <nav class="tabs">
+    <a href="/ui">Dashboard</a>
+    <a href="/ui/alerts">Alerts</a>
+    <a href="/ui/sessions">Sessions</a>
+    <a href="/ui/bans">Bans</a>
+    <a href="/ui/rules">Rules</a>
+    <a href="/ui/doctor">Doctor</a>
+    <a href="/apps" class="active">Apps</a>
+  </nav>
+  <div class="right"><span class="live">live</span></div>
+</header>
+<main>
+<div class="page-head">
+  <h2>App Registry</h2>
+  <a href="/apps/new" class="btn">+ Declare App</a>
+</div>
+`
+
+const appsPageFooter = `</main></body></html>`
+
+const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><title>{{APP_DISPLAY}} · App Registry · xhelix</title>
+<style>` + appsCSS + `</style></head><body>
+<header>
+  <h1>xhelix<span class="tag">v0.0.5</span></h1>
+  <nav class="tabs">
+    <a href="/ui">Dashboard</a>
+    <a href="/ui/alerts">Alerts</a>
+    <a href="/ui/sessions">Sessions</a>
+    <a href="/ui/bans">Bans</a>
+    <a href="/ui/rules">Rules</a>
+    <a href="/ui/doctor">Doctor</a>
+    <a href="/apps" class="active">Apps</a>
+  </nav>
+  <div class="right"><span class="live">live</span></div>
+</header>
+<main>
+<div class="page-head">
+  <div><a href="/apps" class="back">← App Registry</a>
+  <h2>{{APP_DISPLAY}}</h2></div>
+  <button class="btn btn-danger" onclick="deleteApp()">Delete App</button>
+</div>
+<div class="detail-meta">
+  <span class="label">Mode:</span>
+  <select id="modeSelect" onchange="setMode(this.value)">
+    <option value="observe"  {{if eq "{{APP_MODE}}" "observe"}}selected{{end}}>Observe — record only</option>
+    <option value="shadow"   {{if eq "{{APP_MODE}}" "shadow"}}selected{{end}}>Shadow — log would-blocks</option>
+    <option value="guarded"  {{if eq "{{APP_MODE}}" "guarded"}}selected{{end}}>Guarded — red zones blocked</option>
+    <option value="locked"   {{if eq "{{APP_MODE}}" "locked"}}selected{{end}}>Locked — all undeclared blocked</option>
+    <option value="sealed"   {{if eq "{{APP_MODE}}" "sealed"}}selected{{end}}>Sealed — unsigned drift blocked</option>
+  </select>
+  <span id="modeStatus" class="mode-badge mode-{{APP_MODE}}">{{APP_MODE}}</span>
+</div>
+<section>
+  <h3>Services <span class="count">{{SVC_COUNT}}</span></h3>
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>Cgroup Match</th><th>Binary</th></tr></thead>
+    <tbody>{{SVC_ROWS}}</tbody>
+  </table>
+</section>
+<script>
+const appName = "{{APP_NAME}}";
+async function setMode(mode) {
+  const r = await fetch("/api/apps/" + appName + "/mode", {
+    method:"PATCH",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({mode})
+  });
+  const badge = document.getElementById("modeStatus");
+  if (r.ok) {
+    badge.textContent = mode;
+    badge.className = "mode-badge mode-" + mode;
+  } else {
+    badge.textContent = "error";
+  }
+}
+async function deleteApp() {
+  if (!confirm("Delete app '" + appName + "'? This cannot be undone.")) return;
+  const r = await fetch("/api/apps/" + appName, {method:"DELETE"});
+  if (r.ok || r.status === 204) { window.location = "/apps"; }
+  else { alert("Delete failed"); }
+}
+</script>
+</main></body></html>`
+
+const appsNewHTML = `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><title>New App · xhelix</title>
+<style>` + appsCSS + `</style></head><body>
+<header>
+  <h1>xhelix<span class="tag">v0.0.5</span></h1>
+  <nav class="tabs">
+    <a href="/ui">Dashboard</a>
+    <a href="/ui/alerts">Alerts</a>
+    <a href="/ui/sessions">Sessions</a>
+    <a href="/ui/bans">Bans</a>
+    <a href="/ui/rules">Rules</a>
+    <a href="/ui/doctor">Doctor</a>
+    <a href="/apps" class="active">Apps</a>
+  </nav>
+  <div class="right"><span class="live">live</span></div>
+</header>
+<main>
+<div class="page-head">
+  <div><a href="/apps" class="back">← App Registry</a>
+  <h2>Declare New App</h2></div>
+</div>
+
+<section>
+  <h3>Step 1 — Discover Running Services</h3>
+  <button class="btn" id="scanBtn" onclick="scan()">Scan System</button>
+  <div id="scanStatus" class="muted" style="margin-top:8px"></div>
+  <table id="svcTable" style="display:none;margin-top:16px">
+    <thead><tr>
+      <th style="width:32px"></th>
+      <th>Unit</th>
+      <th>Type</th>
+      <th>Cgroup</th>
+      <th>Binary</th>
+      <th>PIDs</th>
+    </tr></thead>
+    <tbody id="svcBody"></tbody>
+  </table>
+</section>
+
+<section id="step2" style="display:none">
+  <h3>Step 2 — Name Your App</h3>
+  <div class="form-row">
+    <label>App Name (slug)</label>
+    <input type="text" id="appName" placeholder="wordpress" pattern="[a-z0-9_-]+"
+           oninput="updateName(this.value)">
+  </div>
+  <div class="form-row">
+    <label>Display Name</label>
+    <input type="text" id="displayName" placeholder="WordPress">
+  </div>
+  <div class="form-row">
+    <label>Description</label>
+    <input type="text" id="description" placeholder="Main PHP app stack">
+  </div>
+  <div class="form-row">
+    <label>Starting Mode</label>
+    <select id="appMode">
+      <option value="observe" selected>Observe — record only (recommended to start)</option>
+      <option value="shadow">Shadow — log would-blocks</option>
+      <option value="guarded">Guarded — red zones blocked</option>
+    </select>
+  </div>
+  <div id="selectedServices" class="selected-svcs"></div>
+  <button class="btn" id="declareBtn" onclick="declare()">Declare App</button>
+  <div id="declareStatus" class="muted" style="margin-top:8px"></div>
+</section>
+
+<script>
+let discovered = [];
+let selected = new Set();
+
+async function scan() {
+  const btn = document.getElementById("scanBtn");
+  const status = document.getElementById("scanStatus");
+  btn.disabled = true;
+  status.textContent = "Scanning…";
+  try {
+    const r = await fetch("/api/apps/discover");
+    if (!r.ok) { status.textContent = "Scan failed: " + r.status; btn.disabled = false; return; }
+    discovered = await r.json();
+    renderTable();
+    status.textContent = discovered.length + " service" + (discovered.length === 1 ? "" : "s") + " found";
+  } catch(e) {
+    status.textContent = "Error: " + e;
+  }
+  btn.disabled = false;
+}
+
+function renderTable() {
+  const tbody = document.getElementById("svcBody");
+  tbody.innerHTML = "";
+  discovered.forEach((svc, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td><input type="checkbox" onchange="toggleSvc(' + i + ', this.checked)"></td>' +
+      '<td>' + esc(svc.unit_name || svc.sample_comm) + '</td>' +
+      '<td><span class="stype stype-' + esc(svc.service_type) + '">' + esc(svc.service_type) + '</span></td>' +
+      '<td class="mono">' + esc(svc.cgroup_path) + '</td>' +
+      '<td class="mono muted">' + esc(svc.binary_path) + '</td>' +
+      '<td class="muted">' + (svc.pids || []).length + '</td>';
+    tbody.appendChild(tr);
+  });
+  document.getElementById("svcTable").style.display = "";
+  document.getElementById("step2").style.display = "";
+}
+
+function toggleSvc(i, checked) {
+  if (checked) selected.add(i);
+  else selected.delete(i);
+  renderSelected();
+}
+
+function renderSelected() {
+  const div = document.getElementById("selectedServices");
+  if (selected.size === 0) { div.innerHTML = ""; return; }
+  let html = '<div class="sel-chips">';
+  selected.forEach(i => {
+    const s = discovered[i];
+    html += '<span class="chip">' + esc(s.unit_name || s.sample_comm) + '</span>';
+  });
+  html += '</div>';
+  div.innerHTML = html;
+}
+
+function updateName(v) {
+  if (!document.getElementById("displayName").value) {
+    document.getElementById("displayName").value =
+      v.charAt(0).toUpperCase() + v.slice(1).replace(/[-_]/g, ' ');
+  }
+}
+
+async function declare() {
+  const name = document.getElementById("appName").value.trim();
+  if (!name) { alert("App name required"); return; }
+  if (selected.size === 0) { alert("Select at least one service"); return; }
+  const services = [];
+  selected.forEach(i => {
+    const s = discovered[i];
+    services.push({
+      name: s.unit_name || s.sample_comm,
+      cgroup_match: s.cgroup_path,
+      binary_path: s.binary_path,
+      service_type: s.service_type,
+      unit_name: s.unit_name
+    });
+  });
+  const payload = {
+    name,
+    display_name: document.getElementById("displayName").value || name,
+    description: document.getElementById("description").value,
+    mode: document.getElementById("appMode").value,
+    services
+  };
+  const btn = document.getElementById("declareBtn");
+  const status = document.getElementById("declareStatus");
+  btn.disabled = true;
+  status.textContent = "Saving…";
+  try {
+    const r = await fetch("/api/apps", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    const data = await r.json();
+    if (!r.ok) { status.textContent = "Error: " + (data.error || r.status); btn.disabled = false; return; }
+    window.location = "/apps/" + name;
+  } catch(e) {
+    status.textContent = "Error: " + e;
+    btn.disabled = false;
+  }
+}
+
+function esc(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+</script>
+</main></body></html>`
+
+const appsCSS = `
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--fg:#e2e8f0;--mut:#64748b;
+      --accent:#6366f1;--ok:#22c55e;--warn:#f59e0b;--danger:#ef4444;--tag:#334155}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.6 ui-monospace,monospace;min-height:100vh}
+header{display:flex;align-items:center;gap:16px;padding:12px 24px;
+       border-bottom:1px solid var(--border);background:var(--card)}
+h1{font-size:18px;letter-spacing:-.5px}
+.tag{font-size:10px;background:var(--tag);border-radius:4px;padding:2px 6px;margin-left:8px;
+     vertical-align:middle;color:var(--mut)}
+nav.tabs{display:flex;gap:4px;flex:1}
+nav.tabs a{padding:6px 12px;border-radius:6px;color:var(--mut);text-decoration:none;font-size:13px}
+nav.tabs a:hover,nav.tabs a.active{background:var(--border);color:var(--fg)}
+.right{margin-left:auto}
+.live{font-size:11px;color:var(--ok);text-transform:uppercase;letter-spacing:1px}
+main{padding:24px;max-width:1200px;margin:0 auto}
+.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
+.page-head h2{font-size:20px;font-weight:600}
+.back{color:var(--mut);text-decoration:none;font-size:13px;display:block;margin-bottom:4px}
+.back:hover{color:var(--fg)}
+.btn{padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;
+     cursor:pointer;font:inherit;text-decoration:none;display:inline-block}
+.btn:hover{opacity:.9}
+.btn-sm{padding:5px 10px;background:var(--accent);color:#fff;border:none;border-radius:5px;
+        cursor:pointer;font:12px/1 inherit;text-decoration:none;display:inline-block}
+.btn-danger{background:var(--danger)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;
+      display:flex;flex-direction:column;gap:10px}
+.card-top{display:flex;align-items:center;justify-content:space-between}
+.app-name{font-weight:600;font-size:15px}
+.card-body{display:flex;flex-direction:column;gap:4px}
+.svc-count{font-size:13px}
+.svc-names{font-size:12px}
+.muted{color:var(--mut)}
+.card-foot{margin-top:auto}
+.mode-badge{font-size:11px;padding:3px 8px;border-radius:4px;font-weight:600;text-transform:uppercase}
+.mode-observe{background:#1e293b;color:var(--mut)}
+.mode-shadow{background:#1e2a1e;color:var(--ok)}
+.mode-guarded{background:#2a2010;color:var(--warn)}
+.mode-locked{background:#2a1010;color:var(--danger)}
+.mode-sealed{background:#1a1030;color:#a78bfa}
+.empty{text-align:center;padding:64px 24px;color:var(--mut)}
+.empty p{margin-bottom:16px;font-size:15px}
+.actions{margin-top:24px}
+section{background:var(--card);border:1px solid var(--border);border-radius:8px;
+        padding:20px;margin-bottom:20px}
+section h3{font-size:15px;font-weight:600;margin-bottom:16px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);
+   color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+td{padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px}
+tr:last-child td{border-bottom:none}
+.mono{font-family:ui-monospace,monospace;font-size:12px}
+.count{font-size:12px;background:var(--border);border-radius:4px;padding:2px 7px;
+       margin-left:6px;color:var(--mut)}
+.detail-meta{display:flex;align-items:center;gap:12px;padding:16px 20px;
+             background:var(--card);border:1px solid var(--border);
+             border-radius:8px;margin-bottom:20px}
+.label{color:var(--mut);font-size:13px}
+select{background:var(--border);color:var(--fg);border:1px solid var(--border);
+       padding:6px 10px;border-radius:5px;font:inherit;cursor:pointer}
+.stype{font-size:11px;padding:2px 7px;border-radius:4px;background:var(--border)}
+.stype-nginx,.stype-apache{color:#38bdf8}
+.stype-php-fpm{color:#a78bfa}
+.stype-mysql,.stype-postgres{color:#fb923c}
+.stype-redis{color:#f87171}
+.stype-node{color:#4ade80}
+.stype-python{color:#facc15}
+.stype-custom{color:var(--mut)}
+.form-row{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.form-row label{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+.form-row input[type=text],.form-row select{background:var(--bg);border:1px solid var(--border);
+  color:var(--fg);padding:8px 12px;border-radius:6px;font:inherit;width:100%;max-width:480px}
+.sel-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.chip{background:var(--border);border-radius:4px;padding:3px 10px;font-size:12px}
+.selected-svcs{margin-bottom:12px}
+`

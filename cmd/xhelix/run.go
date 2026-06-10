@@ -3001,6 +3001,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		webServer.SetMaintenance(&daemonMaintenanceProvider{store: foundation.MaintenanceChains})
 	}
 
+	// Wire app registry into the web UI (P-UI).
+	if foundation.AppRegistry != nil {
+		webServer.SetAppRegistry(&daemonAppRegistryProvider{reg: foundation.AppRegistry})
+	}
+
 	// SBOM periodic diff
 	if cfg.SBOM.Enabled && sbomBaseline != nil {
 		go runSBOMDiff(ctx, sbomBaseline, hostname, events, 1*time.Hour, log)
