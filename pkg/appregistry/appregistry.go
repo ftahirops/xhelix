@@ -45,6 +45,19 @@ const (
 	ServiceCustom   ServiceType = "custom"
 )
 
+// DiscoveredService represents a running process group that could become
+// an app service. It is returned by Discover() for display in the "new
+// app" wizard. Defined here (platform-neutral) so the non-Linux Discover
+// stub can reference it without a Linux build tag.
+type DiscoveredService struct {
+	CgroupPath  string      `json:"cgroup_path"`
+	UnitName    string      `json:"unit_name"`
+	BinaryPath  string      `json:"binary_path"`
+	ServiceType ServiceType `json:"service_type"`
+	PIDs        []int32     `json:"pids"`
+	SampleComm  string      `json:"sample_comm"`
+}
+
 // Service is one process group within an app stack.
 type Service struct {
 	Name        string      `json:"name"`

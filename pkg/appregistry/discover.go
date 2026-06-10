@@ -8,18 +8,6 @@ import (
 	"strings"
 )
 
-// DiscoveredService represents a running process group that could become
-// an app service. It is returned by Discover() for display in the
-// "new app" wizard.
-type DiscoveredService struct {
-	CgroupPath  string      `json:"cgroup_path"`
-	UnitName    string      `json:"unit_name"`
-	BinaryPath  string      `json:"binary_path"`
-	ServiceType ServiceType `json:"service_type"`
-	PIDs        []int32     `json:"pids"`
-	SampleComm  string      `json:"sample_comm"`
-}
-
 // Discover scans /proc for running processes and groups them by their
 // cgroup v2 path. Returns one DiscoveredService per unique cgroup,
 // populated with the most common binary among the group's PIDs.
