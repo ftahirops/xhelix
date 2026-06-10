@@ -96,6 +96,9 @@ type Server struct {
 	revdns      ReverseDNSResolver
 	dnsobs      DNSObservations
 	threatintel ThreatIntelHits
+	// maintenance is the Phase-2 behavioral compiler maintenance chain
+	// store. Wired by the daemon via SetMaintenance. Nil-safe.
+	maintenance MaintenanceProvider
 	mu     sync.RWMutex
 	alerts []model.Alert
 }

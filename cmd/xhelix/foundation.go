@@ -38,6 +38,8 @@ import (
 	"github.com/xhelix/xhelix/pkg/cdndetect"
 	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
+	"github.com/xhelix/xhelix/pkg/maintenancechain"
+	"github.com/xhelix/xhelix/pkg/pkglifecycle"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
@@ -131,8 +133,14 @@ type foundationContext struct {
 	IncidentStore *incidentgraph.Store
 	// SSHBrute is the per-source-IP SSH auth-failure counter (Phase J.1).
 	SSHBrute *sshbrute.Detector
+	// MaintenanceChains is the signed, time-boxed capability grant store
+	// (Phase 2 of the behavioral compiler). Execguard checks it before
+	// blocking any red-zone exec to allow declared maintenance windows.
+	MaintenanceChains *maintenancechain.Store
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
+	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
+	PkgLifecycle *pkglifecycle.Tagger
 	// LongWindow is the disk-backed long-horizon event journal (Phase H.2).
 	LongWindow *longwindow.Store
 	// CDNDNS is the Phase H.4 per-process recent-DNS cache used by
@@ -436,6 +444,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// dropped_binary_lifecycle on legitimate apt-get install flows.
 	{
 		fc.PkgMgr = pkgmgr.New(slog.Default())
+		fc.PkgLifecycle = pkglifecycle.New(slog.Default())
 		slog.Info("pkgmgr ready", "tailers", "apt+dpkg+dnf+snap")
 		go fc.sweepPkgMgr(parent)
 		go func() {
@@ -508,7 +517,46 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		go fc.sweepSSHBrute(parent)
 	}
 
+	// Maintenance chains (Phase 2 — behavioral compiler). Trust root is
+	// the same key directory as BRP so operators use one key set. An
+	// empty trust map is valid — the store opens but grants require a
+	// registered key to validate, so AddSigned from untrusted signers
+	// is rejected. Missing directory → empty trust → observe-only mode.
+	{
+		trust := loadBRPTrustRoot("/etc/xhelix/brp/trusted-keys.d")
+		dbPath := "/var/lib/xhelix/maintenance.db"
+		if mc, err := maintenancechain.Open(dbPath, trust); err != nil {
+			slog.Warn("maintenancechain: store unavailable; red-zone bypasses disabled",
+				"path", dbPath, "err", err)
+		} else {
+			fc.MaintenanceChains = mc
+			slog.Info("maintenancechain ready",
+				"path", dbPath, "trust_signers", len(trust))
+			go fc.sweepMaintenanceChains(parent)
+		}
+	}
+
 	return fc, nil
+}
+
+// sweepMaintenanceChains removes expired grants from the in-memory cache
+// once per minute. Expired rows remain in SQLite for the audit trail.
+func (fc *foundationContext) sweepMaintenanceChains(ctx context.Context) {
+	if fc.MaintenanceChains == nil {
+		return
+	}
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if n := fc.MaintenanceChains.Sweep(now); n > 0 {
+				slog.Info("maintenancechain: swept expired grants", "count", n)
+			}
+		}
+	}
 }
 
 // sweepPkgMgr runs the package-manager window cleanup once per minute.
@@ -793,6 +841,9 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.SourceStore != nil {
 		_ = fc.SourceStore.Close()
+	}
+	if fc.MaintenanceChains != nil {
+		_ = fc.MaintenanceChains.Close()
 	}
 }
 

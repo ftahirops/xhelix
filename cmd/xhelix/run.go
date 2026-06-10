@@ -45,6 +45,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/egresspolicy"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/pcap"
+	"github.com/xhelix/xhelix/pkg/pkglifecycle"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
@@ -64,6 +65,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/vhostcorr"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/execguard"
+	"github.com/xhelix/xhelix/pkg/redzones"
 	"github.com/xhelix/xhelix/pkg/fleetrarity"
 	"github.com/xhelix/xhelix/pkg/forensic"
 	"github.com/xhelix/xhelix/pkg/geoip"
@@ -673,9 +675,23 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		})
 		rules := buildExecGuardRules(cfg.ExecGuard.DenyPaths)
 		if len(rules) == 0 {
-			rules = execguard.DefaultRules()
+			// No operator override — use defaults (tmp-dir blocks) plus
+			// the unconditional web-worker red zone exec denials.
+			rules = append(execguard.DefaultRules(), redzones.Default().WebWorkerExecRules()...)
 		}
 		execGuard.SetRules(rules)
+		// Wire maintenance chain bypass: before a red-zone deny is sent
+		// to the kernel, check whether a signed grant covers this exec.
+		if foundation.MaintenanceChains != nil {
+			mc := foundation.MaintenanceChains
+			execGuard.SetAllowOverride(func(binaryPath string, pid int32) bool {
+				cgroup := readProcCgroup(pid)
+				if cgroup == "" {
+					return false
+				}
+				return mc.CoversExec(cgroup, binaryPath)
+			})
+		}
 		mounts := cfg.ExecGuard.MountPoints
 		if len(mounts) == 0 {
 			mounts = []string{"/"}
@@ -2973,6 +2989,17 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	enterpriseSrv := startWebServer(ctx, log, cfg, webServer, sessionTracker, banner, ruleEngine, soak, &uiStats{
 		hot: hot, bus: bus, sessionTracker: sessionTracker, banner: banner,
 	}, foundation.IncidentGraph)
+	// Wire maintenance chain UI. The UI signing key is auto-generated at
+	// /var/lib/xhelix/ui-signing.key; its public key is injected into the
+	// store's trust root here so web-originated grants validate cleanly.
+	if foundation.MaintenanceChains != nil {
+		if uiPriv, _, err := loadDaemonSigningKey(); err == nil {
+			foundation.MaintenanceChains.RegisterTrustKey("ui", uiPriv.Public().(ed25519.PublicKey))
+		} else {
+			log.Warn("maintenance UI: signing key unavailable; grants cannot be created via UI", "err", err)
+		}
+		webServer.SetMaintenance(&daemonMaintenanceProvider{store: foundation.MaintenanceChains})
+	}
 
 	// SBOM periodic diff
 	if cfg.SBOM.Enabled && sbomBaseline != nil {
@@ -3275,6 +3302,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.IncidentGraph,
 		foundation.SSHBrute,
 		foundation.PkgMgr,
+		foundation.PkgLifecycle,
 		foundation.LongWindow,
 		foundation.CDNDNS,
 		foundation.FlowStats,
@@ -3413,6 +3441,7 @@ func dispatch(
 	incidentGraph incidentgraph.Engine,
 	sshBrute *sshbrute.Detector,
 	pkgMgrStore *pkgmgr.Store,
+	pkgLifecycleTagger *pkglifecycle.Tagger,
 	longWindow *longwindow.Store,
 	cdnDNS *cdndetect.DNSCache,
 	flowStats *flowstats.Counters,
@@ -3784,6 +3813,7 @@ func dispatch(
 		IncidentGraph:    incidentGraph,
 		SSHBrute:         sshBrute,
 		PkgMgr:           pkgMgrStore,
+		PkgLifecycle:     pkgLifecycleTagger,
 		LongWindow:       longWindow,
 		CDNDNS:           cdnDNS,
 		FlowStats:        flowStats,

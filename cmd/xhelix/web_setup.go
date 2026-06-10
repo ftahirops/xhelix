@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/doctor"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/netban"
 	"github.com/xhelix/xhelix/pkg/rules"
@@ -100,6 +102,7 @@ func startWebServer(
 	webSrv.RegisterEgressRoutes(mux)
 	webSrv.RegisterSafetyRoutes(mux)
 	webSrv.RegisterZoneRoutes(mux)
+	webSrv.RegisterMaintenanceRoutes(mux)
 
 	// AuthGuard — bearer token + IP allow-list + rate limit + audit.
 	tokenFile := cfg.UI.TokenFile
@@ -336,6 +339,117 @@ func (d *daemonRuleLister) ListRules() []web.RuleView {
 	// rule firings via the alerts page. Future work: extend
 	// rules.Engine with a Rules() accessor.
 	return nil
+}
+
+// daemonMaintenanceProvider adapts *maintenancechain.Store to
+// web.MaintenanceProvider, translating between the two Grant shapes
+// and applying the TTL/trust root from the existing key file.
+type daemonMaintenanceProvider struct {
+	store *maintenancechain.Store
+}
+
+func (d *daemonMaintenanceProvider) ListAll() ([]web.MaintenanceGrant, error) {
+	raw, err := d.store.ListAll()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	out := make([]web.MaintenanceGrant, 0, len(raw))
+	for _, g := range raw {
+		rem := g.Remaining()
+		out = append(out, web.MaintenanceGrant{
+			ID:          g.ID,
+			AppName:     g.AppName,
+			CgroupMatch: g.CgroupMatch,
+			Scope:       string(g.Scope),
+			AllowExec:   g.AllowExec,
+			AllowWrite:  g.AllowWrite,
+			Reason:      g.Reason,
+			CreatedBy:   g.CreatedBy,
+			CreatedAt:   g.CreatedAt,
+			ExpiresAt:   g.ExpiresAt,
+			SignedBy:     g.SignedBy,
+			Remaining:   formatDuration(rem),
+			Expired:     now.After(g.ExpiresAt),
+		})
+	}
+	return out, nil
+}
+
+func (d *daemonMaintenanceProvider) Create(req web.MaintenanceCreateReq) (*web.MaintenanceGrant, error) {
+	ttl := time.Duration(req.TTLMinutes) * time.Minute
+	if ttl <= 0 {
+		ttl = 30 * time.Minute
+	}
+	// The daemon's own signing key for UI-originated grants. If no BRP
+	// key is configured the store still opens with an empty trust root,
+	// and Mint will fail signature validation — surface the error clearly.
+	signerKey, signerName, err := loadDaemonSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("no signing key available: operator must place an Ed25519 key at /etc/xhelix/brp/trusted-keys.d/ui.priv: %w", err)
+	}
+	g, err := d.store.Add(maintenancechain.MintParams{
+		AppName:     req.AppName,
+		CgroupMatch: req.CgroupMatch,
+		Scope:       maintenancechain.Scope(req.Scope),
+		AllowExec:   req.AllowExec,
+		AllowWrite:  req.AllowWrite,
+		Reason:      req.Reason,
+		CreatedBy:   req.CreatedBy,
+		TTL:         ttl,
+		SignerName:  signerName,
+		SignerKey:   signerKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	rem := g.Remaining()
+	out := &web.MaintenanceGrant{
+		ID:          g.ID,
+		AppName:     g.AppName,
+		CgroupMatch: g.CgroupMatch,
+		Scope:       string(g.Scope),
+		AllowExec:   g.AllowExec,
+		AllowWrite:  g.AllowWrite,
+		Reason:      g.Reason,
+		CreatedBy:   g.CreatedBy,
+		CreatedAt:   g.CreatedAt,
+		ExpiresAt:   g.ExpiresAt,
+		SignedBy:    g.SignedBy,
+		Remaining:  formatDuration(rem),
+	}
+	return out, nil
+}
+
+func (d *daemonMaintenanceProvider) Revoke(id string) error {
+	return d.store.Revoke(id)
+}
+
+// loadDaemonSigningKey loads or generates the UI signing key used for
+// maintenance grants created via the web interface. The key is stored at
+// /var/lib/xhelix/ui-signing.key (raw Ed25519 private key bytes) and its
+// public key is automatically trusted under the signer name "ui". This
+// means operators get a working setup on first run without manual key
+// management; security comes from the UI's own AuthGuard layer.
+func loadDaemonSigningKey() (ed25519.PrivateKey, string, error) {
+	const keyPath = "/var/lib/xhelix/ui-signing.key"
+	priv, err := loadOrGenerateEd25519Key(keyPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return priv, "ui", nil
+}
+
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "expired"
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	return fmt.Sprintf("%dm", int(d.Minutes())+1)
 }
 
 // hush unused imports if a particular config branch isn't taken.

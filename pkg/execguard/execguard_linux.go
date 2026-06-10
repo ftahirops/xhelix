@@ -93,11 +93,19 @@ type IntegrityVerifier interface {
 	Verify(path string, pid uint32) (allow bool, reason string)
 }
 
+// AllowOverride is consulted when a rule-based Deny is about to be sent
+// to the kernel. If it returns true the decision is flipped to Allow
+// (e.g., a maintenance chain grant covers this PID + binary). The
+// callback must be fast — it is called synchronously on the fanotify
+// loop goroutine before respond() is called.
+type AllowOverride func(binaryPath string, pid int32) bool
+
 // Guard is the public API.
 type Guard struct {
 	mu      sync.RWMutex
 	rules   []Rule
 	cb      EventCallback
+	override AllowOverride
 
 	verifier IntegrityVerifier
 	intMode  IntegrityMode
@@ -117,6 +125,16 @@ type Guard struct {
 // New returns an unstarted guard. Call SetRules then Start.
 func New(cb EventCallback) *Guard {
 	return &Guard{cb: cb, fd: -1}
+}
+
+// SetAllowOverride registers a callback that is consulted before a
+// rule-based Deny is sent to the kernel. If the callback returns true
+// the exec is allowed (e.g., a maintenance chain grant is active for
+// this PID + binary). Pass nil to clear. Safe to call after Start.
+func (g *Guard) SetAllowOverride(fn AllowOverride) {
+	g.mu.Lock()
+	g.override = fn
+	g.mu.Unlock()
 }
 
 // SetIntegrity wires a baseline verifier into the guard. Pass mode =
@@ -302,6 +320,18 @@ func (g *Guard) handle(buf []byte) {
 						decision = Deny
 					}
 				}
+			}
+		}
+		// Maintenance chain override: a signed grant may temporarily
+		// allow a red-zone binary. Checked only when rule-evaluation
+		// produced Deny, so non-red-zone execs are never slower.
+		if decision == Deny {
+			g.mu.RLock()
+			ov := g.override
+			g.mu.RUnlock()
+			if ov != nil && ov(path, pid) {
+				decision = Allow
+				reason = "maintenance-chain-grant"
 			}
 		}
 		if mask&unix.FAN_OPEN_EXEC_PERM != 0 {
