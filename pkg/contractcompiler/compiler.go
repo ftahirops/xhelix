@@ -32,13 +32,12 @@ func Compile(app appregistry.App, policy *redzones.Policy) CompiledContract {
 		Source:     "declaration",
 	}
 
+	if arch == "" {
+		cc.Warnings = append(cc.Warnings,
+			"seccomp profile not generated: unsupported host arch")
+	}
 	for _, svc := range app.Services {
-		cs := compileService(app, svc, policy, arch)
-		if arch == "" {
-			cc.Warnings = append(cc.Warnings,
-				"seccomp profile not generated: unsupported host arch")
-		}
-		cc.Services = append(cc.Services, cs)
+		cc.Services = append(cc.Services, compileService(app, svc, policy, arch))
 	}
 	return cc
 }

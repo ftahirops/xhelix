@@ -151,14 +151,12 @@ func (l *Ledger) Record(appName, binary, ruleID, cgroupPath, reason string, at t
 // Returns nil if no events have been recorded for that app.
 func (l *Ledger) AppHealth(appName string) *AppDenyStats {
 	l.mu.RLock()
+	defer l.mu.RUnlock()
 	b, ok := l.byApp[appName]
-	l.mu.RUnlock()
 	if !ok {
 		return nil
 	}
-	l.mu.RLock()
 	snap := b.snapshot(appName)
-	l.mu.RUnlock()
 	return &snap
 }
 

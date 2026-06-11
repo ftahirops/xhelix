@@ -144,7 +144,10 @@ func (a *Armorer) Disarm(app string, svcs []ServiceSpec) (ArmResult, error) {
 // process. try-restart only restarts units that are currently running.
 func (a *Armorer) Restart(units []string) error {
 	for _, u := range units {
-		if err := a.Runner("try-restart", u); err != nil {
+		// "--" terminates option parsing so a unit name can never be
+		// interpreted as a systemctl flag (registry validation already
+		// forbids a leading dash; this is defense in depth).
+		if err := a.Runner("try-restart", "--", safeUnit(u)); err != nil {
 			return fmt.Errorf("contractarm: try-restart %s: %w", u, err)
 		}
 	}
@@ -168,12 +171,27 @@ func (a *Armorer) Status(app string, units []string) []ServiceStatus {
 	return out
 }
 
+// dropInDir returns /etc/systemd/system/<unit>.d. The unit name is
+// reduced to its base component so a traversal value like
+// "../../etc/cron.d/x" can never escape the systemd dir, even though the
+// registry already validates unit names — defense in depth for a write
+// performed as root.
 func (a *Armorer) dropInDir(unit string) string {
 	base := a.SystemdDir
 	if base == "" {
 		base = "/etc/systemd/system"
 	}
-	return filepath.Join(base, unit+".d")
+	return filepath.Join(base, safeUnit(unit)+".d")
+}
+
+// safeUnit strips any path component and rejects traversal tokens.
+func safeUnit(unit string) string {
+	unit = filepath.Base(unit)
+	if unit == "" || unit == "." || unit == ".." ||
+		unit == string(filepath.Separator) || unit[0] == '-' {
+		return "invalid-unit"
+	}
+	return unit
 }
 
 func (a *Armorer) now() time.Time {

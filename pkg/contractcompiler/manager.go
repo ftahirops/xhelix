@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xhelix/xhelix/pkg/appregistry"
@@ -40,7 +41,11 @@ type Manager struct {
 	mu       sync.RWMutex
 	compiled map[string]*CompiledContract // by app name
 	// shadowCount tallies would-blocks per app while in shadow mode.
-	shadowCount map[string]uint64
+	// Values are *atomic.Uint64 so the hot path (ExecDecisionFor) can
+	// increment under a read lock without a data race — only the map
+	// itself is guarded by mu, and it is mutated only under the write
+	// lock (Recompile/Remove).
+	shadowCount map[string]*atomic.Uint64
 }
 
 // NewManager creates a compiler manager. artifactDir is where staged
@@ -57,7 +62,7 @@ func NewManager(policy *redzones.Policy, artifactDir string, log *slog.Logger) *
 		artifactDir: artifactDir,
 		log:         log,
 		compiled:    make(map[string]*CompiledContract),
-		shadowCount: make(map[string]uint64),
+		shadowCount: make(map[string]*atomic.Uint64),
 	}
 }
 
@@ -68,7 +73,7 @@ func (m *Manager) Recompile(app appregistry.App) *CompiledContract {
 	cc := Compile(app, m.policy)
 	m.mu.Lock()
 	m.compiled[app.Name] = &cc
-	m.shadowCount[app.Name] = 0
+	m.shadowCount[app.Name] = new(atomic.Uint64)
 	m.mu.Unlock()
 
 	if cc.Mode == appregistry.ModeLocked || cc.Mode == appregistry.ModeSealed {
@@ -115,46 +120,69 @@ func (m *Manager) Get(appName string) *CompiledContract {
 //   - observe/guarded or no match: Pass (global red-zone floor applies).
 //
 // Returns (DecisionPass, "") when no compiled contract claims this cgroup.
+//
+// When two apps declare overlapping cgroups (e.g. one claims
+// /system.slice and another /system.slice/nginx.service), the MOST
+// SPECIFIC match wins (longest CgroupMatch). This makes the verdict
+// deterministic regardless of Go's map iteration order — without it an
+// attacker could craft overlapping declarations to get an intermittent
+// Allow where Deny is expected.
 func (m *Manager) ExecDecisionFor(binaryPath, cgroupPath string) (ExecDecision, string) {
 	if cgroupPath == "" {
 		return DecisionPass, ""
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	// Find the most specific (longest-prefix) matching service across all
+	// enforcing/shadow contracts.
+	var best *CompiledContract
+	var bestSvc *CompiledService
+	bestLen := -1
 	for _, cc := range m.compiled {
 		switch cc.Mode {
 		case appregistry.ModeLocked, appregistry.ModeSealed, appregistry.ModeShadow:
 		default:
 			continue
 		}
-		for _, svc := range cc.Services {
-			if !cgroupCovers(cgroupPath, svc.CgroupMatch) {
-				continue
+		for i := range cc.Services {
+			svc := &cc.Services[i]
+			if cgroupCovers(cgroupPath, svc.CgroupMatch) && len(svc.CgroupMatch) > bestLen {
+				best, bestSvc, bestLen = cc, svc, len(svc.CgroupMatch)
 			}
-			allowed := contains(svc.ExecAllow, binaryPath)
-			if cc.Mode == appregistry.ModeShadow {
-				if !allowed {
-					m.shadowCount[cc.App]++
-					m.log.Warn("contractcompiler: shadow would-deny exec",
-						"app", cc.App, "binary", binaryPath, "cgroup", cgroupPath)
-				}
-				return DecisionPass, ""
-			}
-			if allowed {
-				return DecisionAllow, ""
-			}
-			return DecisionDeny, fmt.Sprintf("compiled-policy: undeclared exec (%s)", cc.App)
 		}
 	}
-	return DecisionPass, ""
+	if best == nil {
+		return DecisionPass, ""
+	}
+
+	allowed := contains(bestSvc.ExecAllow, binaryPath)
+	if best.Mode == appregistry.ModeShadow {
+		if !allowed {
+			if c := m.shadowCount[best.App]; c != nil {
+				c.Add(1)
+			}
+			m.log.Warn("contractcompiler: shadow would-deny exec",
+				"app", best.App, "binary", binaryPath, "cgroup", cgroupPath)
+		}
+		return DecisionPass, ""
+	}
+	if allowed {
+		return DecisionAllow, ""
+	}
+	return DecisionDeny, fmt.Sprintf("compiled-policy: undeclared exec (%s)", best.App)
 }
 
 // ShadowCount returns the number of would-blocks tallied for an app while
 // in shadow mode (resets on each Recompile).
 func (m *Manager) ShadowCount(appName string) uint64 {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.shadowCount[appName]
+	c := m.shadowCount[appName]
+	m.mu.RUnlock()
+	if c == nil {
+		return 0
+	}
+	return c.Load()
 }
 
 // writeArtifacts persists the staged seccomp + AppArmor renders to
@@ -164,7 +192,13 @@ func (m *Manager) writeArtifacts(cc *CompiledContract) error {
 	if m.artifactDir == "" {
 		return nil
 	}
+	// Defense in depth: the app name is validated as a slug at the
+	// registry boundary, but jail the artifact path here too so a future
+	// caller that skips validation can never escape ArtifactDir.
 	dir := filepath.Join(m.artifactDir, cc.App)
+	if dir != m.artifactDir && !strings.HasPrefix(dir, m.artifactDir+string(os.PathSeparator)) {
+		return fmt.Errorf("contractcompiler: app name %q escapes artifact dir", cc.App)
+	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}

@@ -476,7 +476,11 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		app, _ := p.Get(name)
+		app, err := p.Get(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		writeJSON(w, app)
 
 	case sub == "" && r.Method == http.MethodGet:

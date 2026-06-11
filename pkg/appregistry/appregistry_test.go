@@ -21,8 +21,8 @@ func TestCgroupMatchesPrefix(t *testing.T) {
 		// Empty prefix always false
 		{"", "/system.slice/nginx.service", false},
 		{"/system.slice/nginx.service", "", false},
-		// Both empty
-		{"", "", true}, // exact match of empty strings
+		// Both empty — empty prefix never matches (security invariant).
+		{"", "", false},
 	}
 	for _, c := range cases {
 		got := cgroupMatchesPrefix(c.path, c.prefix)

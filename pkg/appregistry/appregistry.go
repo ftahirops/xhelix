@@ -112,6 +112,9 @@ func (r *Registry) Create(a App) error {
 	if a.Name == "" {
 		return errors.New("appregistry: name required")
 	}
+	if err := validateApp(a); err != nil {
+		return err
+	}
 	if a.Mode == "" {
 		a.Mode = ModeObserve
 	}
@@ -207,8 +210,13 @@ func (r *Registry) List() ([]App, error) {
 	return apps, nil
 }
 
-// SetMode changes the enforcement mode for an app.
+// SetMode changes the enforcement mode for an app. Rejects any value
+// outside the five canonical modes — an unrecognized mode would silently
+// disable the compiled policy in ExecDecisionFor.
 func (r *Registry) SetMode(name string, mode EnforcementMode) error {
+	if !ValidMode(mode) {
+		return fmt.Errorf("appregistry: invalid mode %q", mode)
+	}
 	res, err := r.db.ExecContext(context.Background(),
 		`UPDATE apps SET mode=?, updated_at=? WHERE name=?`,
 		string(mode), time.Now().Unix(), name)
@@ -273,13 +281,16 @@ func (r *Registry) AppForCgroup(cgroupPath string) string {
 // child of prefix (i.e. path starts with prefix + "/"). The slash anchor
 // prevents /system.slice/php-fpm matching /system.slice/php-fpm-evil.
 func cgroupMatchesPrefix(path, prefix string) bool {
+	if prefix == "" {
+		return false
+	}
 	if path == prefix {
 		return true
 	}
-	if strings.HasPrefix(prefix, "/") && strings.HasPrefix(path, prefix+"/") {
-		return true
-	}
-	return false
+	// Slash-anchored child match — prevents /…/php-fpm.service matching
+	// /…/php-fpm.service-evil. Applied unconditionally; cgroup paths are
+	// validated as /-rooted at the registry boundary.
+	return strings.HasPrefix(path, prefix+"/")
 }
 
 func (r *Registry) loadServices(appName string) ([]Service, error) {

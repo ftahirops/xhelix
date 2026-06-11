@@ -134,7 +134,7 @@ func TestRestart_IssuesTryRestart(t *testing.T) {
 	if err := a.Restart([]string{"nginx.service", "php-fpm.service"}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"try-restart nginx.service", "try-restart php-fpm.service"}
+	want := []string{"try-restart -- nginx.service", "try-restart -- php-fpm.service"}
 	if len(*calls) != 2 || (*calls)[0] != want[0] || (*calls)[1] != want[1] {
 		t.Errorf("got %v, want %v", *calls, want)
 	}
