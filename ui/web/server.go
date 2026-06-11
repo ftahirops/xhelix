@@ -112,6 +112,9 @@ type Server struct {
 	// proposalProvider handles the CI deploy-proposal flow (P7). Wired via
 	// SetProposalProvider. Nil-safe.
 	proposalProvider ProposalProvider
+	// causal assembles causal chains from the live process graph (P6).
+	// Wired via SetCausal. Nil-safe.
+	causal CausalProvider
 	mu     sync.RWMutex
 	alerts []model.Alert
 }

@@ -60,6 +60,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/appident"
 	"github.com/xhelix/xhelix/pkg/appregistry"
 	"github.com/xhelix/xhelix/pkg/canonical"
+	"github.com/xhelix/xhelix/pkg/causalengine"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/destclass"
@@ -3064,6 +3065,12 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Wire the control-action audit trail (RBAC actor + hash chain).
 	if foundation.ContractAudit != nil {
 		webServer.SetAuditProvider(&daemonAuditProvider{store: foundation.ContractAudit, log: log})
+	}
+	// Wire the causal-chain engine over the live process graph (P6).
+	if foundation.HotGraph != nil {
+		webServer.SetCausal(&daemonCausalProvider{
+			eng: causalengine.New(foundation.HotGraph, foundation.Origins, foundation.ProcCache),
+		})
 	}
 	// Wire the CI deploy-proposal flow (P7).
 	if foundation.ContractPropose != nil && foundation.AppRegistry != nil && foundation.Compiler != nil {

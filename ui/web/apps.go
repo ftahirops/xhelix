@@ -352,6 +352,7 @@ func (s *Server) RegisterAppRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/apps/", s.handleAppSubPage)
 	mux.HandleFunc("/api/apps", s.handleAPIApps)
 	mux.HandleFunc("/api/apps/", s.handleAPIAppsPath)
+	mux.HandleFunc("/api/causal", s.handleCausal) // P6 causal-chain lookup
 }
 
 // =============================================================================
@@ -1140,6 +1141,19 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
   <div id="versionsEmpty" class="muted" style="font-size:13px">No signed versions yet.</div>
 </section>
 <section>
+  <h3>Causal Chain <span class="count">P6</span></h3>
+  <div class="muted" style="font-size:12px;margin-bottom:8px">
+    Trace a PID (from an alert or the egress feed) back through its process
+    ancestry to the root cause — who/where the lineage started.
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+    <input type="text" id="causalPid" placeholder="PID, e.g. 4821" style="max-width:160px"
+           onkeydown="if(event.key==='Enter')traceCausal()">
+    <button class="btn-sm" onclick="traceCausal()">Trace</button>
+  </div>
+  <div id="causalResult"></div>
+</section>
+<section>
   <h3>Recent Activity <span class="count">audit</span></h3>
   <div class="muted" style="font-size:12px;margin-bottom:8px">
     Tamper-evident, hash-chained control-action log (who / when / what / outcome).
@@ -1612,6 +1626,45 @@ async function rejectProp(id) {
   loadProposals();
 }
 
+async function traceCausal() {
+  const pid = (document.getElementById("causalPid").value || "").trim();
+  const out = document.getElementById("causalResult");
+  if (!pid) { out.innerHTML = '<span class="muted">enter a PID</span>'; return; }
+  out.innerHTML = '<span class="muted">tracing…</span>';
+  try {
+    const r = await fetch("/api/causal?pid=" + encodeURIComponent(pid));
+    if (!r.ok) { out.innerHTML = '<span class="arm-off">lookup failed</span>'; return; }
+    const c = await r.json();
+    if (!c.found) {
+      out.innerHTML = '<span class="muted">PID ' + esc(pid) + ' not in the live process graph ' +
+        '(exited + evicted, or never graphed).</span>';
+      return;
+    }
+    let html = '';
+    if (c.origin) {
+      const o = c.origin;
+      html += '<div class="causal-origin">▸ root: <strong>' + esc(o.type) + '</strong>' +
+        (o.user ? ' · user ' + esc(o.user) : '') +
+        (o.source_ip ? ' · from ' + esc(o.source_ip) + (o.source_port ? ':' + o.source_port : '') : '') +
+        (o.started_at ? ' · ' + new Date(o.started_at).toLocaleTimeString() : '') + '</div>';
+    } else if (c.origin_ip) {
+      html += '<div class="causal-origin">▸ origin IP: ' + esc(c.origin_ip) + '</div>';
+    }
+    html += '<div class="causal-chain">';
+    (c.processes || []).forEach((p, i) => {
+      const indent = '&nbsp;'.repeat(i * 2);
+      const arrow = i === 0 ? '' : '└─ ';
+      const tgt = (i === (c.processes.length - 1)) ? ' causal-target' : '';
+      html += '<div class="causal-hop' + tgt + '">' + indent + arrow +
+        '<span class="mono">' + esc(p.comm) + '</span>' +
+        ' <span class="muted">pid ' + p.pid + (p.exited ? ' · exited' : '') +
+        (p.exe_path ? ' · ' + esc(p.exe_path) : '') + '</span></div>';
+    });
+    html += '</div>';
+    out.innerHTML = html;
+  } catch(e) { out.innerHTML = '<span class="arm-off">error: ' + esc(String(e)) + '</span>'; }
+}
+
 // Load on page open and refresh every 30s.
 loadEgress();
 loadHealth();
@@ -1916,4 +1969,11 @@ select{background:var(--border);color:var(--fg);border:1px solid var(--border);
 .diff-list{display:flex;flex-direction:column;gap:3px}
 .diff-row{font-size:12px;padding:3px 6px;border-radius:4px;background:var(--bg)}
 .diff-row .mono{font-size:12px}
+.causal-origin{font-size:13px;padding:8px 10px;background:#1a2030;border:1px solid var(--accent);
+  border-radius:6px;margin-bottom:8px}
+.causal-chain{font-size:13px;line-height:1.7}
+.causal-hop{padding:1px 0}
+.causal-target{color:var(--warn);font-weight:600}
+input[type=text]{background:var(--bg);border:1px solid var(--border);color:var(--fg);
+  padding:7px 10px;border-radius:6px;font:inherit}
 `

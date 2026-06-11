@@ -1098,3 +1098,25 @@ correlator). This first cut just makes the graph live.
 **P6 continuation (deferred):** pkg/causalengine (CausalChain(alertID) → ordered
 root-cause story from alert EvidenceIDs → hotgraph ancestors → lineage Origins)
 and the UI "View chain" expansion. The graph they consume is now live.
+
+### P6 (continued) — causal-assembly engine + UI — AS BUILT (2026-06-11)
+
+On-demand causal chain assembly over the now-live hot graph.
+
+**Shipped:**
+- pkg/causalengine: TraceByPID / TraceByKey / TraceByLineage → CausalChain.
+  Walks the graph's parent edges from a process up to the root (ordered
+  root→target) and resolves the lineage Origin (SSH/web/cron/sudo/…, with
+  user + source IP). Pure read-over-substrate; nil-safe. 5 tests incl.
+  full-chain order, origin resolution, lineage trace, no-lineage ancestry.
+- web: CausalProvider + GET /api/causal?pid=N|lineage=M (viewer). Returns
+  {found:false} when the process isn't in the live graph (exited+evicted).
+- UI: "Causal Chain" panel on the app detail page — enter a PID (from an
+  alert / the egress feed), get the root cause + the ordered process
+  ancestry rendered as a tree, target highlighted.
+- Wired in run.go from foundation.HotGraph + Origins + ProcCache.
+
+This delivers the build-plan's "View chain" value (root→leaf causal story)
+adapted to on-demand assembly. P6 continuation remaining (optional): a
+"View chain" link wired directly onto each live alert / deny entry, and an
+incident-level causal view via TraceByLineage.

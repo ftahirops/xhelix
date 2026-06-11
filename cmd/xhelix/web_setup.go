@@ -20,6 +20,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/causalengine"
 	"github.com/xhelix/xhelix/pkg/contractarm"
 	"github.com/xhelix/xhelix/pkg/contractaudit"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
@@ -1096,6 +1097,38 @@ func proposalView(p *contractpropose.Proposal) *web.ProposalView {
 		SourceIP: p.SourceIP, Reason: p.Reason, TargetSHA: p.TargetSHA,
 		CreatedAt: p.CreatedAt, DecidedAt: p.DecidedAt, DecidedBy: p.DecidedBy,
 	}
+}
+
+// daemonCausalProvider adapts *causalengine.Engine to web.CausalProvider (P6).
+type daemonCausalProvider struct {
+	eng *causalengine.Engine
+}
+
+func (d *daemonCausalProvider) TraceByPID(pid uint32) *web.CausalChainView {
+	return toCausalView(d.eng.TraceByPID(pid))
+}
+
+func (d *daemonCausalProvider) TraceByLineage(id uint64) *web.CausalChainView {
+	return toCausalView(d.eng.TraceByLineage(id))
+}
+
+func toCausalView(c causalengine.CausalChain) *web.CausalChainView {
+	v := &web.CausalChainView{
+		Found: c.Found, LineageID: c.LineageID, OriginIP: c.OriginIP,
+	}
+	if c.Origin != nil {
+		v.Origin = &web.CausalOriginView{
+			Type: c.Origin.Type, User: c.Origin.User, SourceIP: c.Origin.SourceIP,
+			SourcePort: c.Origin.SourcePort, StartedAt: c.Origin.StartedAt,
+		}
+	}
+	for _, p := range c.Processes {
+		v.Processes = append(v.Processes, web.CausalProcessView{
+			PID: p.PID, Comm: p.Comm, ExePath: p.ExePath, Cgroup: p.Cgroup,
+			UID: p.UID, SpawnedAt: p.SpawnedAt, Exited: p.Exited,
+		})
+	}
+	return v
 }
 
 // daemonAuditProvider adapts *contractaudit.Store to web.AuditProvider.
