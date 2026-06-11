@@ -951,3 +951,32 @@ after arming.
 
 **Still deferred:** policy signing/versioning, RBAC-on-arm, persistent audit trail,
 kernel-in-the-loop e2e proving a real syscall is denied.
+
+### Audit trail + RBAC-on-arm — AS BUILT (2026-06-11)
+
+Closes the two remaining production-blockers from the maturity review:
+no change-audit trail, and any authenticated session could arm prod.
+
+**Audit trail — `pkg/contractaudit`:**
+- Append-only, SHA-256 **hash-chained** SQLite log (hash = sha256(prev_hash |
+  canonical(record))). `Verify()` walks the chain and names the first broken
+  seq, so a deleted or edited row is detectable. Tip recovered across reopen.
+- Records every control action — create / mode_change / arm / disarm / restart /
+  delete / recompile / breaker_reset — with actor (role + credential + source IP),
+  target, detail, and outcome (ok / error).
+- Surfaced per-app at GET /api/apps/:name/audit + a "Recent Activity" panel.
+- Tests: chain link, tamper detection (edit), deletion detection, reopen, per-app.
+
+**RBAC-on-arm — role-scoped tokens (backward compatible):**
+- Three roles: viewer < operator < admin. The existing single token is always
+  ADMIN, so current deployments are unchanged. Optional viewer/operator tokens via
+  `ui.role_tokens: {viewer: <file>, operator: <file>}`.
+- AuthGuard resolves the presented token → role, attaches an Identity (role +
+  credential + IP) to the request context; NoAuth/single-token → admin.
+- Gates: GET = viewer; create / mode_change / arm(locked) / disarm / recompile /
+  breaker_reset = operator; restart / delete / arm(sealed) / promote-to-sealed =
+  admin. 403 on insufficient role.
+- Tests: role ordering, ParseRole, default-admin identity, requireRole 403 matrix.
+
+**Still deferred:** policy signing/versioning (overlaps P7 CI/CD); per-person (vs
+per-credential) identity; kernel-in-the-loop e2e proving an armed syscall denies.

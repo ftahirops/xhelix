@@ -3051,6 +3051,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	if foundation.DenyLedger != nil {
 		webServer.SetAppHealth(&daemonAppHealthProvider{ledger: foundation.DenyLedger})
 	}
+	// Wire the control-action audit trail (RBAC actor + hash chain).
+	if foundation.ContractAudit != nil {
+		webServer.SetAuditProvider(&daemonAuditProvider{store: foundation.ContractAudit, log: log})
+	}
 	// Wire compiled-contract view + arm lifecycle into the web UI (P5a/P5a.2).
 	if foundation.Compiler != nil {
 		webServer.SetCompiledPolicy(&daemonCompiledPolicyProvider{

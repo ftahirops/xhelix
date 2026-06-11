@@ -19,6 +19,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/appregistry"
 	"github.com/xhelix/xhelix/pkg/contractarm"
+	"github.com/xhelix/xhelix/pkg/contractaudit"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/denyledger"
@@ -130,6 +131,7 @@ func startWebServer(
 		AllowIPs:           cfg.UI.AllowIPs,
 		AutoDetectSSH:      cfg.UI.AutoDetectSSH,
 		TokenFile:          tokenFile,
+		RoleTokenFiles:     cfg.UI.RoleTokens,
 		AuditLogPath:       auditLog,
 		RateLimitPerSecond: cfg.UI.RateLimit,
 		TrustForwardedFor:  cfg.UI.TrustForwarded,
@@ -831,6 +833,37 @@ func toCompiledPolicyView(cc *contractcompiler.CompiledContract, shadow uint64) 
 		})
 	}
 	return v
+}
+
+// daemonAuditProvider adapts *contractaudit.Store to web.AuditProvider.
+type daemonAuditProvider struct {
+	store *contractaudit.Store
+	log   *slog.Logger
+}
+
+func (d *daemonAuditProvider) Record(rec web.AuditRecord) {
+	if _, err := d.store.Record(contractaudit.Entry{
+		Role: rec.Role, TokenName: rec.TokenName, SourceIP: rec.SourceIP,
+		Action: rec.Action, App: rec.App, Detail: rec.Detail, Outcome: rec.Outcome,
+	}); err != nil && d.log != nil {
+		d.log.Warn("contractaudit: record failed", "action", rec.Action, "app", rec.App, "err", err)
+	}
+}
+
+func (d *daemonAuditProvider) ListForApp(app string, limit int) ([]web.AuditEntryView, error) {
+	entries, err := d.store.ListForApp(app, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.AuditEntryView, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, web.AuditEntryView{
+			Seq: e.Seq, Time: e.Time, Role: e.Role, Actor: e.TokenName,
+			SourceIP: e.SourceIP, Action: e.Action, App: e.App,
+			Detail: e.Detail, Outcome: e.Outcome,
+		})
+	}
+	return out, nil
 }
 
 // hush unused imports if a particular config branch isn't taken.

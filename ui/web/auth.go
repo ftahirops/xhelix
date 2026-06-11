@@ -57,7 +57,15 @@ type AuthConfig struct {
 
 	// TokenFile is where the Bearer token is persisted. Generated on
 	// first start if missing. Default: /var/lib/xhelix/ui-token.
+	// This primary token always grants the ADMIN role, so existing
+	// single-token deployments are unchanged.
 	TokenFile string
+
+	// RoleTokenFiles optionally maps a role name ("viewer"|"operator")
+	// to a token file. When present, a request presenting that token is
+	// scoped to that role (RBAC-on-arm). Missing files are ignored. The
+	// primary TokenFile is always admin and is not overridable here.
+	RoleTokenFiles map[string]string
 
 	// AuditLogPath is where every UI request lands. Default:
 	// /var/log/xhelix/ui-audit.log.
@@ -85,7 +93,11 @@ type AuthConfig struct {
 // AuthGuard implements the middleware chain.
 type AuthGuard struct {
 	cfg   AuthConfig
-	token []byte // sha256 of the bearer token
+	token []byte // sha256 of the primary (admin) bearer token
+
+	// roleTokens maps sha256(token) → Role for any optional role-scoped
+	// tokens. The primary token is handled separately (always admin).
+	roleTokens map[[32]byte]Role
 
 	mu          sync.RWMutex
 	allowed     []*net.IPNet
@@ -144,9 +156,29 @@ func NewAuthGuard(cfg AuthConfig) (*AuthGuard, error) {
 	}
 	digest := sha256.Sum256(tok)
 
+	// Load optional role-scoped tokens (viewer/operator). The primary
+	// token above is always admin. Unreadable role files are skipped with
+	// a warning — never fatal, so a typo can't lock the operator out.
+	roleTokens := map[[32]byte]Role{}
+	for name, path := range cfg.RoleTokenFiles {
+		role := ParseRole(name)
+		if role == RoleNone || role == RoleAdmin || path == "" {
+			continue // admin is the primary token; ignore bogus names
+		}
+		rtok, _, rerr := loadOrCreateToken(path)
+		if rerr != nil {
+			cfg.Logger.Warn("ui rbac: role token unavailable; role disabled",
+				"role", name, "path", path, "err", rerr)
+			continue
+		}
+		roleTokens[sha256.Sum256(rtok)] = role
+		cfg.Logger.Info("ui rbac: role token loaded", "role", name, "token_file", path)
+	}
+
 	g := &AuthGuard{
 		cfg:         cfg,
 		token:       digest[:],
+		roleTokens:  roleTokens,
 		limiter:     map[string]*tokenBucket{},
 		limiterStop: make(chan struct{}),
 	}
@@ -238,6 +270,11 @@ func (g *AuthGuard) Wrap(h http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+
+		// Attach the authenticated identity (role + credential) so
+		// handlers can enforce RBAC and the audit trail can attribute
+		// actions. Backward compatible: single-token / NoAuth → admin.
+		r = r.WithContext(WithIdentity(r.Context(), g.identityFor(r, src.String())))
 
 		g.allowed_.Add(1)
 		h.ServeHTTP(w, r)
@@ -401,20 +438,47 @@ func (g *AuthGuard) tokenOK(r *http.Request) bool {
 	if g.cfg.NoAuth || len(g.token) == 0 {
 		return true
 	}
-	var presented string
+	return g.resolveRole(g.presentedToken(r)) != RoleNone
+}
+
+// presentedToken extracts the bearer token from the Authorization header
+// (preferred) or the xhelix_token cookie.
+func (g *AuthGuard) presentedToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		presented = strings.TrimPrefix(h, "Bearer ")
+		return strings.TrimPrefix(h, "Bearer ")
 	}
-	if presented == "" {
-		if c, err := r.Cookie("xhelix_token"); err == nil {
-			presented = c.Value
-		}
+	if c, err := r.Cookie("xhelix_token"); err == nil {
+		return c.Value
 	}
+	return ""
+}
+
+// resolveRole maps a presented token to the role it grants, or RoleNone.
+// The primary admin token is matched in constant time; role-scoped tokens
+// are matched via a digest map lookup.
+func (g *AuthGuard) resolveRole(presented string) Role {
 	if presented == "" {
-		return false
+		return RoleNone
 	}
 	digest := sha256.Sum256([]byte(presented))
-	return subtle.ConstantTimeCompare(digest[:], g.token) == 1
+	if subtle.ConstantTimeCompare(digest[:], g.token) == 1 {
+		return RoleAdmin
+	}
+	if role, ok := g.roleTokens[digest]; ok {
+		return role
+	}
+	return RoleNone
+}
+
+// identityFor builds the Identity attached to an authorized request.
+// Under NoAuth (or no token configured) every request is admin, preserving
+// the pre-RBAC single-principal behavior.
+func (g *AuthGuard) identityFor(r *http.Request, src string) Identity {
+	if g.cfg.NoAuth || len(g.token) == 0 {
+		return Identity{Role: RoleAdmin, TokenName: "admin", SourceIP: src}
+	}
+	role := g.resolveRole(g.presentedToken(r))
+	return Identity{Role: role, TokenName: role.String(), SourceIP: src}
 }
 
 // ==========================================================

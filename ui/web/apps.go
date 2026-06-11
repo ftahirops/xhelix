@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -188,6 +189,61 @@ func (s *Server) SetCompiledPolicy(p CompiledPolicyProvider) {
 	s.compiledPolicy = p
 }
 
+// AuditProvider records and reads the control-action audit trail (RBAC +
+// who/when/what). Wired by the daemon via SetAuditProvider. Nil-safe.
+type AuditProvider interface {
+	Record(rec AuditRecord)
+	ListForApp(app string, limit int) ([]AuditEntryView, error)
+}
+
+// AuditRecord is one control action to be appended to the trail.
+type AuditRecord struct {
+	Role      string
+	TokenName string
+	SourceIP  string
+	Action    string // arm|disarm|restart|mode_change|delete|create|breaker_reset
+	App       string
+	Detail    string
+	Outcome   string // ok | error: …
+}
+
+// AuditEntryView is one stored audit record returned to the UI.
+type AuditEntryView struct {
+	Seq      int64     `json:"seq"`
+	Time     time.Time `json:"time"`
+	Role     string    `json:"role"`
+	Actor    string    `json:"actor"`
+	SourceIP string    `json:"source_ip"`
+	Action   string    `json:"action"`
+	App      string    `json:"app"`
+	Detail   string    `json:"detail,omitempty"`
+	Outcome  string    `json:"outcome"`
+}
+
+// SetAuditProvider wires the audit trail into the server.
+func (s *Server) SetAuditProvider(a AuditProvider) { s.auditProvider = a }
+
+// audit appends a control action to the trail, attributed to the request's
+// authenticated identity. No-op when no provider is wired.
+func (s *Server) audit(r *http.Request, action, app, detail, outcome string) {
+	if s.auditProvider == nil {
+		return
+	}
+	id := IdentityFrom(r.Context())
+	s.auditProvider.Record(AuditRecord{
+		Role: id.Role.String(), TokenName: id.TokenName, SourceIP: id.SourceIP,
+		Action: action, App: app, Detail: detail, Outcome: outcome,
+	})
+}
+
+// outcome renders an audit outcome string from an error (nil = "ok").
+func outcome(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	return "error: " + err.Error()
+}
+
 // SetAppRegistry wires an AppRegistryProvider into the server.
 // All /apps/* and /api/apps/* handlers return 503 until this is called.
 func (s *Server) SetAppRegistry(p AppRegistryProvider) {
@@ -330,12 +386,16 @@ func (s *Server) handleAPIApps(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, apps)
 	case http.MethodPost:
+		if !requireRole(w, r, RoleOperator) {
+			return
+		}
 		var req AppCreateReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			apiErr(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		app, err := p.Create(req)
+		s.audit(r, "create", req.Name, fmt.Sprintf("%d services, mode=%s", len(req.Services), req.Mode), outcome(err))
 		if err != nil {
 			apiErr(w, err.Error(), http.StatusBadRequest)
 			return
@@ -410,7 +470,11 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
 			return
 		}
+		if !requireRole(w, r, RoleOperator) {
+			return
+		}
 		pol, err := s.compiledPolicy.Recompile(name)
+		s.audit(r, "recompile", name, "", outcome(err))
 		if err != nil {
 			apiErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -442,7 +506,18 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
 			return
 		}
+		// Arming a sealed app is a higher-privilege action than a routine
+		// locked arm — it requires admin (in addition to the break-glass
+		// maintenance grant enforced by the provider).
+		minRole := RoleOperator
+		if app, _ := p.Get(name); app != nil && app.Mode == "sealed" {
+			minRole = RoleAdmin
+		}
+		if !requireRole(w, r, minRole) {
+			return
+		}
 		st, err := s.compiledPolicy.Arm(name)
+		s.audit(r, "arm", name, "", outcome(err))
 		if err != nil {
 			apiErr(w, err.Error(), http.StatusBadRequest)
 			return
@@ -454,7 +529,11 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
 			return
 		}
+		if !requireRole(w, r, RoleOperator) {
+			return
+		}
 		st, err := s.compiledPolicy.Disarm(name)
+		s.audit(r, "disarm", name, "", outcome(err))
 		if err != nil {
 			apiErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -466,7 +545,16 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
 			return
 		}
+		// Restart is disruptive to a live production service → admin only.
+		if !requireRole(w, r, RoleAdmin) {
+			return
+		}
 		res, err := s.compiledPolicy.Restart(name)
+		detail := ""
+		if res != nil && len(res.RolledBack) > 0 {
+			detail = fmt.Sprintf("%d service(s) auto-rolled-back", len(res.RolledBack))
+		}
+		s.audit(r, "restart", name, detail, outcome(err))
 		if err != nil {
 			apiErr(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -478,11 +566,31 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
 			return
 		}
-		if err := s.compiledPolicy.BreakerReset(name); err != nil {
+		if !requireRole(w, r, RoleOperator) {
+			return
+		}
+		err := s.compiledPolicy.BreakerReset(name)
+		s.audit(r, "breaker_reset", name, "", outcome(err))
+		if err != nil {
 			apiErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, map[string]bool{"reset": true})
+
+	case sub == "audit" && r.Method == http.MethodGet:
+		if s.auditProvider == nil {
+			writeJSON(w, []AuditEntryView{})
+			return
+		}
+		entries, err := s.auditProvider.ListForApp(name, 100)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if entries == nil {
+			entries = []AuditEntryView{}
+		}
+		writeJSON(w, entries)
 
 	case sub == "health" && r.Method == http.MethodGet:
 		// Confirm the app exists first so a typo returns 404, not a
@@ -499,6 +607,9 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.appHealthFor(name))
 
 	case sub == "mode" && r.Method == http.MethodPatch:
+		if !requireRole(w, r, RoleOperator) {
+			return
+		}
 		var req struct {
 			Mode string `json:"mode"`
 		}
@@ -506,7 +617,13 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, "invalid JSON", http.StatusBadRequest)
 			return
 		}
-		if err := p.SetMode(name, req.Mode); err != nil {
+		// Promoting INTO sealed mode is an admin-level action.
+		if req.Mode == "sealed" && !requireRole(w, r, RoleAdmin) {
+			return
+		}
+		err := p.SetMode(name, req.Mode)
+		s.audit(r, "mode_change", name, "→ "+req.Mode, outcome(err))
+		if err != nil {
 			apiErr(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -530,7 +647,13 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, app)
 
 	case sub == "" && r.Method == http.MethodDelete:
-		if err := p.Delete(name); err != nil {
+		// Deleting an app is destructive (and disarms its enforcement) → admin.
+		if !requireRole(w, r, RoleAdmin) {
+			return
+		}
+		err := p.Delete(name)
+		s.audit(r, "delete", name, "", outcome(err))
+		if err != nil {
 			apiErr(w, err.Error(), http.StatusNotFound)
 			return
 		}
@@ -707,6 +830,17 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
   </div>
   <div id="armServices" class="arm-svcs"></div>
   <div id="polServices"></div>
+</section>
+<section>
+  <h3>Recent Activity <span class="count">audit</span></h3>
+  <div class="muted" style="font-size:12px;margin-bottom:8px">
+    Tamper-evident, hash-chained control-action log (who / when / what / outcome).
+  </div>
+  <table id="auditTable" style="display:none">
+    <thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Source</th><th>Detail</th><th>Outcome</th></tr></thead>
+    <tbody id="auditBody"></tbody>
+  </table>
+  <div id="auditEmpty" class="muted" style="font-size:13px">No control actions recorded yet.</div>
 </section>
 <section>
   <h3>Live Egress <span id="flowCount" class="count">–</span></h3>
@@ -999,12 +1133,43 @@ function polList(label, items) {
     '<div class="pol-items mono">' + (shown || '<span class="muted">none</span>') + '</div>' + more + '</div>';
 }
 
+async function loadAudit() {
+  try {
+    const r = await fetch("/api/apps/" + appName + "/audit");
+    if (!r.ok) return;
+    const rows = await r.json();
+    if (!rows || rows.length === 0) {
+      document.getElementById("auditTable").style.display = "none";
+      document.getElementById("auditEmpty").style.display = "";
+      return;
+    }
+    document.getElementById("auditEmpty").style.display = "none";
+    const tbody = document.getElementById("auditBody");
+    tbody.innerHTML = "";
+    rows.forEach(e => {
+      const okp = (e.outcome === "ok");
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td class="muted">' + new Date(e.time).toLocaleString() + '</td>' +
+        '<td><span class="stype stype-php-fpm">' + esc(e.action) + '</span></td>' +
+        '<td>' + esc(e.role) + '</td>' +
+        '<td class="mono muted">' + esc(e.source_ip) + '</td>' +
+        '<td class="muted">' + esc(e.detail || "") + '</td>' +
+        '<td class="' + (okp ? "arm-on" : "arm-off") + '">' + esc(e.outcome) + '</td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById("auditTable").style.display = "";
+  } catch(e) { /* leave placeholder */ }
+}
+
 // Load on page open and refresh every 30s.
 loadEgress();
 loadHealth();
 loadPolicy();
+loadAudit();
 setInterval(loadEgress, 30000);
 setInterval(loadHealth, 30000);
+setInterval(loadAudit, 30000);
 </script>
 </main></body></html>`
 

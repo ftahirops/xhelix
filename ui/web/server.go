@@ -106,6 +106,9 @@ type Server struct {
 	// compiledPolicy is the P5a contract compiler view. Wired via
 	// SetCompiledPolicy. Nil-safe.
 	compiledPolicy CompiledPolicyProvider
+	// auditProvider records/reads the control-action audit trail. Wired
+	// via SetAuditProvider. Nil-safe.
+	auditProvider AuditProvider
 	mu     sync.RWMutex
 	alerts []model.Alert
 }

@@ -804,6 +804,10 @@ type UIConfig struct {
 	AuditLog         string   `yaml:"audit_log"`
 	RateLimit        int      `yaml:"rate_limit_per_second"`
 	TrustForwarded   bool     `yaml:"trust_forwarded_for"`
+	// RoleTokens optionally maps a role name ("viewer"|"operator") to a
+	// token file, enabling RBAC-on-arm. The primary token_file is always
+	// admin. Omitted → single-token (admin-only) behavior, unchanged.
+	RoleTokens map[string]string `yaml:"role_tokens"`
 }
 
 // WebhookConfig is a single webhook endpoint for response.

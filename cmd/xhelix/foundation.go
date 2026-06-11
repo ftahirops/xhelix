@@ -40,6 +40,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/appregistry"
 	"github.com/xhelix/xhelix/pkg/contractarm"
+	"github.com/xhelix/xhelix/pkg/contractaudit"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/denyledger"
@@ -160,6 +161,9 @@ type foundationContext struct {
 	// per-app alert when policy denies spike; never auto-disables
 	// enforcement (deny volume is attacker-controllable).
 	Breaker *contracthealth.Breaker
+	// ContractAudit is the hash-chained, append-only audit trail for
+	// control actions (arm/disarm/restart/mode/delete) with RBAC actor.
+	ContractAudit *contractaudit.Store
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
 	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
@@ -602,6 +606,19 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	slog.Info("contracthealth breaker ready",
 		"window", fc.Breaker.Window().String(), "threshold", fc.Breaker.Threshold())
 
+	// Control-action audit trail (hash-chained). Best-effort: failure to
+	// open is logged but never blocks startup.
+	{
+		path := "/var/lib/xhelix/contract-audit.db"
+		if as, err := contractaudit.Open(path); err != nil {
+			slog.Warn("contractaudit: store unavailable; control actions unaudited",
+				"path", path, "err", err)
+		} else {
+			fc.ContractAudit = as
+			slog.Info("contractaudit ready", "path", path)
+		}
+	}
+
 	return fc, nil
 }
 
@@ -930,6 +947,9 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.AppRegistry != nil {
 		_ = fc.AppRegistry.Close()
+	}
+	if fc.ContractAudit != nil {
+		_ = fc.ContractAudit.Close()
 	}
 }
 
