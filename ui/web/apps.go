@@ -99,13 +99,42 @@ func (s *Server) SetAppHealth(p AppHealthProvider) {
 	s.appHealth = p
 }
 
-// CompiledPolicyProvider supplies the compiled contract for an app (P5a).
-// Wired by the daemon via SetCompiledPolicy. Nil-safe.
+// CompiledPolicyProvider supplies the compiled contract for an app (P5a)
+// and the arm/disarm/restart lifecycle (P5a.2). Wired by the daemon via
+// SetCompiledPolicy. Nil-safe.
 type CompiledPolicyProvider interface {
 	// Policy returns the cached compiled policy, or nil if none.
 	Policy(name string) (*CompiledPolicyView, error)
 	// Recompile re-runs the compiler and returns the fresh policy.
 	Recompile(name string) (*CompiledPolicyView, error)
+	// ArmStatus reports whether each service's staged profiles are armed.
+	ArmStatus(name string) (*ArmStatusView, error)
+	// Arm installs the systemd drop-ins (write + daemon-reload, no
+	// restart). Returns an error string in the result on a gate failure
+	// (e.g. sealed app without a maintenance grant).
+	Arm(name string) (*ArmStatusView, error)
+	// Disarm removes the drop-ins.
+	Disarm(name string) (*ArmStatusView, error)
+	// Restart issues try-restart for the app's services — the disruptive
+	// step that applies armed policy to the live process.
+	Restart(name string) error
+}
+
+// ArmStatusView is the arm lifecycle state for an app.
+type ArmStatusView struct {
+	App            string          `json:"app"`
+	Mode           string          `json:"mode"`
+	PendingRestart bool            `json:"pending_restart"`
+	Services       []ArmServiceView `json:"services"`
+}
+
+// ArmServiceView is the arm state of one service.
+type ArmServiceView struct {
+	Unit     string `json:"unit"`
+	Armed    bool   `json:"armed"`
+	Seccomp  bool   `json:"seccomp"`
+	AppArmor bool   `json:"apparmor"`
+	Warning  string `json:"warning,omitempty"`
 }
 
 // CompiledPolicyView is the web view of a compiled contract.
@@ -370,6 +399,57 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, pol)
 
+	case sub == "arm-status" && r.Method == http.MethodGet:
+		if s.compiledPolicy == nil {
+			writeJSON(w, &ArmStatusView{App: name, Services: []ArmServiceView{}})
+			return
+		}
+		st, err := s.compiledPolicy.ArmStatus(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if st == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, st)
+
+	case sub == "arm" && r.Method == http.MethodPost:
+		if s.compiledPolicy == nil {
+			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
+			return
+		}
+		st, err := s.compiledPolicy.Arm(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, st)
+
+	case sub == "disarm" && r.Method == http.MethodPost:
+		if s.compiledPolicy == nil {
+			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
+			return
+		}
+		st, err := s.compiledPolicy.Disarm(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, st)
+
+	case sub == "restart" && r.Method == http.MethodPost:
+		if s.compiledPolicy == nil {
+			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if err := s.compiledPolicy.Restart(name); err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]bool{"restarted": true})
+
 	case sub == "health" && r.Method == http.MethodGet:
 		// Confirm the app exists first so a typo returns 404, not a
 		// misleading clean health card.
@@ -573,10 +653,20 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
     <button class="btn-sm" style="float:right" onclick="recompile()">Recompile</button></h3>
   <div id="polMeta" class="muted" style="font-size:12px;margin-bottom:10px"></div>
   <div id="polStaged" class="staged-note" style="display:none">
-    Seccomp / AppArmor profiles below are <strong>staged for review — NOT enforced</strong>.
-    Arming them needs a service restart (P5a.2). Live enforcement in this build is
-    per-app exec allowlisting via execguard (no restart).
+    Seccomp / AppArmor profiles below are <strong>staged</strong>. Use <em>Arm</em> to
+    install systemd drop-ins (non-disruptive — writes the policy + reloads systemd).
+    Enforcement applies on the next service start; click <em>Restart services</em> to
+    apply now. Live exec allowlisting via execguard is already active for locked/sealed.
   </div>
+  <div id="armBar" class="arm-bar" style="display:none">
+    <span id="armState" class="arm-state">–</span>
+    <div class="arm-actions">
+      <button class="btn-sm" id="armBtn" onclick="armApp()">Arm</button>
+      <button class="btn-sm btn-ghost" id="disarmBtn" onclick="disarmApp()">Disarm</button>
+      <button class="btn-sm btn-danger" id="restartBtn" onclick="restartApp()">Restart services</button>
+    </div>
+  </div>
+  <div id="armServices" class="arm-svcs"></div>
   <div id="polServices"></div>
 </section>
 <section>
@@ -747,9 +837,12 @@ function renderPolicy(p) {
   if (p.warnings && p.warnings.length) meta += " · ⚠ " + p.warnings.map(esc).join("; ");
   document.getElementById("polMeta").innerHTML = meta;
 
-  // Staged note only matters in locked/sealed (artifacts written to disk).
-  document.getElementById("polStaged").style.display =
-    (p.mode === "locked" || p.mode === "sealed") ? "" : "none";
+  // Staged note + arm controls only matter in locked/sealed.
+  const armable = (p.mode === "locked" || p.mode === "sealed");
+  document.getElementById("polStaged").style.display = armable ? "" : "none";
+  document.getElementById("armBar").style.display = armable ? "" : "none";
+  if (armable) loadArmStatus();
+  else { document.getElementById("armServices").innerHTML = ""; }
 
   const host = document.getElementById("polServices");
   host.innerHTML = "";
@@ -767,6 +860,70 @@ function renderPolicy(p) {
       '</div>';
     host.appendChild(div);
   });
+}
+
+async function loadArmStatus() {
+  try {
+    const r = await fetch("/api/apps/" + appName + "/arm-status");
+    if (r.ok) renderArm(await r.json(), false);
+  } catch(e) { /* leave as-is */ }
+}
+
+function renderArm(st, pending) {
+  const anyArmed = (st.services || []).some(s => s.armed);
+  const stateEl = document.getElementById("armState");
+  if (st.pending_restart || pending) {
+    stateEl.textContent = "armed · restart pending";
+    stateEl.className = "arm-state arm-pending";
+  } else if (anyArmed) {
+    stateEl.textContent = "armed";
+    stateEl.className = "arm-state arm-on";
+  } else {
+    stateEl.textContent = "not armed";
+    stateEl.className = "arm-state arm-off";
+  }
+  const host = document.getElementById("armServices");
+  host.innerHTML = "";
+  (st.services || []).forEach(s => {
+    const bits = [];
+    if (s.seccomp) bits.push("seccomp");
+    if (s.apparmor) bits.push("apparmor");
+    const tag = s.armed ? '<span class="arm-on">armed</span>' : '<span class="arm-off">staged</span>';
+    const warn = s.warning ? ' <span class="muted">⚠ ' + esc(s.warning) + '</span>' : '';
+    const div = document.createElement("div");
+    div.className = "arm-svc-row";
+    div.innerHTML = '<span class="mono">' + esc(s.unit) + '</span> ' + tag +
+      ' <span class="muted">' + esc(bits.join("+") || "—") + '</span>' + warn;
+    host.appendChild(div);
+  });
+}
+
+async function armApp() {
+  if (!confirm("Arm '" + appName + "'? Writes systemd drop-ins and reloads systemd " +
+    "(non-disruptive). Enforcement applies on next service start.")) return;
+  const r = await fetch("/api/apps/" + appName + "/arm", {method:"POST"});
+  const data = await r.json();
+  if (!r.ok) { alert("Arm failed: " + (data.error || r.status)); return; }
+  renderArm(data, data.pending_restart);
+}
+
+async function disarmApp() {
+  if (!confirm("Disarm '" + appName + "'? Removes the systemd drop-ins. The running " +
+    "service keeps the old policy until its next restart.")) return;
+  const r = await fetch("/api/apps/" + appName + "/disarm", {method:"POST"});
+  const data = await r.json();
+  if (!r.ok) { alert("Disarm failed: " + (data.error || r.status)); return; }
+  renderArm(data, data.pending_restart);
+}
+
+async function restartApp() {
+  if (!confirm("RESTART this app's services now to apply the armed policy?\n\n" +
+    "This is disruptive — the services will briefly stop. Continue?")) return;
+  const r = await fetch("/api/apps/" + appName + "/restart", {method:"POST"});
+  const data = await r.json();
+  if (!r.ok) { alert("Restart failed: " + (data.error || r.status)); return; }
+  alert("Restart issued.");
+  loadArmStatus();
 }
 
 function polList(label, items) {
@@ -1057,4 +1214,16 @@ select{background:var(--border);color:var(--fg);border:1px solid var(--border);
 .pol-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
 .pol-label{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
 .pol-items{font-size:12px;line-height:1.5;max-height:200px;overflow-y:auto}
+.arm-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 12px;background:var(--bg);border:1px solid var(--border);
+  border-radius:6px;margin-bottom:12px}
+.arm-state{font-size:13px;font-weight:600}
+.arm-on{color:var(--ok)}
+.arm-off{color:var(--mut)}
+.arm-pending{color:var(--warn)}
+.arm-actions{display:flex;gap:8px}
+.btn-ghost{background:var(--border)}
+.arm-svcs{margin-bottom:12px}
+.arm-svc-row{font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)}
+.arm-svc-row:last-child{border-bottom:none}
 `

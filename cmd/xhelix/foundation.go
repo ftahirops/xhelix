@@ -39,6 +39,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/contractarm"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
@@ -150,6 +151,10 @@ type foundationContext struct {
 	// Compiler turns declared apps + red zones into compiled contracts
 	// and answers the execguard per-app exec-allowlist hook (P5a).
 	Compiler *contractcompiler.Manager
+	// Armorer installs/removes systemd unit drop-ins to arm a compiled
+	// contract's staged seccomp/AppArmor profiles (P5a.2). Non-disruptive
+	// arm (write + daemon-reload); restart is a separate explicit action.
+	Armorer *contractarm.Armorer
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
 	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
@@ -579,6 +584,11 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 			slog.Info("contractcompiler ready", "apps_compiled", len(apps))
 		}
 	}
+
+	// Armorer (P5a.2). Arms staged profiles via systemd unit drop-ins.
+	fc.Armorer = contractarm.New()
+	slog.Info("contractarm ready",
+		"systemd_dir", fc.Armorer.SystemdDir, "apparmor", fc.Armorer.Apparmor)
 
 	return fc, nil
 }

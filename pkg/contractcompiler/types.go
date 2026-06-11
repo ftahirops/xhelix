@@ -65,6 +65,13 @@ type CompiledService struct {
 	SeccompText  string `json:"seccomp_text,omitempty"`
 	AppArmorText string `json:"apparmor_text,omitempty"`
 
+	// SeccompSystemdDirective is the native systemd "SystemCallFilter=~…"
+	// line used to arm the seccomp policy via a unit drop-in (P5a.2).
+	// Empty when there are no denied syscalls. AppArmorProfileName is the
+	// loaded profile name referenced by "AppArmorProfile=" when armed.
+	SeccompSystemdDirective string `json:"seccomp_systemd_directive,omitempty"`
+	AppArmorProfileName     string `json:"apparmor_profile_name,omitempty"`
+
 	// ExecguardRules are the fanotify deny rules for this service's
 	// red-zone exec floor. These ARE installable at runtime (no restart)
 	// but in P5a the live enforcement path is the cgroup-scoped policy

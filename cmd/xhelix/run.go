@@ -3042,11 +3042,13 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	if foundation.DenyLedger != nil {
 		webServer.SetAppHealth(&daemonAppHealthProvider{ledger: foundation.DenyLedger})
 	}
-	// Wire compiled-contract view into the web UI (P5a).
+	// Wire compiled-contract view + arm lifecycle into the web UI (P5a/P5a.2).
 	if foundation.Compiler != nil {
 		webServer.SetCompiledPolicy(&daemonCompiledPolicyProvider{
 			compiler: foundation.Compiler,
 			reg:      foundation.AppRegistry,
+			armorer:  foundation.Armorer,
+			mc:       foundation.MaintenanceChains,
 		})
 	}
 

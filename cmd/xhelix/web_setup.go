@@ -18,6 +18,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/contractarm"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
@@ -627,6 +628,8 @@ func (d *daemonAppHealthProvider) AppHealth(name string) *web.AppHealthView {
 type daemonCompiledPolicyProvider struct {
 	compiler *contractcompiler.Manager
 	reg      *appregistry.Registry
+	armorer  *contractarm.Armorer
+	mc       *maintenancechain.Store // sealed-mode arm gate
 }
 
 func (d *daemonCompiledPolicyProvider) Policy(name string) (*web.CompiledPolicyView, error) {
@@ -650,6 +653,129 @@ func (d *daemonCompiledPolicyProvider) Recompile(name string) (*web.CompiledPoli
 	}
 	cc := d.compiler.Recompile(*app)
 	return toCompiledPolicyView(cc, d.compiler.ShadowCount(name)), nil
+}
+
+// specsFor maps a compiled contract's services into arm specs.
+func specsFor(cc *contractcompiler.CompiledContract) []contractarm.ServiceSpec {
+	specs := make([]contractarm.ServiceSpec, 0, len(cc.Services))
+	for i := range cc.Services {
+		cs := &cc.Services[i]
+		spec := contractarm.ServiceSpec{
+			Unit:             cs.Unit,
+			SeccompDirective: cs.SeccompSystemdDirective,
+		}
+		if cs.AppArmorText != "" {
+			spec.AppArmor = &cs.AppArmor
+		}
+		specs = append(specs, spec)
+	}
+	return specs
+}
+
+func unitsFor(cc *contractcompiler.CompiledContract) []string {
+	out := make([]string, 0, len(cc.Services))
+	for _, cs := range cc.Services {
+		out = append(out, cs.Unit)
+	}
+	return out
+}
+
+// sealedGateOK returns true when at least one of the app's service
+// cgroups has an active maintenance-chain grant — the break-glass
+// authority required to arm a sealed app.
+func (d *daemonCompiledPolicyProvider) sealedGateOK(cc *contractcompiler.CompiledContract) bool {
+	if d.mc == nil {
+		return false
+	}
+	for _, cs := range cc.Services {
+		if len(d.mc.ActiveFor(cs.CgroupMatch)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *daemonCompiledPolicyProvider) ArmStatus(name string) (*web.ArmStatusView, error) {
+	cc := d.compiler.Get(name)
+	if cc == nil {
+		return nil, nil
+	}
+	if d.armorer == nil {
+		return &web.ArmStatusView{App: name, Mode: string(cc.Mode)}, nil
+	}
+	return armStatusView(name, string(cc.Mode), false, d.armorer.Status(name, unitsFor(cc))), nil
+}
+
+func (d *daemonCompiledPolicyProvider) Arm(name string) (*web.ArmStatusView, error) {
+	if d.armorer == nil {
+		return nil, fmt.Errorf("armorer unavailable")
+	}
+	cc := d.compiler.Get(name)
+	if cc == nil {
+		return nil, fmt.Errorf("app %q has no compiled contract", name)
+	}
+	switch cc.Mode {
+	case appregistry.ModeLocked, appregistry.ModeSealed:
+		// armable
+	default:
+		return nil, fmt.Errorf("app must be in locked or sealed mode to arm (current: %s)", cc.Mode)
+	}
+	if cc.Mode == appregistry.ModeSealed && !d.sealedGateOK(cc) {
+		return nil, fmt.Errorf("sealed app: arming requires an active maintenance grant (break-glass)")
+	}
+	res, err := d.armorer.Arm(cc.App, string(cc.Mode), specsFor(cc))
+	if err != nil {
+		return nil, err
+	}
+	return armResultView(name, string(cc.Mode), res), nil
+}
+
+func (d *daemonCompiledPolicyProvider) Disarm(name string) (*web.ArmStatusView, error) {
+	if d.armorer == nil {
+		return nil, fmt.Errorf("armorer unavailable")
+	}
+	cc := d.compiler.Get(name)
+	if cc == nil {
+		return nil, fmt.Errorf("app %q has no compiled contract", name)
+	}
+	res, err := d.armorer.Disarm(cc.App, specsFor(cc))
+	if err != nil {
+		return nil, err
+	}
+	return armResultView(name, string(cc.Mode), res), nil
+}
+
+func (d *daemonCompiledPolicyProvider) Restart(name string) error {
+	if d.armorer == nil {
+		return fmt.Errorf("armorer unavailable")
+	}
+	cc := d.compiler.Get(name)
+	if cc == nil {
+		return fmt.Errorf("app %q has no compiled contract", name)
+	}
+	return d.armorer.Restart(unitsFor(cc))
+}
+
+func armResultView(app, mode string, res contractarm.ArmResult) *web.ArmStatusView {
+	v := &web.ArmStatusView{App: app, Mode: mode, PendingRestart: res.PendingRestart}
+	for _, s := range res.Services {
+		v.Services = append(v.Services, web.ArmServiceView{
+			Unit: s.Unit, Armed: s.Armed, Seccomp: s.Seccomp,
+			AppArmor: s.AppArmor, Warning: s.Warning,
+		})
+	}
+	return v
+}
+
+func armStatusView(app, mode string, pending bool, sts []contractarm.ServiceStatus) *web.ArmStatusView {
+	v := &web.ArmStatusView{App: app, Mode: mode, PendingRestart: pending}
+	for _, s := range sts {
+		v.Services = append(v.Services, web.ArmServiceView{
+			Unit: s.Unit, Armed: s.Armed, Seccomp: s.Seccomp,
+			AppArmor: s.AppArmor, Warning: s.Warning,
+		})
+	}
+	return v
 }
 
 func toCompiledPolicyView(cc *contractcompiler.CompiledContract, shadow uint64) *web.CompiledPolicyView {

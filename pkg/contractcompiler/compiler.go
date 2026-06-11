@@ -79,6 +79,10 @@ func compileService(app appregistry.App, svc appregistry.Service, policy *redzon
 			cs.SeccompText = prof.Render()
 		}
 	}
+	// Native systemd SystemCallFilter directive used to arm the policy
+	// via a unit drop-in (P5a.2). Arch-independent — systemd resolves
+	// syscall names at load time.
+	cs.SeccompSystemdDirective = seccomp.SystemdDirective(contract)
 
 	// AppArmor profile (staged). Needs a ProtectedService shell.
 	ps := &protectedsvc.ProtectedService{
@@ -94,6 +98,7 @@ func compileService(app appregistry.App, svc appregistry.Service, policy *redzon
 	if prof, err := apparmor.Render(ps); err == nil {
 		cs.AppArmor = prof
 		cs.AppArmorText = prof.Body
+		cs.AppArmorProfileName = prof.Name
 	}
 
 	// Execguard rules for the red-zone exec floor (installable, but the
