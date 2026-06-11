@@ -1010,3 +1010,30 @@ diff / deploy-history UI remain the P7 continuation.
 
 **P7 continuation (not yet built):** CI propose endpoint + behavioral diff
 (`pkg/contractdiff`) + deploy-history/approval UI (`ui/web/deploys.go`).
+
+### P7 (continued) — behavioral diff + version history — AS BUILT (2026-06-11)
+
+Adapts the documented "CI pushes contract → diff → approve" flow to the
+registry-driven, signing-based model: the diff is current-compiled vs
+last-signed, and "approve" = sign the new version.
+
+**Shipped:**
+- `pkg/contractdiff` — pure behavioral diff of two compiled contracts:
+  service add/remove + per-service set diffs (exec_allow / exec_deny /
+  deny_syscalls / write_deny) → added/removed changes + unchanged count.
+  Deterministic ordering.
+- `contractsign` now snapshots the signed contract's JSON content
+  (AddWithSnapshot / SnapshotJSON) and exposes LatestSigned — so a diff has
+  an approved baseline to compare against, surviving restart.
+- API (viewer): GET /api/apps/:name/diff (current vs last-signed),
+  GET /api/apps/:name/versions (signed history, active flag).
+- UI: "Pending Changes" panel shows drift (+/− per behavior) with a clear
+  "review then Sign to approve" prompt; "Version History" lists signed
+  versions with the active one marked. Sign refreshes the diff.
+- Integration test: compile→sign→snapshot, drift the declaration, confirm
+  the drifted version reads unsigned (sealed-arm blocked) AND the diff vs
+  the JSON-reloaded baseline shows the exact binary add/remove.
+
+**P7 remaining (optional):** a CI *propose* webhook that POSTs a new
+declaration (vs. editing via UI) + a polled approval-status endpoint for CI
+to block on. The signing/diff/version substrate it would use is now built.

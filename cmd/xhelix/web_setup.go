@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/contractarm"
 	"github.com/xhelix/xhelix/pkg/contractaudit"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
+	"github.com/xhelix/xhelix/pkg/contractdiff"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/contractsign"
 	"github.com/xhelix/xhelix/pkg/denyledger"
@@ -783,7 +785,9 @@ func (d *daemonCompiledPolicyProvider) SelfSign(name string) (string, error) {
 		return "", fmt.Errorf("daemon signing key unavailable: %w", err)
 	}
 	sig := contractsign.Sign(cc.App, cc.ArtifactSHA, priv)
-	if _, err := d.sign.Add(cc.App, cc.ArtifactSHA, "ui", base64.StdEncoding.EncodeToString(sig)); err != nil {
+	snapshot, _ := json.Marshal(cc) // baseline for future behavioral diffs
+	if _, err := d.sign.AddWithSnapshot(cc.App, cc.ArtifactSHA, "ui",
+		base64.StdEncoding.EncodeToString(sig), snapshot); err != nil {
 		return "", err
 	}
 	return cc.ArtifactSHA, nil
@@ -796,14 +800,73 @@ func (d *daemonCompiledPolicyProvider) SubmitSignature(name, signer, artifactSHA
 	if d.sign == nil {
 		return fmt.Errorf("signing unavailable")
 	}
+	var snapshot []byte
 	if artifactSHA == "" {
 		// Default to the current version if CI didn't specify.
 		if cc := d.compiler.Get(name); cc != nil {
 			artifactSHA = cc.ArtifactSHA
 		}
 	}
-	_, err := d.sign.Add(name, artifactSHA, signer, sigB64)
+	// Snapshot the contract content only when CI signed the CURRENT version
+	// (we have that content to compare against in future diffs).
+	if cc := d.compiler.Get(name); cc != nil && cc.ArtifactSHA == artifactSHA {
+		snapshot, _ = json.Marshal(cc)
+	}
+	_, err := d.sign.AddWithSnapshot(name, artifactSHA, signer, sigB64, snapshot)
 	return err
+}
+
+// Diff compares the current compiled version against the last-signed one.
+func (d *daemonCompiledPolicyProvider) Diff(name string) (*web.ContractDiffView, error) {
+	cc := d.compiler.Get(name)
+	if cc == nil {
+		return nil, nil
+	}
+	var baseline *contractcompiler.CompiledContract
+	if d.sign != nil {
+		if sha, _, _, ok := d.sign.LatestSigned(name); ok {
+			if js, ok := d.sign.SnapshotJSON(name, sha); ok {
+				var prev contractcompiler.CompiledContract
+				if json.Unmarshal(js, &prev) == nil {
+					baseline = &prev
+				}
+			}
+		}
+	}
+	df := contractdiff.Compute(baseline, cc)
+	out := &web.ContractDiffView{
+		App: df.App, FromSHA: df.FromSHA, ToSHA: df.ToSHA,
+		HasBaseline: baseline != nil, Unchanged: df.Unchanged,
+	}
+	for _, c := range df.Changes {
+		out.Changes = append(out.Changes, web.DiffChangeView{
+			Kind: string(c.Kind), Unit: c.Unit, Op: string(c.Op), Value: c.Value,
+		})
+	}
+	return out, nil
+}
+
+// Versions returns the signed version history, marking the active one.
+func (d *daemonCompiledPolicyProvider) Versions(name string) ([]web.ContractVersionView, error) {
+	if d.sign == nil {
+		return nil, nil
+	}
+	sigs, err := d.sign.ListForApp(name)
+	if err != nil {
+		return nil, err
+	}
+	currentSHA := ""
+	if cc := d.compiler.Get(name); cc != nil {
+		currentSHA = cc.ArtifactSHA
+	}
+	out := make([]web.ContractVersionView, 0, len(sigs))
+	for _, sg := range sigs {
+		out = append(out, web.ContractVersionView{
+			ArtifactSHA: sg.ArtifactSHA, Signer: sg.Signer,
+			SignedAt: sg.AddedAt, Active: sg.ArtifactSHA == currentSHA,
+		})
+	}
+	return out, nil
 }
 
 func shortSHA(h string) string {

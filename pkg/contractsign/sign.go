@@ -88,9 +88,16 @@ func Open(path string, trust map[string]ed25519.PublicKey) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // Add verifies a signature against the trust root and, if valid, stores it.
-// Rejects untrusted or malformed signatures — only verifiable attestations
-// are ever persisted.
+// Rejects untrusted or malformed signatures.
 func (s *Store) Add(app, artifactSHA, signer, sigB64 string) (Signature, error) {
+	return s.AddWithSnapshot(app, artifactSHA, signer, sigB64, nil)
+}
+
+// AddWithSnapshot is Add plus an opaque snapshot of the signed contract's
+// content (JSON), retained so a later behavioral diff can compare a new
+// version against this approved baseline. The snapshot is content only;
+// contractsign never interprets it.
+func (s *Store) AddWithSnapshot(app, artifactSHA, signer, sigB64 string, snapshot []byte) (Signature, error) {
 	if app == "" || artifactSHA == "" || signer == "" {
 		return Signature{}, errors.New("contractsign: app, artifact_sha, signer required")
 	}
@@ -103,15 +110,54 @@ func (s *Store) Add(app, artifactSHA, signer, sigB64 string) (Signature, error) 
 	}
 	now := time.Now()
 	_, err = s.db.ExecContext(context.Background(),
-		`INSERT OR REPLACE INTO signatures (app, artifact_sha, signer, sig_b64, added_at)
-		 VALUES (?,?,?,?,?)`,
-		app, artifactSHA, signer, sigB64, now.Unix(),
+		`INSERT OR REPLACE INTO signatures (app, artifact_sha, signer, sig_b64, added_at, contract_json)
+		 VALUES (?,?,?,?,?,?)`,
+		app, artifactSHA, signer, sigB64, now.Unix(), string(snapshot),
 	)
 	if err != nil {
 		return Signature{}, fmt.Errorf("contractsign: insert: %w", err)
 	}
 	return Signature{App: app, ArtifactSHA: artifactSHA, Signer: signer,
 		Sig: sig, SigB64: sigB64, AddedAt: now}, nil
+}
+
+// SnapshotJSON returns the stored contract content for a signed version.
+func (s *Store) SnapshotJSON(app, artifactSHA string) ([]byte, bool) {
+	var js string
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT contract_json FROM signatures WHERE app=? AND artifact_sha=? AND contract_json<>'' LIMIT 1`,
+		app, artifactSHA).Scan(&js)
+	if err != nil || js == "" {
+		return nil, false
+	}
+	return []byte(js), true
+}
+
+// LatestSigned returns the most recently-signed version for an app whose
+// signature still verifies against the current trust root.
+func (s *Store) LatestSigned(app string) (artifactSHA, signer string, at time.Time, ok bool) {
+	rows, err := s.db.QueryContext(context.Background(),
+		`SELECT artifact_sha, signer, sig_b64, added_at FROM signatures
+		 WHERE app=? ORDER BY added_at DESC`, app)
+	if err != nil {
+		return "", "", time.Time{}, false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sha, sgnr, sigB64 string
+		var added int64
+		if err := rows.Scan(&sha, &sgnr, &sigB64, &added); err != nil {
+			continue
+		}
+		sig, derr := base64.StdEncoding.DecodeString(sigB64)
+		if derr != nil {
+			continue
+		}
+		if Verify(app, sha, sgnr, sig, s.trust) == nil {
+			return sha, sgnr, time.Unix(added, 0), true
+		}
+	}
+	return "", "", time.Time{}, false
 }
 
 // HasValid reports whether a TRUSTED signature exists for (app, artifactSHA),
@@ -171,11 +217,12 @@ func (s *Store) RegisterTrustKey(name string, pub ed25519.PublicKey) {
 
 const schema = `
 CREATE TABLE IF NOT EXISTS signatures (
-  app          TEXT NOT NULL,
-  artifact_sha TEXT NOT NULL,
-  signer       TEXT NOT NULL,
-  sig_b64      TEXT NOT NULL,
-  added_at     INTEGER NOT NULL,
+  app           TEXT NOT NULL,
+  artifact_sha  TEXT NOT NULL,
+  signer        TEXT NOT NULL,
+  sig_b64       TEXT NOT NULL,
+  added_at      INTEGER NOT NULL,
+  contract_json TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (app, artifact_sha, signer)
 );
 CREATE INDEX IF NOT EXISTS idx_sig_app ON signatures(app);

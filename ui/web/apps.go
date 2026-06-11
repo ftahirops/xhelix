@@ -129,6 +129,38 @@ type CompiledPolicyProvider interface {
 	// SubmitSignature stores an externally-produced (CI) signature over a
 	// contract version. Verified against the trust root before storage.
 	SubmitSignature(name, signer, artifactSHA, sigB64 string) error
+	// Diff returns the behavioral diff of the current compiled version vs
+	// the last-signed (approved) version. HasBaseline=false when nothing
+	// has been signed yet (everything reads as new).
+	Diff(name string) (*ContractDiffView, error)
+	// Versions returns the signed version history for an app, newest first.
+	Versions(name string) ([]ContractVersionView, error)
+}
+
+// ContractDiffView is the behavioral diff current-vs-last-signed.
+type ContractDiffView struct {
+	App         string           `json:"app"`
+	FromSHA     string           `json:"from_sha"`
+	ToSHA       string           `json:"to_sha"`
+	HasBaseline bool             `json:"has_baseline"`
+	Unchanged   int              `json:"unchanged"`
+	Changes     []DiffChangeView `json:"changes"`
+}
+
+// DiffChangeView is one added/removed behavior.
+type DiffChangeView struct {
+	Kind  string `json:"kind"`
+	Unit  string `json:"unit,omitempty"`
+	Op    string `json:"op"`
+	Value string `json:"value"`
+}
+
+// ContractVersionView is one entry in the signed version history.
+type ContractVersionView struct {
+	ArtifactSHA string    `json:"artifact_sha"`
+	Signer      string    `json:"signer"`
+	SignedAt    time.Time `json:"signed_at"`
+	Active      bool      `json:"active"` // matches the current compiled version
 }
 
 // RestartResultView reports the outcome of an apply-restart, including any
@@ -549,6 +581,37 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]bool{"accepted": true})
 
+	case sub == "diff" && r.Method == http.MethodGet:
+		if s.compiledPolicy == nil {
+			writeJSON(w, &ContractDiffView{App: name, Changes: []DiffChangeView{}})
+			return
+		}
+		dv, err := s.compiledPolicy.Diff(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if dv == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, dv)
+
+	case sub == "versions" && r.Method == http.MethodGet:
+		if s.compiledPolicy == nil {
+			writeJSON(w, []ContractVersionView{})
+			return
+		}
+		vs, err := s.compiledPolicy.Versions(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if vs == nil {
+			vs = []ContractVersionView{}
+		}
+		writeJSON(w, vs)
+
 	case sub == "arm-status" && r.Method == http.MethodGet:
 		if s.compiledPolicy == nil {
 			writeJSON(w, &ArmStatusView{App: name, Services: []ArmServiceView{}})
@@ -897,6 +960,17 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
   <div id="polServices"></div>
 </section>
 <section>
+  <h3>Pending Changes <span id="diffCount" class="count">–</span></h3>
+  <div id="diffMeta" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+  <div id="diffBody"></div>
+  <h4 style="margin-top:16px">Version History</h4>
+  <table id="versionsTable" style="display:none">
+    <thead><tr><th>Version</th><th>Signed By</th><th>When</th><th>State</th></tr></thead>
+    <tbody id="versionsBody"></tbody>
+  </table>
+  <div id="versionsEmpty" class="muted" style="font-size:13px">No signed versions yet.</div>
+</section>
+<section>
   <h3>Recent Activity <span class="count">audit</span></h3>
   <div class="muted" style="font-size:12px;margin-bottom:8px">
     Tamper-evident, hash-chained control-action log (who / when / what / outcome).
@@ -1206,7 +1280,7 @@ async function signApp() {
   const r = await fetch("/api/apps/" + appName + "/sign", {method:"POST"});
   const data = await r.json();
   if (!r.ok) { alert("Sign failed: " + (data.error || r.status)); return; }
-  loadPolicy();
+  loadPolicy(); loadDiff(); loadVersions();
 }
 
 function polList(label, items) {
@@ -1247,14 +1321,78 @@ async function loadAudit() {
   } catch(e) { /* leave placeholder */ }
 }
 
+async function loadDiff() {
+  try {
+    const r = await fetch("/api/apps/" + appName + "/diff");
+    if (!r.ok) return;
+    const d = await r.json();
+    const meta = document.getElementById("diffMeta");
+    const body = document.getElementById("diffBody");
+    document.getElementById("diffCount").textContent = (d.changes||[]).length;
+    if (!d.has_baseline) {
+      meta.textContent = "No signed baseline yet — sign the current version to establish one.";
+      body.innerHTML = "";
+      return;
+    }
+    if (!d.changes || d.changes.length === 0) {
+      meta.innerHTML = "✓ Current version matches the last signed version (" +
+        esc((d.to_sha||"").slice(0,12)) + "). No drift.";
+      body.innerHTML = "";
+      return;
+    }
+    meta.innerHTML = "⚠ Current version (" + esc((d.to_sha||"").slice(0,12)) +
+      ") DRIFTED from last signed (" + esc((d.from_sha||"").slice(0,12)) +
+      "). " + d.changes.length + " change(s), " + (d.unchanged||0) + " unchanged. " +
+      "Review, then Sign to approve.";
+    let html = '<div class="diff-list">';
+    d.changes.forEach(c => {
+      const sym = c.op === "added" ? '<span class="arm-on">+</span>' : '<span class="arm-off">−</span>';
+      html += '<div class="diff-row">' + sym + ' <span class="muted">' + esc(c.kind) +
+        (c.unit ? " · " + esc(c.unit) : "") + '</span> <span class="mono">' + esc(c.value) + '</span></div>';
+    });
+    html += '</div>';
+    body.innerHTML = html;
+  } catch(e) { /* leave */ }
+}
+
+async function loadVersions() {
+  try {
+    const r = await fetch("/api/apps/" + appName + "/versions");
+    if (!r.ok) return;
+    const rows = await r.json();
+    if (!rows || rows.length === 0) {
+      document.getElementById("versionsTable").style.display = "none";
+      document.getElementById("versionsEmpty").style.display = "";
+      return;
+    }
+    document.getElementById("versionsEmpty").style.display = "none";
+    const tbody = document.getElementById("versionsBody");
+    tbody.innerHTML = "";
+    rows.forEach(v => {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td class="mono">' + esc((v.artifact_sha||"").slice(0,12)) + '</td>' +
+        '<td>' + esc(v.signer) + '</td>' +
+        '<td class="muted">' + new Date(v.signed_at).toLocaleString() + '</td>' +
+        '<td>' + (v.active ? '<span class="arm-on">● active</span>' : '<span class="muted">previous</span>') + '</td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById("versionsTable").style.display = "";
+  } catch(e) { /* leave */ }
+}
+
 // Load on page open and refresh every 30s.
 loadEgress();
 loadHealth();
 loadPolicy();
 loadAudit();
+loadDiff();
+loadVersions();
 setInterval(loadEgress, 30000);
 setInterval(loadHealth, 30000);
 setInterval(loadAudit, 30000);
+setInterval(loadDiff, 30000);
+setInterval(loadVersions, 30000);
 </script>
 </main></body></html>`
 
@@ -1542,4 +1680,7 @@ select{background:var(--border);color:var(--fg);border:1px solid var(--border);
 .arm-svc-row:last-child{border-bottom:none}
 .breaker-banner{background:#2a1010;border:1px solid var(--danger);border-radius:6px;
   padding:10px 12px;font-size:12px;color:#fca5a5;margin-bottom:12px;line-height:1.5}
+.diff-list{display:flex;flex-direction:column;gap:3px}
+.diff-row{font-size:12px;padding:3px 6px;border-radius:4px;background:var(--bg)}
+.diff-row .mono{font-size:12px}
 `
