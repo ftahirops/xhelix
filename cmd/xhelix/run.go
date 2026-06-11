@@ -58,7 +58,9 @@ import (
 	"github.com/xhelix/xhelix/pkg/protectedsvc"
 	"github.com/xhelix/xhelix/pkg/protectsvcapi"
 	"github.com/xhelix/xhelix/pkg/appident"
+	"github.com/xhelix/xhelix/pkg/appregistry"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
+	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/destclass"
 	"github.com/xhelix/xhelix/pkg/diskwarden"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
@@ -683,6 +685,13 @@ func runDaemon(parent context.Context, cfgPath string) error {
 						app = foundation.AppRegistry.AppForCgroup(cgroup)
 					}
 					foundation.DenyLedger.Record(app, path, execDenyRuleID(reason), cgroup, reason, time.Now())
+					// Feed the deny-storm breaker for compiled-policy denies
+					// only (a locked app's contract being too tight). Red-zone
+					// floor denies are the floor doing its job and are excluded.
+					if foundation.Breaker != nil && app != "" &&
+						strings.HasPrefix(reason, "compiled-policy:") {
+						foundation.Breaker.RecordDeny(app, time.Now())
+					}
 				}
 			}
 		})
@@ -3049,7 +3058,71 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			reg:      foundation.AppRegistry,
 			armorer:  foundation.Armorer,
 			mc:       foundation.MaintenanceChains,
+			breaker:  foundation.Breaker,
 		})
+	}
+
+	// Safety layer (contracthealth). The deny-storm breaker alerts but
+	// never auto-disables enforcement; the reconciler converges on-disk
+	// armed state with declared intent (auto-disarm orphans, alert drift).
+	if foundation.Breaker != nil {
+		foundation.Breaker.SetOnTrip(func(app string, count int) {
+			log.Warn("contracthealth: deny-storm breaker tripped",
+				"app", app, "denies_in_window", count,
+				"action", "alert-only — operator must decide whether to downgrade")
+			ev := model.NewEvent("contracthealth", model.SeverityHigh)
+			ev.Tags["app"] = app
+			ev.Tags["denies_in_window"] = fmt.Sprintf("%d", count)
+			emit(model.Alert{
+				Event:  ev,
+				RuleID: "contracthealth.deny_storm",
+				Reason: fmt.Sprintf("app %q produced %d compiled-policy denies in the breaker window — contract may be too tight (review before downgrading; deny volume is attacker-controllable)", app, count),
+				Mode:   model.ModeDetect,
+			})
+		})
+	}
+	if foundation.Compiler != nil && foundation.AppRegistry != nil && foundation.Armorer != nil {
+		reconciler := contracthealth.NewReconciler(
+			func() []contracthealth.AppDesired {
+				apps, err := foundation.AppRegistry.List()
+				if err != nil {
+					return nil
+				}
+				out := make([]contracthealth.AppDesired, 0, len(apps))
+				for _, a := range apps {
+					d := contracthealth.AppDesired{
+						App:       a.Name,
+						ShouldArm: a.Mode == appregistry.ModeLocked || a.Mode == appregistry.ModeSealed,
+					}
+					if cc := foundation.Compiler.Get(a.Name); cc != nil {
+						for _, s := range cc.Services {
+							d.Units = append(d.Units, s.Unit)
+						}
+					}
+					out = append(out, d)
+				}
+				return out
+			},
+			foundation.Armorer.ScanArmed,
+			foundation.Armorer.DisarmUnits,
+			func(rep contracthealth.ReconcileReport) {
+				log.Warn("contracthealth: reconcile drift",
+					"orphans_disarmed", len(rep.OrphansDisarmed),
+					"missing_arm", len(rep.MissingArm), "errors", rep.Errors)
+				ev := model.NewEvent("contracthealth", model.SeverityWarn)
+				ev.Tags["orphans_disarmed"] = fmt.Sprintf("%d", len(rep.OrphansDisarmed))
+				ev.Tags["missing_arm"] = fmt.Sprintf("%d", len(rep.MissingArm))
+				emit(model.Alert{
+					Event:  ev,
+					RuleID: "contracthealth.arm_drift",
+					Reason: fmt.Sprintf("enforcement drift reconciled: %d orphan arms removed, %d expected arms missing", len(rep.OrphansDisarmed), len(rep.MissingArm)),
+					Mode:   model.ModeDetect,
+				})
+			},
+			log,
+		)
+		go reconciler.Run(ctx, time.Minute)
+		log.Info("contracthealth reconciler started", "interval", "1m")
 	}
 
 	// SBOM periodic diff

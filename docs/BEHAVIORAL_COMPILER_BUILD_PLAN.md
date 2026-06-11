@@ -918,3 +918,36 @@ Each phase must pass before the next begins:
   expands to full causal graph in UI
 - **P7 gate:** CI webhook pushes contract, diff appears in UI within 5s,
   approval/reject cycle completes, CI poll returns result
+
+### Safety layer + reconciler — AS BUILT (2026-06-11)
+
+Built ahead of P5b because the maturity review flagged the missing P4 safety
+layer as the top blocker to shipping enforcement.
+
+**Decision (security-driven):** the deny-storm breaker is ALERT-ONLY — it never
+auto-disables enforcement, because deny volume is attacker-controllable (a flood
+of denies must not become an off-switch for the EDR). The only thing that
+auto-reverts is an unambiguous availability failure: a service that won't restart
+after arming.
+
+**Shipped:**
+- `pkg/contracthealth` — `Breaker` (rolling-window per-app deny counter; latches a
+  one-shot alert at threshold; sticky until operator Reset) + `Reconciler`
+  (converges on-disk armed drop-ins with declared intent: auto-disarms orphans
+  from deleted/downgraded apps, alerts on missing-arm drift; never auto-arms).
+- `contractarm.Arm` is now **transactional** — a mid-loop failure rolls back every
+  drop-in written in that call before returning.
+- `contractarm.RestartAndVerify` — restarts, polls `systemctl is-active`, and
+  AUTO-ROLLS-BACK any service that fails to come up (removes drop-in, daemon-reload,
+  restarts unconstrained) so a bad policy can't brick a service.
+- `contractarm.ScanArmed` / `DisarmUnits` — filesystem source-of-truth for the
+  reconciler.
+- Wired: breaker fed from the execguard deny callback (compiled-policy denies
+  only); breaker trip + reconcile drift publish alerts on the bus; reconciler runs
+  every 1m; UI shows a breaker banner with Acknowledge, and Restart surfaces any
+  auto-rolled-back services.
+- Tests: breaker (trip-once, window expiry, reset, concurrent `-race`), reconciler
+  (orphan disarm, drift), transactional arm rollback, health-check auto-rollback.
+
+**Still deferred:** policy signing/versioning, RBAC-on-arm, persistent audit trail,
+kernel-in-the-loop e2e proving a real syscall is denied.

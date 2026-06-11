@@ -46,6 +46,13 @@ type Armorer struct {
 	Apparmor    bool                     // attempt AppArmor arming
 	Runner      func(args ...string) error
 	Now         func() time.Time
+	// SettleDelay is how long to wait between is-active polls after a
+	// restart before declaring a service failed. Default 1s; set 0 in tests.
+	SettleDelay time.Duration
+	// SettleTries is how many times is-active is polled. Default 3.
+	SettleTries int
+	// sleep is injectable so tests don't actually wait. Defaults to time.Sleep.
+	sleep func(time.Duration)
 }
 
 // New returns an Armorer with production defaults. AppArmor arming is
@@ -57,6 +64,8 @@ func New() *Armorer {
 		Apparmor:    apparmor.Available(),
 		Runner:      defaultRunner,
 		Now:         time.Now,
+		SettleDelay: time.Second,
+		SettleTries: 3,
 	}
 }
 
@@ -64,9 +73,27 @@ func New() *Armorer {
 // (best-effort), and runs `systemctl daemon-reload`. It does NOT restart
 // any service — enforcement applies on the next (re)start. Returns the
 // per-service status with PendingRestart=true when anything was armed.
+// Arm is transactional: if any write fails mid-loop, every drop-in
+// written in THIS call is removed (and loaded AppArmor profiles unloaded)
+// before the error is returned, so a partial failure never leaves the
+// system in a split state (files present, systemd unaware).
 func (a *Armorer) Arm(app, mode string, svcs []ServiceSpec) (ArmResult, error) {
 	res := ArmResult{App: app}
-	wroteAny := false
+	var written []string          // drop-in paths written this call
+	var loadedAA []string         // apparmor profile names loaded this call
+
+	rollback := func() {
+		for _, p := range written {
+			_ = os.Remove(p)
+		}
+		for _, name := range loadedAA {
+			_ = apparmor.Unload(a.ApparmorDir, name)
+		}
+		if len(written) > 0 {
+			_ = a.Runner("daemon-reload") // best-effort resync after cleanup
+		}
+	}
+
 	for _, svc := range svcs {
 		st := ServiceStatus{Unit: svc.Unit}
 
@@ -74,6 +101,7 @@ func (a *Armorer) Arm(app, mode string, svcs []ServiceSpec) (ArmResult, error) {
 		if a.Apparmor && svc.AppArmor != nil && svc.AppArmor.Body != "" {
 			if installed, err := svc.AppArmor.Install(a.ApparmorDir, false); err == nil {
 				apparmorName = installed.Name
+				loadedAA = append(loadedAA, installed.Name)
 				st.AppArmor = true
 			} else {
 				st.Warning = "apparmor load failed: " + err.Error()
@@ -90,21 +118,24 @@ func (a *Armorer) Arm(app, mode string, svcs []ServiceSpec) (ArmResult, error) {
 
 		dir := a.dropInDir(svc.Unit)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return res, fmt.Errorf("contractarm: mkdir %s: %w", dir, err)
+			rollback()
+			return ArmResult{App: app}, fmt.Errorf("contractarm: mkdir %s: %w (rolled back)", dir, err)
 		}
 		path := filepath.Join(dir, DropInName(app))
 		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-			return res, fmt.Errorf("contractarm: write %s: %w", path, err)
+			rollback()
+			return ArmResult{App: app}, fmt.Errorf("contractarm: write %s: %w (rolled back)", path, err)
 		}
+		written = append(written, path)
 		st.Armed = true
 		st.DropInPath = path
-		wroteAny = true
 		res.Services = append(res.Services, st)
 	}
 
-	if wroteAny {
+	if len(written) > 0 {
 		if err := a.Runner("daemon-reload"); err != nil {
-			return res, fmt.Errorf("contractarm: daemon-reload: %w", err)
+			rollback()
+			return ArmResult{App: app}, fmt.Errorf("contractarm: daemon-reload: %w (rolled back)", err)
 		}
 		res.PendingRestart = true
 	}
@@ -152,6 +183,159 @@ func (a *Armorer) Restart(units []string) error {
 		}
 	}
 	return nil
+}
+
+// DisarmUnits removes the xhelix drop-in for each of the named units of
+// an app and runs daemon-reload if anything changed. Used by the
+// reconciler to clean up orphaned arms (deleted/downgraded apps) where
+// only the unit names are known, not the full ServiceSpecs.
+func (a *Armorer) DisarmUnits(app string, units []string) (int, error) {
+	removed := 0
+	for _, u := range units {
+		path := filepath.Join(a.dropInDir(u), DropInName(app))
+		if err := os.Remove(path); err == nil {
+			removed++
+		} else if !os.IsNotExist(err) {
+			return removed, fmt.Errorf("contractarm: remove %s: %w", path, err)
+		}
+	}
+	if removed > 0 {
+		if err := a.Runner("daemon-reload"); err != nil {
+			return removed, fmt.Errorf("contractarm: daemon-reload: %w", err)
+		}
+	}
+	return removed, nil
+}
+
+// RolledBack names a unit whose arm was auto-reverted after it failed to
+// come back active post-restart, with the failure detail.
+type RolledBack struct {
+	Unit   string `json:"unit"`
+	Reason string `json:"reason"`
+}
+
+// RestartAndVerify restarts each unit, then verifies it became active.
+// Any unit that does NOT return to active is treated as bricked-by-policy:
+// its drop-in is removed, systemd reloaded, and the unit restarted again
+// UNCONSTRAINED so availability is restored. The auto-rollback fires ONLY
+// on this unambiguous availability failure — never on deny volume, which
+// is attacker-controllable.
+//
+// Returns the list of units that were rolled back (empty = all healthy).
+func (a *Armorer) RestartAndVerify(app string, units []string) ([]RolledBack, error) {
+	for _, u := range units {
+		if err := a.Runner("try-restart", "--", safeUnit(u)); err != nil {
+			return nil, fmt.Errorf("contractarm: try-restart %s: %w", u, err)
+		}
+	}
+	var rolled []RolledBack
+	for _, u := range units {
+		if a.isActive(u) {
+			continue
+		}
+		// Bricked by the armed policy — revert this unit and restore it.
+		if err := a.disarmUnit(app, u); err != nil {
+			rolled = append(rolled, RolledBack{Unit: u,
+				Reason: "failed to start after arm AND auto-rollback failed: " + err.Error()})
+			continue
+		}
+		_ = a.Runner("daemon-reload")
+		_ = a.Runner("try-restart", "--", safeUnit(u))
+		rolled = append(rolled, RolledBack{Unit: u,
+			Reason: "failed to become active after arm; drop-in removed and unit restored unconstrained"})
+	}
+	return rolled, nil
+}
+
+// isActive polls `systemctl is-active <unit>` up to SettleTries times,
+// giving a slow-starting service time to come up. Returns true if the
+// unit is active on any poll. The Runner returns nil exactly when
+// is-active exits 0 (active).
+func (a *Armorer) isActive(unit string) bool {
+	tries := a.SettleTries
+	if tries <= 0 {
+		tries = 1
+	}
+	for i := 0; i < tries; i++ {
+		if a.Runner("is-active", "--", safeUnit(unit)) == nil {
+			return true
+		}
+		if i < tries-1 {
+			a.napOnce()
+		}
+	}
+	return false
+}
+
+func (a *Armorer) napOnce() {
+	if a.SettleDelay <= 0 {
+		return
+	}
+	if a.sleep != nil {
+		a.sleep(a.SettleDelay)
+		return
+	}
+	time.Sleep(a.SettleDelay)
+}
+
+// disarmUnit removes the xhelix drop-in for one (app, unit) pair.
+func (a *Armorer) disarmUnit(app, unit string) error {
+	path := filepath.Join(a.dropInDir(unit), DropInName(app))
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// ScanArmed walks SystemdDir for xhelix-managed drop-ins and returns a
+// map of app name → units currently armed on disk. Used by the reconciler
+// to find orphaned arms (e.g. for deleted or downgraded apps) without
+// needing the original declaration. Drop-ins are named
+// <SystemdDir>/<unit>.d/50-xhelix-<app>.conf.
+func (a *Armorer) ScanArmed() (map[string][]string, error) {
+	base := a.SystemdDir
+	if base == "" {
+		base = "/etc/systemd/system"
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string][]string{}, nil
+		}
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasSuffix(e.Name(), ".d") {
+			continue
+		}
+		unit := strings.TrimSuffix(e.Name(), ".d")
+		dropIns, err := os.ReadDir(filepath.Join(base, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, d := range dropIns {
+			app, ok := appFromDropIn(d.Name())
+			if !ok {
+				continue
+			}
+			out[app] = append(out[app], unit)
+		}
+	}
+	return out, nil
+}
+
+// appFromDropIn extracts the app name from "50-xhelix-<app>.conf".
+func appFromDropIn(filename string) (string, bool) {
+	const prefix, suffix = "50-xhelix-", ".conf"
+	if !strings.HasPrefix(filename, prefix) || !strings.HasSuffix(filename, suffix) {
+		return "", false
+	}
+	app := filename[len(prefix) : len(filename)-len(suffix)]
+	if app == "" {
+		return "", false
+	}
+	return app, true
 }
 
 // Status reports whether each unit currently carries an xhelix drop-in.

@@ -20,6 +20,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/appregistry"
 	"github.com/xhelix/xhelix/pkg/contractarm"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
+	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/model"
@@ -629,7 +630,8 @@ type daemonCompiledPolicyProvider struct {
 	compiler *contractcompiler.Manager
 	reg      *appregistry.Registry
 	armorer  *contractarm.Armorer
-	mc       *maintenancechain.Store // sealed-mode arm gate
+	mc       *maintenancechain.Store    // sealed-mode arm gate
+	breaker  *contracthealth.Breaker    // deny-storm state (alert-only)
 }
 
 func (d *daemonCompiledPolicyProvider) Policy(name string) (*web.CompiledPolicyView, error) {
@@ -703,7 +705,19 @@ func (d *daemonCompiledPolicyProvider) ArmStatus(name string) (*web.ArmStatusVie
 	if d.armorer == nil {
 		return &web.ArmStatusView{App: name, Mode: string(cc.Mode)}, nil
 	}
-	return armStatusView(name, string(cc.Mode), false, d.armorer.Status(name, unitsFor(cc))), nil
+	v := armStatusView(name, string(cc.Mode), false, d.armorer.Status(name, unitsFor(cc)))
+	d.fillBreaker(name, v)
+	return v, nil
+}
+
+// fillBreaker annotates an ArmStatusView with the deny-storm breaker state.
+func (d *daemonCompiledPolicyProvider) fillBreaker(name string, v *web.ArmStatusView) {
+	if d.breaker == nil || v == nil {
+		return
+	}
+	v.BreakerTripped = d.breaker.Tripped(name)
+	v.BreakerDenies = d.breaker.RecentDenies(name, time.Now())
+	v.BreakerThreshold = d.breaker.Threshold()
 }
 
 func (d *daemonCompiledPolicyProvider) Arm(name string) (*web.ArmStatusView, error) {
@@ -745,15 +759,31 @@ func (d *daemonCompiledPolicyProvider) Disarm(name string) (*web.ArmStatusView, 
 	return armResultView(name, string(cc.Mode), res), nil
 }
 
-func (d *daemonCompiledPolicyProvider) Restart(name string) error {
+func (d *daemonCompiledPolicyProvider) Restart(name string) (*web.RestartResultView, error) {
 	if d.armorer == nil {
-		return fmt.Errorf("armorer unavailable")
+		return nil, fmt.Errorf("armorer unavailable")
 	}
 	cc := d.compiler.Get(name)
 	if cc == nil {
-		return fmt.Errorf("app %q has no compiled contract", name)
+		return nil, fmt.Errorf("app %q has no compiled contract", name)
 	}
-	return d.armorer.Restart(unitsFor(cc))
+	rolled, err := d.armorer.RestartAndVerify(cc.App, unitsFor(cc))
+	if err != nil {
+		return nil, err
+	}
+	out := &web.RestartResultView{App: name}
+	for _, r := range rolled {
+		out.RolledBack = append(out.RolledBack, web.RolledBackView{Unit: r.Unit, Reason: r.Reason})
+	}
+	return out, nil
+}
+
+func (d *daemonCompiledPolicyProvider) BreakerReset(name string) error {
+	if d.breaker == nil {
+		return fmt.Errorf("breaker unavailable")
+	}
+	d.breaker.Reset(name)
+	return nil
 }
 
 func armResultView(app, mode string, res contractarm.ArmResult) *web.ArmStatusView {

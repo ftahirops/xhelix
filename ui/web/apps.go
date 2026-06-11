@@ -115,17 +115,39 @@ type CompiledPolicyProvider interface {
 	Arm(name string) (*ArmStatusView, error)
 	// Disarm removes the drop-ins.
 	Disarm(name string) (*ArmStatusView, error)
-	// Restart issues try-restart for the app's services — the disruptive
-	// step that applies armed policy to the live process.
-	Restart(name string) error
+	// Restart restarts the app's services and verifies they come back
+	// active. Any service that fails to start is auto-rolled-back; the
+	// result lists which (empty RolledBack = all healthy).
+	Restart(name string) (*RestartResultView, error)
+	// BreakerReset clears a latched deny-storm alert for the app.
+	BreakerReset(name string) error
 }
 
-// ArmStatusView is the arm lifecycle state for an app.
+// RestartResultView reports the outcome of an apply-restart, including any
+// services auto-reverted because they failed to start under the policy.
+type RestartResultView struct {
+	App        string             `json:"app"`
+	RolledBack []RolledBackView   `json:"rolled_back"`
+}
+
+// RolledBackView names a service whose arm was auto-reverted.
+type RolledBackView struct {
+	Unit   string `json:"unit"`
+	Reason string `json:"reason"`
+}
+
+// ArmStatusView is the arm lifecycle state for an app, plus the
+// deny-storm breaker state (alert-only).
 type ArmStatusView struct {
 	App            string          `json:"app"`
 	Mode           string          `json:"mode"`
 	PendingRestart bool            `json:"pending_restart"`
 	Services       []ArmServiceView `json:"services"`
+	// BreakerTripped latches when policy denies spiked past the threshold.
+	// Alert-only — enforcement is NOT auto-disabled.
+	BreakerTripped  bool `json:"breaker_tripped"`
+	BreakerDenies   int  `json:"breaker_denies"`
+	BreakerThreshold int `json:"breaker_threshold"`
 }
 
 // ArmServiceView is the arm state of one service.
@@ -444,11 +466,23 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
 			return
 		}
-		if err := s.compiledPolicy.Restart(name); err != nil {
+		res, err := s.compiledPolicy.Restart(name)
+		if err != nil {
 			apiErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, map[string]bool{"restarted": true})
+		writeJSON(w, res)
+
+	case sub == "breaker/reset" && r.Method == http.MethodPost:
+		if s.compiledPolicy == nil {
+			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if err := s.compiledPolicy.BreakerReset(name); err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]bool{"reset": true})
 
 	case sub == "health" && r.Method == http.MethodGet:
 		// Confirm the app exists first so a typo returns 404, not a
@@ -662,6 +696,7 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
     Enforcement applies on the next service start; click <em>Restart services</em> to
     apply now. Live exec allowlisting via execguard is already active for locked/sealed.
   </div>
+  <div id="breakerBanner" class="breaker-banner" style="display:none"></div>
   <div id="armBar" class="arm-bar" style="display:none">
     <span id="armState" class="arm-state">–</span>
     <div class="arm-actions">
@@ -874,6 +909,18 @@ async function loadArmStatus() {
 }
 
 function renderArm(st, pending) {
+  // Deny-storm breaker banner (alert-only — enforcement stays on).
+  const bz = document.getElementById("breakerBanner");
+  if (st.breaker_tripped) {
+    bz.style.display = "";
+    bz.innerHTML = "⚠ Deny-storm breaker TRIPPED — " + (st.breaker_denies || 0) +
+      " policy denies in the window (threshold " + (st.breaker_threshold || 0) + "). " +
+      "Enforcement is still ON (deny volume is attacker-controllable, so it is never " +
+      "auto-disabled). Review the contract; if these are false positives, downgrade to " +
+      "shadow. <button class='btn-sm btn-ghost' onclick='resetBreaker()'>Acknowledge</button>";
+  } else {
+    bz.style.display = "none";
+  }
   const anyArmed = (st.services || []).some(s => s.armed);
   const stateEl = document.getElementById("armState");
   if (st.pending_restart || pending) {
@@ -922,12 +969,25 @@ async function disarmApp() {
 
 async function restartApp() {
   if (!confirm("RESTART this app's services now to apply the armed policy?\n\n" +
-    "This is disruptive — the services will briefly stop. Continue?")) return;
+    "This is disruptive — the services will briefly stop. Any service that " +
+    "fails to come back under the policy is auto-reverted and restored. Continue?")) return;
   const r = await fetch("/api/apps/" + appName + "/restart", {method:"POST"});
   const data = await r.json();
   if (!r.ok) { alert("Restart failed: " + (data.error || r.status)); return; }
-  alert("Restart issued.");
+  const rolled = data.rolled_back || [];
+  if (rolled.length) {
+    alert("Restart applied, but " + rolled.length + " service(s) FAILED to start " +
+      "under the policy and were auto-rolled-back:\n\n" +
+      rolled.map(x => "• " + x.unit + ": " + x.reason).join("\n"));
+  } else {
+    alert("Restart applied — all services healthy under the policy.");
+  }
   loadArmStatus();
+}
+
+async function resetBreaker() {
+  const r = await fetch("/api/apps/" + appName + "/breaker/reset", {method:"POST"});
+  if (r.ok) loadArmStatus(); else alert("Reset failed");
 }
 
 function polList(label, items) {
@@ -1230,4 +1290,6 @@ select{background:var(--border);color:var(--fg);border:1px solid var(--border);
 .arm-svcs{margin-bottom:12px}
 .arm-svc-row{font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)}
 .arm-svc-row:last-child{border-bottom:none}
+.breaker-banner{background:#2a1010;border:1px solid var(--danger);border-radius:6px;
+  padding:10px 12px;font-size:12px;color:#fca5a5;margin-bottom:12px;line-height:1.5}
 `

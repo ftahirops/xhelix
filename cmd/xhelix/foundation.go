@@ -41,6 +41,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/appregistry"
 	"github.com/xhelix/xhelix/pkg/contractarm"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
+	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/redzones"
@@ -155,6 +156,10 @@ type foundationContext struct {
 	// contract's staged seccomp/AppArmor profiles (P5a.2). Non-disruptive
 	// arm (write + daemon-reload); restart is a separate explicit action.
 	Armorer *contractarm.Armorer
+	// Breaker is the deny-storm circuit breaker (alert-only). Latches a
+	// per-app alert when policy denies spike; never auto-disables
+	// enforcement (deny volume is attacker-controllable).
+	Breaker *contracthealth.Breaker
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
 	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
@@ -590,7 +595,31 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	slog.Info("contractarm ready",
 		"systemd_dir", fc.Armorer.SystemdDir, "apparmor", fc.Armorer.Apparmor)
 
+	// Deny-storm circuit breaker (safety layer). Alert-only — onTrip is
+	// attached to the alert bus in run.go. 60s window, 25 denies.
+	fc.Breaker = contracthealth.NewBreaker(time.Minute, 25, nil)
+	go fc.sweepBreaker(parent)
+	slog.Info("contracthealth breaker ready",
+		"window", fc.Breaker.Window().String(), "threshold", fc.Breaker.Threshold())
+
 	return fc, nil
+}
+
+// sweepBreaker prunes the breaker's rolling deny windows once a minute.
+func (fc *foundationContext) sweepBreaker(ctx context.Context) {
+	if fc.Breaker == nil {
+		return
+	}
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			fc.Breaker.Sweep(now)
+		}
+	}
 }
 
 // sweepMaintenanceChains removes expired grants from the in-memory cache
