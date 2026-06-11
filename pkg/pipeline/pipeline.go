@@ -32,7 +32,9 @@ import (
 	"github.com/xhelix/xhelix/pkg/brp"
 	brpphase "github.com/xhelix/xhelix/pkg/brp/phase"
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
+	"github.com/xhelix/xhelix/pkg/canonical"
 	"github.com/xhelix/xhelix/pkg/egressguard"
+	"github.com/xhelix/xhelix/pkg/hotgraph"
 	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/cdndetect"
 	"github.com/xhelix/xhelix/pkg/flowstats"
@@ -103,6 +105,13 @@ type Pipeline struct {
 	IntelMgr         *intel.Manager
 	MLDetector       *ml.AnomalyDetector
 	ProcTree         *proctree.Graph
+	// HotGraph is the PID-reuse-safe causal process DAG (P6). Populated
+	// here on proc spawn/exit so its Ancestors/Descendants/ByLineage/
+	// ByOriginIP/ByCgroup queries (already exposed via LocalAPI) return
+	// live data. ProcKeys resolves a PID to its canonical (PID,StartTicks)
+	// key. Both nil-safe — population is skipped when unset.
+	HotGraph *hotgraph.Graph
+	ProcKeys *canonical.ProcKeyCache
 	ForensicsChain   *chain.Chain
 	ImageCache       *imagecache.Cache
 	SessionTracker   *session.Tracker
@@ -903,9 +912,18 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 				Container:     ev.Container,
 				PrimarySource: explicitSource,
 			})
+			p.populateHotGraph(ev, explicitSource)
 			p.PkgLifecycle.TagSpawn(ev.PID, ev.ParentPID)
 		case "ebpf.exit":
 			p.ProcTree.OnExit(ev.PID)
+			if p.HotGraph != nil && p.ProcKeys != nil && ev.PID != 0 {
+				// Cache-only lookup — the process is gone, so don't read
+				// /proc. It was cached at spawn; a miss just means we never
+				// graphed it (very short-lived), which is fine.
+				if pk, ok := p.ProcKeys.Get(ev.PID); ok {
+					p.HotGraph.MarkExit(pk, ev.Time)
+				}
+			}
 			p.PkgLifecycle.OnExit(ev.PID)
 			if p.CGroupClassifier != nil {
 				p.CGroupClassifier.Forget(ev.PID)
@@ -1811,6 +1829,54 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 	if p.IncidentGraph != nil {
 		p.observeIncident(ev)
 	}
+}
+
+// populateHotGraph inserts a node into the hot causal DAG on process
+// spawn (P6). It resolves the spawning PID and its parent to canonical
+// (PID,StartTicks) keys, then inherits lineage + origin IP from the
+// parent's existing graph node so those propagate down the tree without
+// a separate lineage lookup. Nil-safe and best-effort — a /proc resolve
+// failure (ultra-short-lived process) just skips that node.
+func (p *Pipeline) populateHotGraph(ev model.Event, explicitSource lineage.LineageID) {
+	if p.HotGraph == nil || p.ProcKeys == nil || ev.PID == 0 {
+		return
+	}
+	pk, err := p.ProcKeys.Resolve(ev.PID)
+	if err != nil {
+		return
+	}
+	node := hotgraph.ProcessNode{
+		Key:       pk,
+		UID:       ev.UID,
+		CgroupID:  ev.CGroupID,
+		Cgroup:    ev.Container,
+		Comm:      ev.Comm,
+		ExePath:   firstNonEmpty(ev.Tags["image"], ev.Image),
+		ExeSHA:    ev.Tags["exe_sha256"],
+		Argv:      ev.Tags["argv"],
+		LineageID: explicitSource,
+		OriginIP:  ev.Tags["origin_ip"],
+		SpawnedAt: ev.Time,
+	}
+	if ev.ParentPID != 0 {
+		if ppk, perr := p.ProcKeys.Resolve(ev.ParentPID); perr == nil {
+			node.Parent = ppk
+			// Inherit lineage / origin from the parent node already in the
+			// graph, so a root anchor (SSH login, web request) propagates
+			// to every descendant — making ByLineage / ByOriginIP useful.
+			if node.LineageID == 0 || node.OriginIP == "" {
+				if pn, ok := p.HotGraph.Get(ppk); ok {
+					if node.LineageID == 0 {
+						node.LineageID = pn.LineageID
+					}
+					if node.OriginIP == "" {
+						node.OriginIP = pn.OriginIP
+					}
+				}
+			}
+		}
+	}
+	p.HotGraph.Insert(node)
 }
 
 // recordGraphEvent translates a model.Event into a source.GraphEvent

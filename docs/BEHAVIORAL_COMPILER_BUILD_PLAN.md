@@ -1069,3 +1069,32 @@ and approves/rejects, CI polls status. Adapted to the registry model — a
 **P7 is now functionally complete.** CI flow: GET /policy (read artifact_sha) →
 sign after tests, or POST /propose → poll /status → (admin approves in UI) →
 POST /signature to attest the approved version.
+
+### P6 (started) — hot causal graph wired live — AS BUILT (2026-06-11)
+
+First cut of the causal chain engine. The substrate (lineage, incidentgraph,
+correlator with retained constituent events, proctree) was already wired; the
+one missing piece was pkg/hotgraph — fully built and queryable but populated by
+nothing (Insert called nowhere → empty in production).
+
+Approach chosen: substrate-based on-demand assembly, NOT the doc's universal
+chain_id stamping (which overlaps deferred P5b/OTel and needs a much larger
+correlator). This first cut just makes the graph live.
+
+**Shipped:**
+- pipeline.populateHotGraph: on proc spawn, resolve the PID + parent to canonical
+  (PID,StartTicks) keys via the ProcKey cache, build a ProcessNode, and Insert.
+  Lineage + origin IP are inherited from the parent's existing graph node, so a
+  root anchor (SSH login, web request) propagates to every descendant.
+- MarkExit on proc exit (cache-only key lookup; no /proc read on a dead pid).
+- Wired Pipeline.HotGraph + Pipeline.ProcKeys (foundation.HotGraph /
+  foundation.ProcCache) through dispatch. Single-goroutine, consistent with the
+  correlator's determinism requirement. Nil-safe.
+- Effect: the already-exposed LocalAPI handlers — graph.ancestors / descendants /
+  by_lineage / by_origin / by_cgroup — now return LIVE data (were empty before).
+- Test: spawn inherits parent lineage+origin, parent edge set, Ancestors walks to
+  the root, ByLineage/ByOriginIP resolve the whole tree.
+
+**P6 continuation (deferred):** pkg/causalengine (CausalChain(alertID) → ordered
+root-cause story from alert EvidenceIDs → hotgraph ancestors → lineage Origins)
+and the UI "View chain" expansion. The graph they consume is now live.

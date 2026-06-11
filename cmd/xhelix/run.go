@@ -59,9 +59,11 @@ import (
 	"github.com/xhelix/xhelix/pkg/protectsvcapi"
 	"github.com/xhelix/xhelix/pkg/appident"
 	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/canonical"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/destclass"
+	"github.com/xhelix/xhelix/pkg/hotgraph"
 	"github.com/xhelix/xhelix/pkg/diskwarden"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
 	"github.com/xhelix/xhelix/pkg/egressmon"
@@ -3464,7 +3466,9 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				}
 				return ar.AppForCgroup(cg)
 			}
-		}())
+		}(),
+		foundation.HotGraph,
+		foundation.ProcCache)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -3605,6 +3609,8 @@ func dispatch(
 	flowStats *flowstats.Counters,
 	tlsPlaintext *tlsledger.Ledger,
 	appLookup func(pid uint32) string,
+	hotGraph *hotgraph.Graph,
+	procKeys *canonical.ProcKeyCache,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -3978,6 +3984,8 @@ func dispatch(
 		FlowStats:        flowStats,
 		EgressLedger: egressLedger,
 		AppLookup:    appLookup,
+		HotGraph:     hotGraph,
+		ProcKeys:     procKeys,
 		// DestClassifier drives smart per-class CIDR bucketing in the
 		// ledger (exact IP for raw/unknown/intel_bad; /16 for cdn/cloud).
 		// Wired with intelMgr so threat-intel-matched IPs classify as
