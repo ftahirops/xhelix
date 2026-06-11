@@ -122,6 +122,13 @@ type CompiledPolicyProvider interface {
 	Restart(name string) (*RestartResultView, error)
 	// BreakerReset clears a latched deny-storm alert for the app.
 	BreakerReset(name string) error
+	// SelfSign signs the current compiled-contract version with the
+	// daemon's UI key (signer "ui"). For sealed-mode approval without
+	// external CI. Returns the signed ArtifactSHA.
+	SelfSign(name string) (string, error)
+	// SubmitSignature stores an externally-produced (CI) signature over a
+	// contract version. Verified against the trust root before storage.
+	SubmitSignature(name, signer, artifactSHA, sigB64 string) error
 }
 
 // RestartResultView reports the outcome of an apply-restart, including any
@@ -169,6 +176,12 @@ type CompiledPolicyView struct {
 	ShadowCount uint64                `json:"shadow_count"`
 	Warnings    []string              `json:"warnings,omitempty"`
 	Services    []CompiledServiceView `json:"services"`
+	// ArtifactSHA is the content-addressed version of this contract (P7).
+	// Signed/SignedBy report whether a trusted signature covers it — the
+	// sealed-mode arm requirement.
+	ArtifactSHA string `json:"artifact_sha"`
+	Signed      bool   `json:"signed"`
+	SignedBy    string `json:"signed_by,omitempty"`
 }
 
 // CompiledServiceView is the web view of one compiled service.
@@ -242,6 +255,14 @@ func outcome(err error) string {
 		return "ok"
 	}
 	return "error: " + err.Error()
+}
+
+// shortHash returns the first 12 chars of a content hash for log/audit use.
+func shortHash(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
 }
 
 // SetAppRegistry wires an AppRegistryProvider into the server.
@@ -484,6 +505,49 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, pol)
+
+	case sub == "sign" && r.Method == http.MethodPost:
+		// Self-sign the current contract version with the daemon key.
+		if s.compiledPolicy == nil {
+			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if !requireRole(w, r, RoleAdmin) {
+			return
+		}
+		hash, err := s.compiledPolicy.SelfSign(name)
+		s.audit(r, "sign", name, "self-sign "+shortHash(hash), outcome(err))
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]string{"signed_artifact_sha": hash, "signer": "ui"})
+
+	case sub == "signature" && r.Method == http.MethodPost:
+		// Accept an externally-produced (CI) signature.
+		if s.compiledPolicy == nil {
+			apiErr(w, "compiler not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if !requireRole(w, r, RoleAdmin) {
+			return
+		}
+		var req struct {
+			Signer      string `json:"signer"`
+			ArtifactSHA string `json:"artifact_sha"`
+			SignatureB64 string `json:"signature_b64"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apiErr(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		err := s.compiledPolicy.SubmitSignature(name, req.Signer, req.ArtifactSHA, req.SignatureB64)
+		s.audit(r, "sign", name, "ci-signature by "+req.Signer+" "+shortHash(req.ArtifactSHA), outcome(err))
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]bool{"accepted": true})
 
 	case sub == "arm-status" && r.Method == http.MethodGet:
 		if s.compiledPolicy == nil {
@@ -811,7 +875,8 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
 </section>
 <section>
   <h3>Compiled Profile <span id="polMode" class="mode-badge mode-observe">–</span>
-    <button class="btn-sm" style="float:right" onclick="recompile()">Recompile</button></h3>
+    <button class="btn-sm" style="float:right" onclick="recompile()">Recompile</button>
+    <button class="btn-sm btn-ghost" id="signBtn" style="float:right;margin-right:8px;display:none" onclick="signApp()">Sign version</button></h3>
   <div id="polMeta" class="muted" style="font-size:12px;margin-bottom:10px"></div>
   <div id="polStaged" class="staged-note" style="display:none">
     Seccomp / AppArmor profiles below are <strong>staged</strong>. Use <em>Arm</em> to
@@ -1006,9 +1071,19 @@ function renderPolicy(p) {
   badge.className = "mode-badge mode-" + esc(p.mode);
   let meta = "source: " + esc(p.source) +
     " · compiled " + (p.compiled_at ? new Date(p.compiled_at).toLocaleString() : "–");
+  if (p.artifact_sha) meta += " · version " + esc(p.artifact_sha.slice(0,12));
+  if (p.signed) meta += " · ✓ signed by " + esc(p.signed_by || "?");
+  else meta += " · ✗ unsigned";
   if (p.mode === "shadow") meta += " · would-block count: " + (p.shadow_count || 0);
   if (p.warnings && p.warnings.length) meta += " · ⚠ " + p.warnings.map(esc).join("; ");
   document.getElementById("polMeta").innerHTML = meta;
+
+  // Sign button: relevant for sealed (required to arm) and locked (optional).
+  const signBtn = document.getElementById("signBtn");
+  if (signBtn) {
+    signBtn.style.display = (p.mode === "sealed" || p.mode === "locked") ? "" : "none";
+    signBtn.textContent = p.signed ? "Re-sign version" : "Sign version";
+  }
 
   // Staged note + arm controls only matter in locked/sealed.
   const armable = (p.mode === "locked" || p.mode === "sealed");
@@ -1122,6 +1197,16 @@ async function restartApp() {
 async function resetBreaker() {
   const r = await fetch("/api/apps/" + appName + "/breaker/reset", {method:"POST"});
   if (r.ok) loadArmStatus(); else alert("Reset failed");
+}
+
+async function signApp() {
+  if (!confirm("Sign the current compiled-contract version with the daemon key?\n\n" +
+    "This pins approval to this exact version — any later change to the declaration " +
+    "(drift) invalidates it and, for sealed apps, blocks arming until re-signed.")) return;
+  const r = await fetch("/api/apps/" + appName + "/sign", {method:"POST"});
+  const data = await r.json();
+  if (!r.ok) { alert("Sign failed: " + (data.error || r.status)); return; }
+  loadPolicy();
 }
 
 function polList(label, items) {

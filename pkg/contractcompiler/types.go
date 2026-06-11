@@ -32,9 +32,17 @@ type CompiledContract struct {
 	CompiledAt time.Time                   `json:"compiled_at"`
 	// Source records what fed the compile. "declaration" today;
 	// "declaration+baseline" once baseline refinement lands.
-	Source   string             `json:"source"`
-	Services []CompiledService  `json:"services"`
-	Warnings []string           `json:"warnings,omitempty"`
+	Source   string            `json:"source"`
+	Services []CompiledService `json:"services"`
+	Warnings []string          `json:"warnings,omitempty"`
+	// ArtifactSHA is a deterministic SHA-256 over the policy-relevant
+	// content (P7). It is the contract's content-addressed VERSION: any
+	// change to the declared services, allow/deny sets, or syscalls
+	// changes it. CI signs this hash; sealed-mode arming verifies a
+	// trusted signature exists for it (so unsigned drift is blocked).
+	// Excludes Mode and CompiledAt so a pure mode flip / recompile does
+	// not invalidate an existing signature.
+	ArtifactSHA string `json:"artifact_sha"`
 }
 
 // CompiledService is the compiled policy for one service within an app.

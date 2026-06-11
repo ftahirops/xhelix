@@ -980,3 +980,33 @@ no change-audit trail, and any authenticated session could arm prod.
 
 **Still deferred:** policy signing/versioning (overlaps P7 CI/CD); per-person (vs
 per-credential) identity; kernel-in-the-loop e2e proving an armed syscall denies.
+
+### P7 (started) — policy signing + versioning — AS BUILT (2026-06-11)
+
+The highest-value, self-contained slice of P7, and the one that closes the last
+maturity gap (no policy signing/versioning). The full CI webhook / behavioral
+diff / deploy-history UI remain the P7 continuation.
+
+**Shipped:**
+- `CompiledContract.ArtifactSHA` — deterministic SHA-256 over the policy-relevant
+  content (services, exec allow/deny, syscalls, write-deny). Content-addressed
+  VERSION. Excludes Mode + CompiledAt, so a mode flip or plain recompile keeps the
+  same hash (a signature survives), while any declaration drift changes it.
+- `pkg/contractsign` — Ed25519 Sign/Verify over a domain-separated message
+  (`xhelix-contract-sig-v1|app|hash`, so a sig can't be replayed across apps) +
+  a signature store that verifies against the trust root before storing and
+  RE-verifies on read (a revoked key's old signature stops counting).
+- Sealed-mode arm gate is now **signature-based**: arming a sealed app requires a
+  valid trusted signature over the CURRENT ArtifactSHA, OR an active maintenance
+  grant (documented break-glass). Unsigned drift → blocked until re-signed.
+- Trust root = the BRP `trusted-keys.d` (CI signs with a key whose public half is
+  there); the daemon UI key is also registered as signer "ui" for in-UI self-sign.
+- API (admin-gated, audited): POST /api/apps/:name/sign (self-sign current version),
+  POST /api/apps/:name/signature (accept external CI signature). Policy view +
+  panel show the version hash + signed/✗-unsigned status + a Sign button.
+- Tests: sign/verify round-trip + cross-app/cross-hash/untrusted rejection;
+  store rejects untrusted, drops revoked-key sigs on read, blocks drift; hash
+  stable across mode-flip but changes on drift.
+
+**P7 continuation (not yet built):** CI propose endpoint + behavioral diff
+(`pkg/contractdiff`) + deploy-history/approval UI (`ui/web/deploys.go`).

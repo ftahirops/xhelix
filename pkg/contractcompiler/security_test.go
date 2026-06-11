@@ -65,3 +65,26 @@ func TestWriteArtifacts_JailsAppName(t *testing.T) {
 		t.Error("expected writeArtifacts to reject an app name escaping the artifact dir")
 	}
 }
+
+// TestArtifactSHA_StableAcrossModeFlip proves the content hash (the signed
+// version identity) is invariant to mode + recompile, but changes when the
+// declaration drifts — the core P7 "sealed = unsigned drift blocked" property.
+func TestArtifactSHA_StableAcrossModeFlip(t *testing.T) {
+	locked := sampleApp(appregistry.ModeLocked)
+	sealed := sampleApp(appregistry.ModeSealed)
+	h1 := Compile(locked, nil).ArtifactSHA
+	h2 := Compile(sealed, nil).ArtifactSHA
+	if h1 == "" || h1 != h2 {
+		t.Errorf("hash must be invariant to mode: locked=%s sealed=%s", h1, h2)
+	}
+	// Recompiling the same declaration yields the same hash.
+	if Compile(locked, nil).ArtifactSHA != h1 {
+		t.Error("hash must be deterministic across recompiles")
+	}
+	// Drift: change a declared binary → hash must change.
+	drifted := sampleApp(appregistry.ModeLocked)
+	drifted.Services[0].BinaryPath = "/usr/sbin/php-fpm9.9"
+	if Compile(drifted, nil).ArtifactSHA == h1 {
+		t.Error("declaration drift must change the artifact hash (unsigned drift)")
+	}
+}

@@ -43,6 +43,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/contractaudit"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
+	"github.com/xhelix/xhelix/pkg/contractsign"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/redzones"
@@ -164,6 +165,10 @@ type foundationContext struct {
 	// ContractAudit is the hash-chained, append-only audit trail for
 	// control actions (arm/disarm/restart/mode/delete) with RBAC actor.
 	ContractAudit *contractaudit.Store
+	// ContractSign stores trusted Ed25519 signatures over compiled-contract
+	// versions (P7). Sealed-mode arming requires a valid signature for the
+	// current ArtifactSHA, so unsigned drift is blocked.
+	ContractSign *contractsign.Store
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
 	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
@@ -619,6 +624,20 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		}
 	}
 
+	// Contract signature store (P7). Trust root is the BRP key directory
+	// (CI signs with a key whose public half lives there). Best-effort.
+	{
+		trust := loadBRPTrustRoot("/etc/xhelix/brp/trusted-keys.d")
+		path := "/var/lib/xhelix/contract-sign.db"
+		if ss, err := contractsign.Open(path, trust); err != nil {
+			slog.Warn("contractsign: store unavailable; sealed-mode signing disabled",
+				"path", path, "err", err)
+		} else {
+			fc.ContractSign = ss
+			slog.Info("contractsign ready", "path", path, "trust_signers", len(trust))
+		}
+	}
+
 	return fc, nil
 }
 
@@ -950,6 +969,9 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.ContractAudit != nil {
 		_ = fc.ContractAudit.Close()
+	}
+	if fc.ContractSign != nil {
+		_ = fc.ContractSign.Close()
 	}
 }
 

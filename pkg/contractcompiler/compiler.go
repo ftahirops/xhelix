@@ -1,6 +1,10 @@
 package contractcompiler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/xhelix/xhelix/pkg/appregistry"
@@ -39,7 +43,46 @@ func Compile(app appregistry.App, policy *redzones.Policy) CompiledContract {
 	for _, svc := range app.Services {
 		cc.Services = append(cc.Services, compileService(app, svc, policy, arch))
 	}
+	cc.ArtifactSHA = contentHash(cc)
 	return cc
+}
+
+// contentHash is a deterministic SHA-256 over the policy-relevant content
+// of a compiled contract (P7). Mode and CompiledAt are EXCLUDED so a mode
+// flip or a fresh recompile of unchanged declarations yields the same hash
+// (and a prior signature stays valid). Field order + separators are part
+// of the contract — changing them invalidates existing signatures.
+func contentHash(cc CompiledContract) string {
+	var b strings.Builder
+	b.WriteString(cc.App)
+	for _, s := range cc.Services {
+		b.WriteString("\x1fsvc\x1f")
+		b.WriteString(s.Unit)
+		b.WriteByte('\x1f')
+		b.WriteString(s.Kind)
+		b.WriteByte('\x1f')
+		b.WriteString(s.CgroupMatch)
+		writeSet(&b, "exec_allow", s.ExecAllow)
+		writeSet(&b, "exec_deny", s.ExecDeny)
+		writeSet(&b, "deny_syscalls", s.DenySyscalls)
+		writeSet(&b, "write_deny", s.WriteDeny)
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+// writeSet appends a sorted, length-prefixed set so ordering of the input
+// slice cannot change the hash.
+func writeSet(b *strings.Builder, label string, items []string) {
+	b.WriteString("\x1f")
+	b.WriteString(label)
+	b.WriteString(":")
+	cp := append([]string(nil), items...)
+	sort.Strings(cp)
+	for _, it := range cp {
+		b.WriteByte('\x1e')
+		b.WriteString(it)
+	}
 }
 
 // compileService builds the CompiledService for one declared service.

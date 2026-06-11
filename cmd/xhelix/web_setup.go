@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/contractaudit"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
+	"github.com/xhelix/xhelix/pkg/contractsign"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
 	"github.com/xhelix/xhelix/pkg/model"
@@ -632,8 +634,9 @@ type daemonCompiledPolicyProvider struct {
 	compiler *contractcompiler.Manager
 	reg      *appregistry.Registry
 	armorer  *contractarm.Armorer
-	mc       *maintenancechain.Store    // sealed-mode arm gate
+	mc       *maintenancechain.Store    // sealed-mode break-glass
 	breaker  *contracthealth.Breaker    // deny-storm state (alert-only)
+	sign     *contractsign.Store        // sealed-mode signature gate (P7)
 }
 
 func (d *daemonCompiledPolicyProvider) Policy(name string) (*web.CompiledPolicyView, error) {
@@ -641,7 +644,7 @@ func (d *daemonCompiledPolicyProvider) Policy(name string) (*web.CompiledPolicyV
 	if cc == nil {
 		return nil, nil
 	}
-	return toCompiledPolicyView(cc, d.compiler.ShadowCount(name)), nil
+	return d.viewWithSig(cc), nil
 }
 
 func (d *daemonCompiledPolicyProvider) Recompile(name string) (*web.CompiledPolicyView, error) {
@@ -656,7 +659,17 @@ func (d *daemonCompiledPolicyProvider) Recompile(name string) (*web.CompiledPoli
 		return nil, nil
 	}
 	cc := d.compiler.Recompile(*app)
-	return toCompiledPolicyView(cc, d.compiler.ShadowCount(name)), nil
+	return d.viewWithSig(cc), nil
+}
+
+// viewWithSig builds the policy view and annotates signature status (P7).
+func (d *daemonCompiledPolicyProvider) viewWithSig(cc *contractcompiler.CompiledContract) *web.CompiledPolicyView {
+	v := toCompiledPolicyView(cc, d.compiler.ShadowCount(cc.App))
+	v.ArtifactSHA = cc.ArtifactSHA
+	if d.sign != nil {
+		v.Signed, v.SignedBy = d.sign.HasValid(cc.App, cc.ArtifactSHA)
+	}
+	return v
 }
 
 // specsFor maps a compiled contract's services into arm specs.
@@ -736,14 +749,68 @@ func (d *daemonCompiledPolicyProvider) Arm(name string) (*web.ArmStatusView, err
 	default:
 		return nil, fmt.Errorf("app must be in locked or sealed mode to arm (current: %s)", cc.Mode)
 	}
-	if cc.Mode == appregistry.ModeSealed && !d.sealedGateOK(cc) {
-		return nil, fmt.Errorf("sealed app: arming requires an active maintenance grant (break-glass)")
+	if cc.Mode == appregistry.ModeSealed {
+		// Sealed = unsigned drift blocked. Arming requires EITHER a valid
+		// trusted signature over the current contract version (the normal
+		// path), OR an active maintenance grant (documented break-glass).
+		signed := false
+		if d.sign != nil {
+			signed, _ = d.sign.HasValid(cc.App, cc.ArtifactSHA)
+		}
+		if !signed && !d.sealedGateOK(cc) {
+			return nil, fmt.Errorf("sealed app: arming requires a valid signature over the current contract version (%s) or an active maintenance grant (break-glass)", shortSHA(cc.ArtifactSHA))
+		}
 	}
 	res, err := d.armorer.Arm(cc.App, string(cc.Mode), specsFor(cc))
 	if err != nil {
 		return nil, err
 	}
 	return armResultView(name, string(cc.Mode), res), nil
+}
+
+// SelfSign signs the current compiled-contract version with the daemon UI
+// key (signer "ui") and stores it.
+func (d *daemonCompiledPolicyProvider) SelfSign(name string) (string, error) {
+	if d.sign == nil {
+		return "", fmt.Errorf("signing unavailable")
+	}
+	cc := d.compiler.Get(name)
+	if cc == nil {
+		return "", fmt.Errorf("app %q has no compiled contract", name)
+	}
+	priv, _, err := loadDaemonSigningKey()
+	if err != nil {
+		return "", fmt.Errorf("daemon signing key unavailable: %w", err)
+	}
+	sig := contractsign.Sign(cc.App, cc.ArtifactSHA, priv)
+	if _, err := d.sign.Add(cc.App, cc.ArtifactSHA, "ui", base64.StdEncoding.EncodeToString(sig)); err != nil {
+		return "", err
+	}
+	return cc.ArtifactSHA, nil
+}
+
+// SubmitSignature verifies + stores an external (CI) signature. The
+// artifactSHA must match what CI signed; the store verifies the signature
+// against the trust root before persisting.
+func (d *daemonCompiledPolicyProvider) SubmitSignature(name, signer, artifactSHA, sigB64 string) error {
+	if d.sign == nil {
+		return fmt.Errorf("signing unavailable")
+	}
+	if artifactSHA == "" {
+		// Default to the current version if CI didn't specify.
+		if cc := d.compiler.Get(name); cc != nil {
+			artifactSHA = cc.ArtifactSHA
+		}
+	}
+	_, err := d.sign.Add(name, artifactSHA, signer, sigB64)
+	return err
+}
+
+func shortSHA(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
 }
 
 func (d *daemonCompiledPolicyProvider) Disarm(name string) (*web.ArmStatusView, error) {

@@ -3037,6 +3037,14 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 		webServer.SetMaintenance(&daemonMaintenanceProvider{store: foundation.MaintenanceChains})
 	}
+	// Register the UI signing key as a trusted contract signer "ui" (P7),
+	// so an admin can self-sign a sealed contract version from the UI in
+	// addition to external CI keys in trusted-keys.d.
+	if foundation.ContractSign != nil {
+		if uiPriv, _, err := loadDaemonSigningKey(); err == nil {
+			foundation.ContractSign.RegisterTrustKey("ui", uiPriv.Public().(ed25519.PublicKey))
+		}
+	}
 
 	// Wire app registry into the web UI (P-UI). The compiler is passed in
 	// so registry mutations (create/mode-change/delete) trigger a recompile
@@ -3063,6 +3071,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			armorer:  foundation.Armorer,
 			mc:       foundation.MaintenanceChains,
 			breaker:  foundation.Breaker,
+			sign:     foundation.ContractSign,
 		})
 	}
 
