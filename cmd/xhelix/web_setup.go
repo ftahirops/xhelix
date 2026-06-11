@@ -25,6 +25,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contractdiff"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
+	"github.com/xhelix/xhelix/pkg/contractpropose"
 	"github.com/xhelix/xhelix/pkg/contractsign"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
@@ -963,6 +964,138 @@ func toCompiledPolicyView(cc *contractcompiler.CompiledContract, shadow uint64) 
 		})
 	}
 	return v
+}
+
+// daemonProposalProvider implements the P7 CI deploy-proposal flow.
+type daemonProposalProvider struct {
+	reg      *appregistry.Registry
+	compiler *contractcompiler.Manager
+	store    *contractpropose.Store
+}
+
+// appFromServices builds an appregistry.App for an existing app from a
+// proposed service set + mode (defaulting mode to the app's current mode).
+func (d *daemonProposalProvider) appFromReq(name string, req web.ProposeReq) (appregistry.App, error) {
+	cur, err := d.reg.Get(name)
+	if err != nil {
+		return appregistry.App{}, err
+	}
+	if cur == nil {
+		return appregistry.App{}, fmt.Errorf("app %q not found (propose targets an existing app)", name)
+	}
+	mode := appregistry.EnforcementMode(req.Mode)
+	if mode == "" {
+		mode = cur.Mode
+	}
+	svcs := make([]appregistry.Service, 0, len(req.Services))
+	for _, s := range req.Services {
+		svcs = append(svcs, appregistry.Service{
+			Name: s.Name, CgroupMatch: s.CgroupMatch, BinaryPath: s.BinaryPath,
+			ServiceType: appregistry.ServiceType(s.ServiceType), UnitName: s.UnitName,
+		})
+	}
+	return appregistry.App{
+		Name: name, DisplayName: cur.DisplayName, Description: cur.Description,
+		Mode: mode, Services: svcs,
+	}, nil
+}
+
+func (d *daemonProposalProvider) Propose(name string, req web.ProposeReq, submitter, sourceIP string) (*web.ProposalView, error) {
+	app, err := d.appFromReq(name, req)
+	if err != nil {
+		return nil, err
+	}
+	// Compile (without applying) to capture the target version + validate.
+	if err := d.reg.ValidateApp(app); err != nil {
+		return nil, err
+	}
+	target := contractcompiler.Compile(app, nil)
+	declJSON, _ := json.Marshal(app)
+	p, err := d.store.Create(contractpropose.Proposal{
+		App: name, Submitter: submitter, SourceIP: sourceIP, Reason: req.Reason,
+		TargetSHA: target.ArtifactSHA, DeclarationJSON: declJSON,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return proposalView(&p), nil
+}
+
+func (d *daemonProposalProvider) List(name string) ([]web.ProposalView, error) {
+	ps, err := d.store.ListForApp(name, 100)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.ProposalView, 0, len(ps))
+	for i := range ps {
+		out = append(out, *proposalView(&ps[i]))
+	}
+	return out, nil
+}
+
+func (d *daemonProposalProvider) Status(name, id string) (*web.ProposalView, error) {
+	p, ok := d.store.Get(name, id)
+	if !ok {
+		return nil, nil
+	}
+	return proposalView(p), nil
+}
+
+func (d *daemonProposalProvider) Diff(name, id string) (*web.ContractDiffView, error) {
+	p, ok := d.store.Get(name, id)
+	if !ok {
+		return nil, nil
+	}
+	var proposed appregistry.App
+	if err := json.Unmarshal(p.DeclarationJSON, &proposed); err != nil {
+		return nil, fmt.Errorf("proposal declaration corrupt: %w", err)
+	}
+	to := contractcompiler.Compile(proposed, nil)
+	from := d.compiler.Get(name) // current live compiled contract
+	df := contractdiff.Compute(from, &to)
+	out := &web.ContractDiffView{
+		App: df.App, FromSHA: df.FromSHA, ToSHA: df.ToSHA,
+		HasBaseline: from != nil, Unchanged: df.Unchanged,
+	}
+	for _, c := range df.Changes {
+		out.Changes = append(out.Changes, web.DiffChangeView{
+			Kind: string(c.Kind), Unit: c.Unit, Op: string(c.Op), Value: c.Value,
+		})
+	}
+	return out, nil
+}
+
+func (d *daemonProposalProvider) Approve(name, id, by string) error {
+	p, ok := d.store.Get(name, id)
+	if !ok {
+		return fmt.Errorf("proposal %q not found", id)
+	}
+	if p.Status != contractpropose.StatusPending {
+		return fmt.Errorf("proposal already %s", p.Status)
+	}
+	var proposed appregistry.App
+	if err := json.Unmarshal(p.DeclarationJSON, &proposed); err != nil {
+		return fmt.Errorf("proposal declaration corrupt: %w", err)
+	}
+	// Apply the proposed declaration, then recompile. Mark decided only
+	// after the apply succeeds so a failed apply leaves it pending.
+	if err := d.reg.Update(proposed); err != nil {
+		return fmt.Errorf("apply proposal: %w", err)
+	}
+	d.compiler.Recompile(proposed)
+	return d.store.Decide(name, id, contractpropose.StatusApproved, by)
+}
+
+func (d *daemonProposalProvider) Reject(name, id, by string) error {
+	return d.store.Decide(name, id, contractpropose.StatusRejected, by)
+}
+
+func proposalView(p *contractpropose.Proposal) *web.ProposalView {
+	return &web.ProposalView{
+		ID: p.ID, App: p.App, Status: string(p.Status), Submitter: p.Submitter,
+		SourceIP: p.SourceIP, Reason: p.Reason, TargetSHA: p.TargetSHA,
+		CreatedAt: p.CreatedAt, DecidedAt: p.DecidedAt, DecidedBy: p.DecidedBy,
+	}
 }
 
 // daemonAuditProvider adapts *contractaudit.Store to web.AuditProvider.

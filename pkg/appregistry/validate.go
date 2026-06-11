@@ -17,6 +17,14 @@ var validModes = map[EnforcementMode]bool{
 // ValidMode reports whether m is one of the five canonical modes.
 func ValidMode(m EnforcementMode) bool { return validModes[m] }
 
+// ValidateApp is the exported validation entrypoint (e.g. for the
+// deploy-proposal flow, which validates before storing a proposal).
+func ValidateApp(a App) error { return validateApp(a) }
+
+// ValidateApp validates an app declaration against the registry's rules.
+// Method form for callers holding a *Registry.
+func (r *Registry) ValidateApp(a App) error { return validateApp(a) }
+
 // validateApp checks every operator-supplied field that later flows into
 // a filesystem path, a systemd unit argument, or an enforcement decision.
 // This is the single chokepoint that prevents path traversal (app name →

@@ -109,6 +109,9 @@ type Server struct {
 	// auditProvider records/reads the control-action audit trail. Wired
 	// via SetAuditProvider. Nil-safe.
 	auditProvider AuditProvider
+	// proposalProvider handles the CI deploy-proposal flow (P7). Wired via
+	// SetProposalProvider. Nil-safe.
+	proposalProvider ProposalProvider
 	mu     sync.RWMutex
 	alerts []model.Alert
 }

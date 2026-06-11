@@ -229,6 +229,72 @@ func (r *Registry) SetMode(name string, mode EnforcementMode) error {
 	return nil
 }
 
+// Update replaces an existing app's declaration (display, description,
+// mode, and the full service set) in one transaction. Used when an
+// approved CI proposal applies a new declaration. The app must already
+// exist. The in-memory cgroup index is rebuilt for this app.
+func (r *Registry) Update(a App) error {
+	if a.Name == "" {
+		return errors.New("appregistry: name required")
+	}
+	if err := validateApp(a); err != nil {
+		return err
+	}
+	if a.Mode == "" {
+		a.Mode = ModeObserve
+	}
+	tx, err := r.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	res, err := tx.Exec(
+		`UPDATE apps SET display_name=?, description=?, mode=?, updated_at=? WHERE name=?`,
+		a.DisplayName, a.Description, string(a.Mode), time.Now().Unix(), a.Name)
+	if err != nil {
+		return fmt.Errorf("appregistry: update: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("appregistry: app %q not found", a.Name)
+	}
+	if _, err := tx.Exec(`DELETE FROM app_services WHERE app_name=?`, a.Name); err != nil {
+		return err
+	}
+	for _, svc := range a.Services {
+		if svc.Name == "" {
+			svc.Name = svc.UnitName
+		}
+		if svc.ServiceType == "" {
+			svc.ServiceType = ServiceCustom
+		}
+		_, err = tx.Exec(
+			`INSERT INTO app_services
+			   (app_name, service_name, cgroup_match, binary_path, service_type, unit_name)
+			 VALUES (?,?,?,?,?,?)`,
+			a.Name, svc.Name, svc.CgroupMatch, svc.BinaryPath,
+			string(svc.ServiceType), svc.UnitName)
+		if err != nil {
+			return fmt.Errorf("appregistry: update service %q: %w", svc.Name, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Rebuild the cgroup index for this app: drop old entries, add new.
+	r.mu.Lock()
+	for k, v := range r.cgroupIndex {
+		if v == a.Name {
+			delete(r.cgroupIndex, k)
+		}
+	}
+	for _, svc := range a.Services {
+		r.cgroupIndex[svc.CgroupMatch] = a.Name
+	}
+	r.mu.Unlock()
+	return nil
+}
+
 // Delete removes an app and all its services.
 func (r *Registry) Delete(name string) error {
 	tx, err := r.db.BeginTx(context.Background(), nil)

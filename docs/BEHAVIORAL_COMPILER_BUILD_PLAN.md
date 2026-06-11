@@ -1037,3 +1037,35 @@ last-signed, and "approve" = sign the new version.
 **P7 remaining (optional):** a CI *propose* webhook that POSTs a new
 declaration (vs. editing via UI) + a polled approval-status endpoint for CI
 to block on. The signing/diff/version substrate it would use is now built.
+
+### P7 (complete) — CI propose webhook — AS BUILT (2026-06-11)
+
+The final P7 piece: CI proposes a declaration change, an admin reviews the diff
+and approves/rejects, CI polls status. Adapted to the registry model — a
+"deploy" proposes a new declaration for an EXISTING app.
+
+**Shipped:**
+- `pkg/contractpropose` — proposal store (pending/approved/rejected), app-scoped
+  IDs, decide-once semantics (a decided proposal can't be re-decided).
+- `appregistry.Update` — replace an existing app's declaration + services in one
+  transaction, rebuilding the cgroup index (needed to apply an approved proposal).
+- API:
+  - POST /api/apps/:name/propose            (operator) — CI submits a declaration;
+    xhelix compiles it for the target hash, stores pending. Audited.
+  - GET  /api/apps/:name/proposals          (viewer)
+  - GET  /api/apps/:name/proposals/:id/diff (viewer)  — proposed vs live diff
+  - GET  /api/apps/:name/proposals/:id[/status] (viewer) — CI polls
+  - POST /api/apps/:name/proposals/:id/approve (admin) — applies declaration +
+    recompiles + marks approved. Audited.
+  - POST /api/apps/:name/proposals/:id/reject  (admin). Audited.
+- Approve applies the declaration but does NOT auto-sign — signing stays a
+  separate attestation, so a sealed app's new version still needs a Sign to arm.
+- UI: "Pending Deploys" panel lists pending proposals with their behavioral diff
+  inline + Approve/Reject buttons.
+- Integration test: declare → propose drift → diff non-empty → approve applies +
+  recompiles → registry reflects new declaration, version == target, cgroup index
+  intact; decide-once enforced.
+
+**P7 is now functionally complete.** CI flow: GET /policy (read artifact_sha) →
+sign after tests, or POST /propose → poll /status → (admin approves in UI) →
+POST /signature to attest the approved version.

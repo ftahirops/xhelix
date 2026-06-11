@@ -234,6 +234,48 @@ func (s *Server) SetCompiledPolicy(p CompiledPolicyProvider) {
 	s.compiledPolicy = p
 }
 
+// ProposalProvider handles the CI deploy-proposal flow (P7): CI proposes a
+// new declaration, an admin approves (applies it) or rejects, CI polls
+// status. Wired by the daemon via SetProposalProvider. Nil-safe.
+type ProposalProvider interface {
+	// Propose stores a CI-submitted declaration as pending and returns it.
+	Propose(app string, req ProposeReq, submitter, sourceIP string) (*ProposalView, error)
+	// List returns proposals for an app, newest first.
+	List(app string) ([]ProposalView, error)
+	// Diff returns the behavioral diff of a proposal vs the live version.
+	Diff(app, id string) (*ContractDiffView, error)
+	// Approve applies the proposal's declaration to the registry + recompiles.
+	Approve(app, id, by string) error
+	// Reject marks the proposal rejected.
+	Reject(app, id, by string) error
+	// Status returns one proposal (for CI polling).
+	Status(app, id string) (*ProposalView, error)
+}
+
+// ProposeReq is the CI deploy-proposal payload.
+type ProposeReq struct {
+	Reason   string        `json:"reason"`
+	Mode     string        `json:"mode"`
+	Services []ServiceView `json:"services"`
+}
+
+// ProposalView is the web representation of a deploy proposal.
+type ProposalView struct {
+	ID        string    `json:"id"`
+	App       string    `json:"app"`
+	Status    string    `json:"status"`
+	Submitter string    `json:"submitter"`
+	SourceIP  string    `json:"source_ip,omitempty"`
+	Reason    string    `json:"reason"`
+	TargetSHA string    `json:"target_sha"`
+	CreatedAt time.Time `json:"created_at"`
+	DecidedAt time.Time `json:"decided_at,omitempty"`
+	DecidedBy string    `json:"decided_by,omitempty"`
+}
+
+// SetProposalProvider wires the deploy-proposal flow into the server.
+func (s *Server) SetProposalProvider(p ProposalProvider) { s.proposalProvider = p }
+
 // AuditProvider records and reads the control-action audit trail (RBAC +
 // who/when/what). Wired by the daemon via SetAuditProvider. Nil-safe.
 type AuditProvider interface {
@@ -581,6 +623,51 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]bool{"accepted": true})
 
+	case sub == "propose" && r.Method == http.MethodPost:
+		if s.proposalProvider == nil {
+			apiErr(w, "proposals not configured", http.StatusServiceUnavailable)
+			return
+		}
+		if !requireRole(w, r, RoleOperator) {
+			return
+		}
+		var req ProposeReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apiErr(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		id := IdentityFrom(r.Context())
+		pv, err := s.proposalProvider.Propose(name, req, id.TokenName, id.SourceIP)
+		detail := "reason=" + req.Reason
+		if pv != nil {
+			detail += " id=" + pv.ID
+		}
+		s.audit(r, "propose", name, detail, outcome(err))
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		writeJSON(w, pv)
+
+	case sub == "proposals" && r.Method == http.MethodGet:
+		if s.proposalProvider == nil {
+			writeJSON(w, []ProposalView{})
+			return
+		}
+		ps, err := s.proposalProvider.List(name)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if ps == nil {
+			ps = []ProposalView{}
+		}
+		writeJSON(w, ps)
+
+	case strings.HasPrefix(sub, "proposals/"):
+		s.handleProposalSub(w, r, name, strings.TrimPrefix(sub, "proposals/"))
+
 	case sub == "diff" && r.Method == http.MethodGet:
 		if s.compiledPolicy == nil {
 			writeJSON(w, &ContractDiffView{App: name, Changes: []DiffChangeView{}})
@@ -791,6 +878,79 @@ func (s *Server) handleAPIAppsPath(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleProposalSub routes /api/apps/:name/proposals/<id>[/action].
+func (s *Server) handleProposalSub(w http.ResponseWriter, r *http.Request, app, rest string) {
+	if s.proposalProvider == nil {
+		apiErr(w, "proposals not configured", http.StatusServiceUnavailable)
+		return
+	}
+	parts := strings.SplitN(rest, "/", 2)
+	id := parts[0]
+	action := ""
+	if len(parts) == 2 {
+		action = parts[1]
+	}
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	switch {
+	case action == "" && r.Method == http.MethodGet,
+		action == "status" && r.Method == http.MethodGet:
+		pv, err := s.proposalProvider.Status(app, id)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if pv == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, pv)
+
+	case action == "diff" && r.Method == http.MethodGet:
+		dv, err := s.proposalProvider.Diff(app, id)
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if dv == nil {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, dv)
+
+	case action == "approve" && r.Method == http.MethodPost:
+		if !requireRole(w, r, RoleAdmin) {
+			return
+		}
+		by := IdentityFrom(r.Context()).TokenName
+		err := s.proposalProvider.Approve(app, id, by)
+		s.audit(r, "approve_proposal", app, "id="+id, outcome(err))
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]bool{"approved": true})
+
+	case action == "reject" && r.Method == http.MethodPost:
+		if !requireRole(w, r, RoleAdmin) {
+			return
+		}
+		by := IdentityFrom(r.Context()).TokenName
+		err := s.proposalProvider.Reject(app, id, by)
+		s.audit(r, "reject_proposal", app, "id="+id, outcome(err))
+		if err != nil {
+			apiErr(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]bool{"rejected": true})
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // appHealthFor returns the deny health for an app, or a clean zero-state
 // when no provider is wired or the app has recorded no denies.
 func (s *Server) appHealthFor(name string) AppHealthView {
@@ -958,6 +1118,15 @@ const appsDetailHTML = `<!DOCTYPE html><html lang="en"><head>
   </div>
   <div id="armServices" class="arm-svcs"></div>
   <div id="polServices"></div>
+</section>
+<section>
+  <h3>Pending Deploys <span id="propCount" class="count">–</span></h3>
+  <div class="muted" style="font-size:12px;margin-bottom:8px">
+    CI-proposed declaration changes awaiting review. Approve applies the new
+    declaration (sealed apps still need a Sign before they can arm).
+  </div>
+  <div id="proposalsBody"></div>
+  <div id="proposalsEmpty" class="muted" style="font-size:13px">No pending deploys.</div>
 </section>
 <section>
   <h3>Pending Changes <span id="diffCount" class="count">–</span></h3>
@@ -1381,6 +1550,68 @@ async function loadVersions() {
   } catch(e) { /* leave */ }
 }
 
+async function loadProposals() {
+  try {
+    const r = await fetch("/api/apps/" + appName + "/proposals");
+    if (!r.ok) return;
+    const rows = await r.json();
+    const pending = (rows || []).filter(p => p.status === "pending");
+    document.getElementById("propCount").textContent = pending.length;
+    const host = document.getElementById("proposalsBody");
+    const empty = document.getElementById("proposalsEmpty");
+    if (pending.length === 0) { host.innerHTML = ""; empty.style.display = ""; return; }
+    empty.style.display = "none";
+    host.innerHTML = "";
+    for (const p of pending) {
+      const div = document.createElement("div");
+      div.className = "pol-svc";
+      div.innerHTML =
+        '<div class="pol-svc-head"><span class="mono">' + esc(p.id) + '</span>' +
+        '<span class="muted">' + esc(p.reason || "(no reason)") + '</span></div>' +
+        '<div class="muted" style="font-size:12px">by ' + esc(p.submitter) +
+        ' · ' + new Date(p.created_at).toLocaleString() +
+        ' · target ' + esc((p.target_sha||"").slice(0,12)) + '</div>' +
+        '<div id="pdiff-' + esc(p.id) + '" class="diff-list" style="margin:8px 0"></div>' +
+        '<div><button class="btn-sm" onclick="approveProp(\'' + esc(p.id) + '\')">Approve</button> ' +
+        '<button class="btn-sm btn-ghost" onclick="rejectProp(\'' + esc(p.id) + '\')">Reject</button></div>';
+      host.appendChild(div);
+      loadProposalDiff(p.id);
+    }
+  } catch(e) { /* leave */ }
+}
+
+async function loadProposalDiff(id) {
+  try {
+    const r = await fetch("/api/apps/" + appName + "/proposals/" + id + "/diff");
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = document.getElementById("pdiff-" + id);
+    if (!el) return;
+    if (!d.changes || d.changes.length === 0) { el.innerHTML = '<span class="muted">no behavioral change</span>'; return; }
+    el.innerHTML = d.changes.map(c => {
+      const sym = c.op === "added" ? '<span class="arm-on">+</span>' : '<span class="arm-off">−</span>';
+      return '<div class="diff-row">' + sym + ' <span class="muted">' + esc(c.kind) +
+        (c.unit ? " · " + esc(c.unit) : "") + '</span> <span class="mono">' + esc(c.value) + '</span></div>';
+    }).join("");
+  } catch(e) { /* leave */ }
+}
+
+async function approveProp(id) {
+  if (!confirm("Approve this deploy? Applies the proposed declaration and recompiles.")) return;
+  const r = await fetch("/api/apps/" + appName + "/proposals/" + id + "/approve", {method:"POST"});
+  const data = await r.json();
+  if (!r.ok) { alert("Approve failed: " + (data.error || r.status)); return; }
+  loadProposals(); loadPolicy(); loadDiff(); loadVersions();
+}
+
+async function rejectProp(id) {
+  if (!confirm("Reject this deploy proposal?")) return;
+  const r = await fetch("/api/apps/" + appName + "/proposals/" + id + "/reject", {method:"POST"});
+  const data = await r.json();
+  if (!r.ok) { alert("Reject failed: " + (data.error || r.status)); return; }
+  loadProposals();
+}
+
 // Load on page open and refresh every 30s.
 loadEgress();
 loadHealth();
@@ -1388,11 +1619,13 @@ loadPolicy();
 loadAudit();
 loadDiff();
 loadVersions();
+loadProposals();
 setInterval(loadEgress, 30000);
 setInterval(loadHealth, 30000);
 setInterval(loadAudit, 30000);
 setInterval(loadDiff, 30000);
 setInterval(loadVersions, 30000);
+setInterval(loadProposals, 30000);
 </script>
 </main></body></html>`
 

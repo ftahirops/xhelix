@@ -43,6 +43,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/contractaudit"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
+	"github.com/xhelix/xhelix/pkg/contractpropose"
 	"github.com/xhelix/xhelix/pkg/contractsign"
 	"github.com/xhelix/xhelix/pkg/denyledger"
 	"github.com/xhelix/xhelix/pkg/maintenancechain"
@@ -169,6 +170,8 @@ type foundationContext struct {
 	// versions (P7). Sealed-mode arming requires a valid signature for the
 	// current ArtifactSHA, so unsigned drift is blocked.
 	ContractSign *contractsign.Store
+	// ContractPropose stores CI deploy proposals awaiting operator approval (P7).
+	ContractPropose *contractpropose.Store
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
 	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
@@ -638,6 +641,18 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		}
 	}
 
+	// Deploy-proposal store (P7 CI webhook). Best-effort.
+	{
+		path := "/var/lib/xhelix/contract-propose.db"
+		if ps, err := contractpropose.Open(path); err != nil {
+			slog.Warn("contractpropose: store unavailable; CI propose disabled",
+				"path", path, "err", err)
+		} else {
+			fc.ContractPropose = ps
+			slog.Info("contractpropose ready", "path", path)
+		}
+	}
+
 	return fc, nil
 }
 
@@ -972,6 +987,9 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.ContractSign != nil {
 		_ = fc.ContractSign.Close()
+	}
+	if fc.ContractPropose != nil {
+		_ = fc.ContractPropose.Close()
 	}
 }
 

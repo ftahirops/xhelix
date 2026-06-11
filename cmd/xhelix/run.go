@@ -3063,6 +3063,14 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	if foundation.ContractAudit != nil {
 		webServer.SetAuditProvider(&daemonAuditProvider{store: foundation.ContractAudit, log: log})
 	}
+	// Wire the CI deploy-proposal flow (P7).
+	if foundation.ContractPropose != nil && foundation.AppRegistry != nil && foundation.Compiler != nil {
+		webServer.SetProposalProvider(&daemonProposalProvider{
+			reg:      foundation.AppRegistry,
+			compiler: foundation.Compiler,
+			store:    foundation.ContractPropose,
+		})
+	}
 	// Wire compiled-contract view + arm lifecycle into the web UI (P5a/P5a.2).
 	if foundation.Compiler != nil {
 		webServer.SetCompiledPolicy(&daemonCompiledPolicyProvider{
