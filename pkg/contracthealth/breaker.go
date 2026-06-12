@@ -17,6 +17,11 @@ import (
 	"time"
 )
 
+// maxWindowEvents caps the per-app rolling deny-timestamp slice so a
+// high-rate deny storm cannot grow it without bound (~24 bytes each →
+// ~1.5 MB/app at this cap). Well above any sane threshold.
+const maxWindowEvents = 65536
+
 // Breaker tracks per-app policy-deny rate over a rolling window and
 // latches a "tripped" alert state when the rate crosses a threshold.
 // Alert-only: it takes no enforcement action itself.
@@ -59,6 +64,15 @@ func (b *Breaker) RecordDeny(app string, at time.Time) {
 	b.mu.Lock()
 	ev := append(b.events[app], at)
 	ev = pruneOlder(ev, at.Add(-b.window))
+	// Bound memory under a high-rate deny storm. The breaker is alert-only
+	// and trips far below this cap, so keeping the most-recent maxWindowEvents
+	// timestamps is enough to stay tripped and report a representative count —
+	// without letting a runaway (e.g. a process spin-exec'ing a denied binary)
+	// accumulate millions of timestamps and OOM the daemon. Found by live
+	// validation: a denied spin-loop drove the window to ~16M entries.
+	if len(ev) > maxWindowEvents {
+		ev = ev[len(ev)-maxWindowEvents:]
+	}
 	b.events[app] = ev
 	count := len(ev)
 	_, already := b.tripped[app]

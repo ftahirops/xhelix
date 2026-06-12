@@ -18,7 +18,7 @@
 //   - Requires CAP_SYS_ADMIN (root).
 //   - Requires CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y (set on every
 //     mainstream distro since 2020).
-//   - Marks the entire mount with FAN_MARK_MOUNT, so deny rules apply
+//   - Marks the whole filesystem (FAN_MARK_FILESYSTEM) so deny rules apply
 //     to every exec on that mount.
 //   - Must write a response within the kernel's timeout (default 30s)
 //     or the kernel auto-allows. We write within ~milliseconds.
@@ -195,15 +195,25 @@ func (g *Guard) Start(parent context.Context, mountPoints []string) error {
 
 	mask := uint64(unix.FAN_OPEN_EXEC_PERM)
 	for _, mp := range mountPoints {
-		if err := unix.FanotifyMark(fd,
-			unix.FAN_MARK_ADD|unix.FAN_MARK_MOUNT,
-			mask,
-			unix.AT_FDCWD,
-			mp); err != nil {
-			_ = unix.Close(fd)
-			g.fd = -1
-			g.running.Store(false)
-			return fmt.Errorf("fanotify_mark %s: %w", mp, err)
+		// FAN_MARK_FILESYSTEM marks the whole superblock, so exec events
+		// are caught even when this daemon runs in a PRIVATE MOUNT
+		// NAMESPACE (systemd ProtectSystem=strict / ProtectHome /
+		// PrivateTmp all create one). FAN_MARK_MOUNT would mark only the
+		// daemon's own mount object — a distinct instance from where host
+		// execs occur — so it silently catches nothing. This was found by
+		// live validation: with FAN_MARK_MOUNT even an explicit deny rule
+		// never fired. Fall back to per-mount on kernels < 4.20 that lack
+		// FAN_MARK_FILESYSTEM.
+		err := unix.FanotifyMark(fd,
+			unix.FAN_MARK_ADD|unix.FAN_MARK_FILESYSTEM, mask, unix.AT_FDCWD, mp)
+		if err != nil {
+			if err2 := unix.FanotifyMark(fd,
+				unix.FAN_MARK_ADD|unix.FAN_MARK_MOUNT, mask, unix.AT_FDCWD, mp); err2 != nil {
+				_ = unix.Close(fd)
+				g.fd = -1
+				g.running.Store(false)
+				return fmt.Errorf("fanotify_mark %s: filesystem=%v / mount=%v", mp, err, err2)
+			}
 		}
 	}
 
