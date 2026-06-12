@@ -240,7 +240,15 @@ func (a *Armorer) RestartAndVerify(app string, units []string) ([]RolledBack, er
 			continue
 		}
 		_ = a.Runner("daemon-reload")
-		_ = a.Runner("try-restart", "--", safeUnit(u))
+		// Recovery MUST use reset-failed + restart, NOT try-restart:
+		// after a brick the unit is in the FAILED state, and try-restart
+		// is a no-op on a non-active unit — it would leave the service
+		// down (drop-in gone but never restarted). reset-failed clears the
+		// failed state (and any start-limit) so restart reliably brings it
+		// back unconstrained. Found by live validation: try-restart left a
+		// bricked unit dead even though the dangerous drop-in was removed.
+		_ = a.Runner("reset-failed", "--", safeUnit(u))
+		_ = a.Runner("restart", "--", safeUnit(u))
 		rolled = append(rolled, RolledBack{Unit: u,
 			Reason: "failed to become active after arm; drop-in removed and unit restored unconstrained"})
 	}
