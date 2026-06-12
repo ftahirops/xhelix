@@ -445,8 +445,20 @@ func (d *daemonMaintenanceProvider) Revoke(id string) error {
 // public key is automatically trusted under the signer name "ui". This
 // means operators get a working setup on first run without manual key
 // management; security comes from the UI's own AuthGuard layer.
+// daemonStateDir roots daemon-owned key/db paths that live outside the
+// foundation constructor. Set once from cfg.Agent.StateDir at startup so a
+// sandbox/validation instance stays isolated from production. Defaults to
+// the production path.
+var daemonStateDir = "/var/lib/xhelix"
+
+// daemonRunDir roots the runtime socket + heartbeat. Set from the
+// directory of cfg.Agent.PIDFile so a sandbox instance does not unlink the
+// production daemon's live /run/xhelix/xhelix.sock (localapi.Start removes
+// the path before binding). Defaults to the production path.
+var daemonRunDir = "/run/xhelix"
+
 func loadDaemonSigningKey() (ed25519.PrivateKey, string, error) {
-	const keyPath = "/var/lib/xhelix/ui-signing.key"
+	keyPath := filepath.Join(daemonStateDir, "ui-signing.key")
 	priv, err := loadOrGenerateEd25519Key(keyPath)
 	if err != nil {
 		return nil, "", err

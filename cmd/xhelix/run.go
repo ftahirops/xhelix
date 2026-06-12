@@ -396,9 +396,18 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	defer cancel()
 	go ss.runFlusher(ctx, time.Minute)
 
+	// Root all daemon-owned state under the configured state dir so a
+	// sandbox/validation instance is fully isolated from production.
+	if cfg.Agent.StateDir != "" {
+		daemonStateDir = cfg.Agent.StateDir
+	}
+	if cfg.Agent.PIDFile != "" {
+		daemonRunDir = filepath.Dir(cfg.Agent.PIDFile)
+	}
+
 	// Phase-1 evidence-truth primitives: EAC + lineage + canonical self.
 	// Constructed early so they're available to every subsystem.
-	foundation, err := newFoundationContext(ctx)
+	foundation, err := newFoundationContext(ctx, cfg.Agent.StateDir)
 	if err != nil {
 		return fmt.Errorf("foundation: %w", err)
 	}
@@ -1649,7 +1658,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// LocalAPI — Unix socket for my-net-gate.
 	// Socket lives inside /run/xhelix/ — the systemd unit grants
 	// ReadWritePaths for that directory but not for /run itself.
-	apiSock := "/run/xhelix/xhelix.sock"
+	apiSock := filepath.Join(daemonRunDir, "xhelix.sock")
 	apiSrv := localapi.NewServer(apiSock,
 		localapi.OptionAllowUIDs(0), // root only by default
 	)
@@ -3656,7 +3665,7 @@ func dispatch(
 	// detection. Database lives under the agent state dir; on a
 	// fresh install the manager starts in OBSERVE mode and seals
 	// after 24h. Pipeline.Handle queries IsKnown for suppression.
-	abPath := "/var/lib/xhelix/autobaseline.db"
+	abPath := filepath.Join(daemonStateDir, "autobaseline.db")
 	abMgr, abErr := autobaseline.New(autobaseline.Options{
 		DBPath:      abPath,
 		Observation: 24 * time.Hour,

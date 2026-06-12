@@ -201,7 +201,13 @@ type foundationContext struct {
 // The EAC begins admitting events immediately but its Out() channel
 // is consumed by the dispatch wiring elsewhere — this constructor
 // is responsible only for liveness, not routing.
-func newFoundationContext(parent context.Context) (*foundationContext, error) {
+func newFoundationContext(parent context.Context, stateDir string) (*foundationContext, error) {
+	// stateDir roots every persistent store. Defaulting keeps existing
+	// single-instance behavior; an override (cfg.Agent.StateDir) lets a
+	// sandbox/validation instance run fully isolated from production.
+	if stateDir == "" {
+		stateDir = "/var/lib/xhelix"
+	}
 	selfPID := uint32(os.Getpid())
 	self, err := canonical.ReadProcKey(selfPID)
 	if err != nil {
@@ -276,7 +282,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 
 	// Data Passport store. Key lives separately from the chain
 	// signing key — different responsibilities.
-	passportKeyPath := "/var/lib/xhelix/passport.key"
+	passportKeyPath := filepath.Join(stateDir, "passport.key")
 	if priv, err := loadOrGenerateEd25519Key(passportKeyPath); err == nil {
 		fc.Passports = passport.NewStore(priv)
 		fc.Egress.AttachPassportSource(fc.Passports)
@@ -308,7 +314,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// endpoints — replay-resistance. Distinct key from reqcontract
 	// because the trust scope is different (nonces only authorise
 	// one redemption; contracts identify a request).
-	nonceKeyPath := "/var/lib/xhelix/nonce.key"
+	nonceKeyPath := filepath.Join(stateDir, "nonce.key")
 	if nk, err := loadOrGenerateRCKey(nonceKeyPath); err == nil {
 		if ns, err := nonce.NewStore(nk, 0); err == nil {
 			fc.Nonces = ns
@@ -319,7 +325,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Request Contract store (P-RC.1). Per-HTTP-request capability
 	// tokens, HMAC-signed, 30s default TTL. Substrate for the
 	// behavioral defenses in BEHAVIORAL_DEFENSE.md.
-	rcKeyPath := "/var/lib/xhelix/reqcontract.key"
+	rcKeyPath := filepath.Join(stateDir, "reqcontract.key")
 	if rcKey, err := loadOrGenerateRCKey(rcKeyPath); err == nil {
 		if rcStore, err := reqcontract.NewStore(rcKey, 0); err == nil {
 			fc.ReqContract = rcStore
@@ -330,7 +336,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Cold store (P2.3). Durable per-day-partitioned event store.
 	// Best-effort: failure to open isn't fatal — the daemon still
 	// runs without cold persistence. Path lives under StateDir.
-	coldPath := "/var/lib/xhelix/cold.db"
+	coldPath := filepath.Join(stateDir, "cold.db")
 	if cs, err := coldstore.New(coldstore.Options{
 		Path:          coldPath,
 		RetentionDays: 3, // 3-day local retention; off-host mirror
@@ -370,7 +376,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Open the persistent SourceAnchor store. Missing parent dir or
 	// write failure is non-fatal — Minter is nil-safe and the daemon
 	// keeps running with in-memory-only Origins. T01 / Phase A1.
-	if st, err := source.Open("/var/lib/xhelix/source.db"); err == nil {
+	if st, err := source.Open(filepath.Join(stateDir, "source.db")); err == nil {
 		fc.SourceStore = st
 		hostname, _ := os.Hostname()
 		fc.SourceMinter = source.NewMinter(st, fc.Minter, fc.Origins, hostname)
@@ -452,7 +458,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// continues with an in-memory-only engine.
 	{
 		base := incidentgraph.NewEngine(30 * time.Minute)
-		store, err := incidentgraph.OpenStore("/var/lib/xhelix/incidents.db")
+		store, err := incidentgraph.OpenStore(filepath.Join(stateDir, "incidents.db"))
 		if err != nil {
 			slog.Warn("incidentgraph store unavailable; running in-memory only", "err", err)
 			fc.IncidentGraph = base
@@ -526,7 +532,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// per-net_connect (image, "egress_ip", dst_ip); a poller fires
 	// when a configured threshold is met over a long window.
 	{
-		path := "/var/lib/xhelix/longwindow.db"
+		path := filepath.Join(stateDir, "longwindow.db")
 		st, err := longwindow.OpenStore(path)
 		if err != nil {
 			slog.Warn("longwindow: open failed; continuing without long-window correlation",
@@ -559,7 +565,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// is rejected. Missing directory → empty trust → observe-only mode.
 	{
 		trust := loadBRPTrustRoot("/etc/xhelix/brp/trusted-keys.d")
-		dbPath := "/var/lib/xhelix/maintenance.db"
+		dbPath := filepath.Join(stateDir, "maintenance.db")
 		if mc, err := maintenancechain.Open(dbPath, trust); err != nil {
 			slog.Warn("maintenancechain: store unavailable; red-zone bypasses disabled",
 				"path", dbPath, "err", err)
@@ -575,7 +581,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// never blocks daemon startup. The registry is empty until an
 	// operator declares apps via the UI or API.
 	{
-		path := "/var/lib/xhelix/apps.db"
+		path := filepath.Join(stateDir, "apps.db")
 		if ar, err := appregistry.Open(path); err != nil {
 			slog.Warn("appregistry: store unavailable; per-app attribution disabled",
 				"path", path, "err", err)
@@ -594,7 +600,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// into per-app contracts; answers the execguard exec-allowlist hook.
 	// Staged seccomp/AppArmor artifacts (not armed) land under the dir.
 	fc.Compiler = contractcompiler.NewManager(
-		redzones.Default(), "/etc/xhelix/compiled", slog.Default())
+		redzones.Default(), filepath.Join(stateDir, "compiled"), slog.Default())
 	if fc.AppRegistry != nil {
 		if apps, err := fc.AppRegistry.List(); err == nil {
 			fc.Compiler.RecompileAll(apps)
@@ -617,7 +623,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Control-action audit trail (hash-chained). Best-effort: failure to
 	// open is logged but never blocks startup.
 	{
-		path := "/var/lib/xhelix/contract-audit.db"
+		path := filepath.Join(stateDir, "contract-audit.db")
 		if as, err := contractaudit.Open(path); err != nil {
 			slog.Warn("contractaudit: store unavailable; control actions unaudited",
 				"path", path, "err", err)
@@ -631,7 +637,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// (CI signs with a key whose public half lives there). Best-effort.
 	{
 		trust := loadBRPTrustRoot("/etc/xhelix/brp/trusted-keys.d")
-		path := "/var/lib/xhelix/contract-sign.db"
+		path := filepath.Join(stateDir, "contract-sign.db")
 		if ss, err := contractsign.Open(path, trust); err != nil {
 			slog.Warn("contractsign: store unavailable; sealed-mode signing disabled",
 				"path", path, "err", err)
@@ -643,7 +649,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 
 	// Deploy-proposal store (P7 CI webhook). Best-effort.
 	{
-		path := "/var/lib/xhelix/contract-propose.db"
+		path := filepath.Join(stateDir, "contract-propose.db")
 		if ps, err := contractpropose.Open(path); err != nil {
 			slog.Warn("contractpropose: store unavailable; CI propose disabled",
 				"path", path, "err", err)
