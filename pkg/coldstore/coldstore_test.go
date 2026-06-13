@@ -39,6 +39,50 @@ func makeEvent(t time.Time, sensor string, sev model.Severity) *model.Event {
 	}
 }
 
+// TestStore_Submit_SnapshotsTags reproduces the 2026-06-12 soak crash:
+// the flusher json.Marshals e.Tags while the caller keeps mutating the
+// same map, racing marshal-iterate against map-write. Submit must copy
+// Tags so the cold store owns an immutable snapshot. Run with -race;
+// before the fix this fatals with "concurrent map iteration and map
+// write" (an unrecoverable runtime fatal, not a -race report).
+func TestStore_Submit_SnapshotsTags(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := tmpStore(t, Options{BatchSize: 1, FlushInterval: time.Millisecond})
+	s.Start(ctx)
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// One long-lived event, reused every iteration, so it is
+		// perpetually both in the flush pipeline AND being mutated by
+		// this goroutine — the only writer, exactly as the real
+		// dispatch loop is the sole writer of an event's Tags. The
+		// flusher is the concurrent reader. Old code shares the live
+		// map → fatal; the snapshot in Submit decouples them.
+		e := makeEvent(time.Now().UTC(), "race.sensor", model.SeverityNotice)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			s.Submit(e)
+			e.Tags["app_id"] = "app"
+			e.Tags["dest_class"] = "x"
+			delete(e.Tags, "dest_class")
+		}
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+	close(stop)
+	<-done
+	if s.Stats().Written == 0 {
+		t.Fatal("expected some events written during the race window")
+	}
+}
+
 func TestStore_SubmitFlushQuery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
