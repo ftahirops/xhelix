@@ -418,7 +418,7 @@ desc: A new .ko file was placed under /lib/modules
 severity: critical
 mitre: [T1547.006]
 match: |
-  event.sensor == "fim" &&
+  event.sensor.startsWith("fim") &&
   (path.startsWith("/lib/modules/") || path.startsWith("/usr/lib/modules/")) &&
   path.endsWith(".ko") &&
   event.tags["create"] == "true" &&
@@ -428,7 +428,31 @@ remediation: |
   Out-of-tree kernel module drop. Capture, hash, check signature.
   Pair with the kernel_module_load rule (which fires when one
   actually loads).
+# sensor.startsWith("fim") matches BOTH the realtime inotify sensor
+# ("fim") and the periodic drift scanner ("fim.drift"). /lib/modules
+# is realistically only covered by the recursive drift scanner; the
+# old "== fim" never matched a real .ko drop (live validation 2026-06-13).
 test_id: FIM-05
+---
+id: modprobe_persistence
+category: incident
+desc: Module-loader config changed (modprobe.d / modules-load.d / etc/modules)
+severity: high
+mitre: [T1547.006]
+match: |
+  event.sensor.startsWith("fim") &&
+  (path.startsWith("/etc/modprobe.d/") ||
+   path.startsWith("/etc/modules-load.d/") ||
+   path == "/etc/modules") &&
+  (event.tags["create"] == "true" || event.tags["write"] == "true") &&
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
+tags: [persistence, kernel]
+remediation: |
+  An "install"/"options" line in /etc/modprobe.d, or a module named in
+  /etc/modules-load.d or /etc/modules, runs at boot via the module
+  loader — persistence without dropping a .ko. Inspect the added line;
+  a modprobe "install <mod> /path/to/cmd" is arbitrary command exec.
+test_id: FIM-06
 ---
 id: cron_malware_shape
 category: incident

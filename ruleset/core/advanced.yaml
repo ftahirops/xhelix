@@ -147,15 +147,19 @@ test_id: ADV-09
 ---
 id: kernel_module_unsigned
 category: incident
-desc: Unsigned or unknown kernel module loaded
+desc: Kernel module loaded (signature not verified at this layer)
 severity: high
 mitre: [T1547.006]
 match: |
   event.sensor == "ebpf.module" &&
-  event.tags["mod_load"] == "true" &&
-  event.tags["signed"] != "true"
+  event.tags["mod_load"] == "true"
 tags: [persistence, kernel]
 remediation: |
-  Unsigned module load on a system with Secure Boot enabled
-  indicates possible rootkit installation.
+  A kernel module was loaded. xhelix does NOT currently verify the
+  module signature (the old "signed" tag was never populated, so the
+  unsigned check was always-true — removed 2026-06-13 to stop the
+  false precision). Treat as a review signal: capture the .ko, check
+  its signature (modinfo -F signer / sig_key) and whether Secure Boot
+  is enforcing. Overlaps the warn-level kernel_module_load rule; this
+  one adds incident weight.
 test_id: ADV-10

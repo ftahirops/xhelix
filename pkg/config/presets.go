@@ -227,6 +227,15 @@ func defaultServerWatchPaths() []string {
 		// real rootkit surface.
 		"/lib/modules",
 		"/usr/lib/modules",
+		// Module auto-load + modprobe config. Writing an "install"
+		// line in /etc/modprobe.d or naming a module in
+		// /etc/modules-load.d / /etc/modules is a quiet persistence
+		// vector (T1547.006): the payload runs at boot via the module
+		// loader without ever dropping a .ko. Was uncovered until
+		// live validation 2026-06-13.
+		"/etc/modprobe.d",
+		"/etc/modules-load.d",
+		"/etc/modules",
 	}
 }
 
