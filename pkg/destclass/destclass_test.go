@@ -176,3 +176,60 @@ func TestExtraSuffixesAndCIDRs(t *testing.T) {
 		t.Errorf("extra CIDR should match; got %s", d.Class)
 	}
 }
+
+type fakeOrg struct{ org, asn string }
+
+func (f fakeOrg) OrgOf(net.IP) (string, string, bool) {
+	if f.org == "" {
+		return "", "", false
+	}
+	return f.org, f.asn, true
+}
+
+func TestClassify_OrgTier(t *testing.T) {
+	ip := net.ParseIP("203.0.113.10") // public, not in any static table
+	cases := []struct {
+		org  string
+		want Class
+	}{
+		{"Cloudflare, Inc.", ClassCDN},
+		{"Amazon.com, Inc.", ClassCloudProvider},
+		{"Akamai Technologies", ClassCDN},
+		{"Hetzner Online GmbH", ClassCloudProvider},
+		{"Some Random ISP LLC", ClassUnknown}, // org known but not cloud/cdn -> falls through
+	}
+	for _, c := range cases {
+		cl := New(WithOrgProvider(fakeOrg{org: c.org, asn: "AS0"}))
+		got := cl.Classify(ip, "", 443)
+		if got.Class != c.want {
+			t.Errorf("org %q -> %q, want %q", c.org, got.Class, c.want)
+		}
+	}
+	// no org provider / no match -> unknown, unchanged behavior
+	if got := New().Classify(ip, "", 443); got.Class != ClassUnknown {
+		t.Errorf("no-org default = %q want unknown", got.Class)
+	}
+}
+
+func TestClassFromPTR(t *testing.T) {
+	cases := []struct {
+		ptr   string
+		class Class
+		org   string
+	}{
+		{"server-1.cloudfront.net", ClassCDN, "Amazon CloudFront"},
+		{"ec2-1-2-3-4.compute.amazonaws.com", ClassCloudProvider, "Amazon AWS"},
+		{"lb.1e100.net", ClassCloudProvider, "Google"},
+		{"a23-1-2-3.akamaiedge.net", ClassCDN, "Akamai"},
+		{"x.fastly.net", ClassCDN, "Fastly"},
+		{"static.123.45.67.89.clients.your-server.de", ClassCloudProvider, "Hetzner"},
+		{"random.example.org", ClassUnknown, ""},
+		{"", ClassUnknown, ""},
+	}
+	for _, c := range cases {
+		gc, go_ := ClassFromPTR(c.ptr)
+		if gc != c.class || go_ != c.org {
+			t.Errorf("ClassFromPTR(%q) = (%q,%q) want (%q,%q)", c.ptr, gc, go_, c.class, c.org)
+		}
+	}
+}

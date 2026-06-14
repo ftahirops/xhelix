@@ -1,0 +1,142 @@
+# Red zone detection rules.
+#
+# Red zones are behaviours that are NEVER learnable for web-facing service
+# processes (nginx, php-fpm, node, apache). No training window makes them
+# legitimate. These rules cover the file-write and credential-read red zones;
+# the exec red zones are enforced at the kernel level by execguard (which
+# loads pkg/redzones.Default().WebWorkerExecRules() at daemon start).
+#
+# Severity: critical for first-class evidence of compromise; high for
+# strong-signal indicators. None of these should be noisy in a clean
+# environment — if they fire in prod without an active attack, that IS
+# the signal.
+#
+# Reference: docs/BEHAVIORAL_COMPILER_ARCHITECTURE.md §3 Red Zones
+---
+
+# Write to /etc/sudoers or /etc/sudoers.d/ — privilege escalation path.
+# No web process ever has a reason to modify sudo configuration.
+id: redzone_write_sudoers
+category: incident
+desc: Write to sudoers file — likely privilege escalation by web process
+severity: critical
+mitre: [T1548.003, T1222.002]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (path == "/etc/sudoers" ||
+   path.startsWith("/etc/sudoers.d/"))
+tags: [redzone, privilege_escalation, persistence]
+remediation: |
+  No web process should ever modify sudoers configuration. Identify the writer
+  via event.pid and event.comm. Capture the diff; most likely a persistence
+  backdoor or NOPASSWD escalation entry.
+
+---
+
+# Write under /root/ (broad — not just authorized_keys).
+# Web processes must never create any file under the root home directory.
+# Specific /root/.ssh/authorized_keys is handled by file.yaml; this catches
+# everything else: .bashrc hijack, credential stash, dropper staging.
+id: redzone_write_root_home
+category: incident
+desc: Web process wrote a file under /root/ — credential stash or persistence
+severity: critical
+mitre: [T1546.004, T1098.004, T1074.001]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (event.tags["create"] == "true" || event.tags["write"] == "true") &&
+  path.startsWith("/root/") &&
+  path != "/root/.ssh/authorized_keys"
+tags: [redzone, persistence, credential_access]
+remediation: |
+  Any file creation under /root/ from a web process is abnormal.
+  Inspect event.comm + event.pid lineage. Common patterns: dropper staging
+  (.root/.cache/evil), bash persistence (.root/.bashrc append), credential dump.
+
+---
+
+# Write to system library directories — LD_PRELOAD/rootkit vector.
+# Malware writes a .so into /lib/ or /usr/lib/ to persist via ld.so.preload
+# or direct library substitution. Package manager writes are excluded.
+id: redzone_write_system_library
+category: incident
+desc: Write to system library path — possible rootkit / LD_PRELOAD implant
+severity: critical
+mitre: [T1574.006, T1574.007]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  (event.tags["create"] == "true" || event.tags["write"] == "true") &&
+  (path.startsWith("/lib/") ||
+   path.startsWith("/lib64/") ||
+   path.startsWith("/usr/lib/") ||
+   path.startsWith("/usr/local/lib/")) &&
+  path.endsWith(".so") &&
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
+tags: [redzone, persistence, hijack]
+remediation: |
+  A shared library was written to a system path outside of the package manager.
+  This is either a rootkit implant or a supply-chain artifact. Compare against
+  the package manifest (dpkg -V), identify the writing process lineage.
+
+---
+
+# Credential read: /etc/shadow from a non-system tool.
+# file.yaml has a FIM-write rule; this is the read side — eBPF file events.
+id: redzone_read_shadow
+category: incident
+desc: Process read /etc/shadow outside of normal auth tools
+severity: high
+mitre: [T1003.008]
+match: |
+  event.sensor == "ebpf.file" &&
+  (path == "/etc/shadow" || path.endsWith("/shadow")) &&
+  !(event.comm in ["passwd", "chpasswd", "useradd", "usermod",
+                   "userdel", "vipw", "login", "su", "sudo",
+                   "sshd", "pam_unix", "systemd", "nscd", "sssd"])
+tags: [redzone, credential_access]
+remediation: |
+  /etc/shadow contains hashed passwords for all local accounts. A non-auth
+  process reading it is harvesting credentials for offline cracking.
+  Identify the full ancestry chain; quarantine the process.
+
+---
+
+# Credential read: root SSH private keys.
+# Any process reading /root/.ssh/id_* outside of ssh/sshd is credential theft.
+id: redzone_read_root_ssh_key
+category: incident
+desc: Process read root SSH private key outside normal SSH tooling
+severity: critical
+mitre: [T1552.004]
+match: |
+  event.sensor == "ebpf.file" &&
+  path.startsWith("/root/.ssh/") &&
+  (path.contains("/id_") || path.contains("identity")) &&
+  !(event.comm in ["ssh", "sshd", "git", "rsync", "sftp-server", "scp"])
+tags: [redzone, credential_access, exfiltration]
+remediation: |
+  Root SSH private key accessed by a non-SSH process. High-confidence credential
+  theft or exfiltration precursor. Identify event.pid lineage and any outbound
+  connection that follows in the same lineage.
+
+---
+
+# Credential read: AWS credentials / cloud API keys.
+# Any process reading /root/.aws/credentials outside CLI tools is exfiltration.
+id: redzone_read_cloud_credentials
+category: incident
+desc: Process read cloud API credentials from sensitive path
+severity: high
+mitre: [T1552.001]
+match: |
+  event.sensor == "ebpf.file" &&
+  (path.startsWith("/root/.aws/") ||
+   path.contains("/.aws/credentials") ||
+   path.contains("/.aws/config")) &&
+  !(event.comm in ["aws", "terraform", "pulumi", "ansible", "python3",
+                   "node", "go", "java", "ruby"])
+tags: [redzone, credential_access, cloud]
+remediation: |
+  AWS credentials file accessed by an unexpected process. Check if the reading
+  process is inside a web request lineage; if so, quarantine immediately and
+  rotate the AWS credentials.

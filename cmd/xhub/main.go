@@ -28,6 +28,7 @@ import (
 
 	"github.com/xhelix/xhelix/pkg/baselinehub"
 	"github.com/xhelix/xhelix/pkg/version"
+	"github.com/xhelix/xhelix/pkg/xhubfleet"
 )
 
 func main() {
@@ -73,12 +74,13 @@ func newRunCmd() *cobra.Command {
 		certFile     string
 		keyFile      string
 		devInsecure  bool
+		cleanPeerRarity bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the xhub HTTP(S) server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runHub(bind, dataDir, tokenFile, certFile, keyFile, devInsecure)
+			return runHub(bind, dataDir, tokenFile, certFile, keyFile, devInsecure, cleanPeerRarity)
 		},
 	}
 	cmd.Flags().StringVar(&bind, "bind", "127.0.0.1:18444", "HTTP(S) listen address")
@@ -89,10 +91,12 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&keyFile, "tls-key", "", "TLS key path")
 	cmd.Flags().BoolVar(&devInsecure, "dev-insecure", false,
 		"Allow auth-disabled and/or plaintext HTTP — DEV ONLY. xhub refuses to start without this flag if either auth or TLS is missing.")
+	cmd.Flags().BoolVar(&cleanPeerRarity, "clean-peer-rarity", false,
+		"compute /api/rare over only trusted (clean, established) peers")
 	return cmd
 }
 
-func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool) error {
+func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure, cleanPeerRarity bool) error {
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	log.Info("xhub starting", "version", version.Version,
 		"commit", version.Commit, "bind", bind, "data", dataDir)
@@ -144,14 +148,44 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool
 		log.Warn("auth DISABLED via --dev-insecure (no token-file)")
 	}
 
+	engine, err := xhubfleet.NewEngine(xhubfleet.EngineConfig{
+		Weights:      xhubfleet.DefaultWeights(),
+		Gates:        xhubfleet.DefaultCandidateGates(),
+		TrustPolicy:  xhubfleet.DefaultTrustPolicy(),
+		PublisherDir: filepath.Join(dataDir, "brp-feed"),
+	})
+	if err != nil {
+		return fmt.Errorf("fleet engine init: %w", err)
+	}
+	log.Info("fleet engine initialized", "publisher_dir", filepath.Join(dataDir, "brp-feed"))
+
+	// Reload persisted per-host trust state (missing file = first run).
+	if err := loadTrust(dataDir, engine.Trust()); err != nil {
+		return fmt.Errorf("load trust state: %w", err)
+	}
+	log.Info("trust state loaded", "hosts", len(engine.Trust().All()),
+		"file", filepath.Join(dataDir, trustFileName))
+
 	srv := baselinehub.NewServer(baselinehub.ServerConfig{
-		Store:     store,
-		AuthToken: token,
-		Logger:    log,
+		Store:           store,
+		AuthToken:       token,
+		Logger:          log,
+		CleanPeerRarity: cleanPeerRarity,
+		CanTeach:        engine.Trust().CanTeach,
+		OnUpload: func(u baselinehub.Upload) {
+			engine.Ingest(u, time.Now())
+			// Persist trust after each ingest. Upload volume is low, so
+			// on-each-ingest is simpler than a timer and loses nothing on
+			// crash. Best-effort: a save failure must not drop the upload.
+			if err := saveTrust(dataDir, engine.Trust()); err != nil {
+				log.Warn("hub: trust persist failed", "err", err)
+			}
+		},
 	})
 
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
+	engine.RegisterRoutes(mux)
 
 	httpsSrv := &http.Server{
 		Addr:              bind,
@@ -161,6 +195,23 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool
 
 	ctx, cancel := signal.NotifyContext(cmd_ctx_root(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// Periodic candidate rebuild + alert decay. 15 min is a balance
+	// between operator latency (seeing new candidates soon after fleet
+	// behavior shifts) and rebuild cost on a large fleet.
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				engine.RebuildCandidates()
+				engine.Trust().DecayAlerts()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -188,6 +239,9 @@ func runHub(bind, dataDir, tokenFile, certFile, keyFile string, devInsecure bool
 	stopCtx, stopCancel := contextWithTimeout(time.Minute)
 	defer stopCancel()
 	_ = httpsSrv.Shutdown(stopCtx)
+	if err := saveTrust(dataDir, engine.Trust()); err != nil {
+		log.Warn("hub: trust persist on shutdown failed", "err", err)
+	}
 	log.Info("xhub stopped")
 	_ = filepath.Join // keep filepath import live for future config-discovery code
 	return nil

@@ -2,6 +2,7 @@ package ebpf
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -341,6 +342,8 @@ func decodeNetBytesEvent(b []byte, ev *model.Event) {
 	sport := binary.LittleEndian.Uint16(b[22:24])
 	bytes := binary.LittleEndian.Uint32(b[24:28])
 	dir := b[28]
+	// b[29] = _pad[0]: EO.5c QUIC long-header confirmation (udp/443, gated).
+	quicConfirmed := len(b) > 29 && b[29] == 1
 
 	switch family {
 	case 2:
@@ -362,6 +365,9 @@ func decodeNetBytesEvent(b []byte, ev *model.Event) {
 	} else {
 		ev.Tags["dir"] = "in"
 	}
+	if quicConfirmed {
+		ev.Tags["quic_confirmed"] = "1"
+	}
 }
 
 // decodeSSLReadEvent parses an XH_EV_SSL_READ payload:
@@ -381,6 +387,20 @@ func decodeSSLReadEvent(b []byte, ev *model.Event) {
 	payload := b[4 : 4+bufLen]
 	ev.Tags["ssl_read"] = "true"
 	ev.Tags["ssl_read_len"] = fmt.Sprintf("%d", bufLen)
+	// Phase TLS-L2: expose the captured plaintext bytes for the
+	// opt-in tlsledger consumer. Base64 so the existing tag-as-string
+	// schema survives. Bounded by the kernel-side XH_SSL_BUF_MAX (256)
+	// so this never adds more than ~360 B per event. The L2 ledger
+	// is OFF by default and drops any binary not on its allow list —
+	// emitting the tag here is observation-only.
+	if bufLen > 0 {
+		ev.Tags["payload_b64"] = base64.StdEncoding.EncodeToString(payload)
+		// The eBPF SSL_read hook is read-only today; tag direction so
+		// future SSL_write capture lands on the same code path.
+		if _, ok := ev.Tags["direction"]; !ok {
+			ev.Tags["direction"] = "read"
+		}
+	}
 
 	// HTTP heuristic: first line is "METHOD path HTTP/x.x\r\n"
 	// where METHOD is one of GET/POST/PUT/DELETE/HEAD/OPTIONS/

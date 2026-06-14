@@ -107,4 +107,10 @@ dnsexfil:
   enabled: true
 baseline:
   enabled: true
-  retention_days: 30
+  retention_days: 30        # days of history the learner trains on (store-side)
+  keep_hours: 1             # flush a completed hour-window ~1h after it closes (smaller = scored sooner)
+  scoring:                  # turn the per-binary novelty scorer ON (off by default otherwise)
+    enabled: true
+    warmup_hours: 24        # a binary must be observed 24h before it can fire (FP control)
+    hysteresis_n: 2         # a novel feature must repeat in 2 consecutive windows before alerting (FP control)
+    min_feature_classes: 1  # 1 anomalous class (endpoint/child/file_write) is enough to emit

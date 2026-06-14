@@ -245,3 +245,18 @@ func TestAttachDNS(t *testing.T) {
 		t.Fatalf("dns overwritten: %q", c.DNSName)
 	}
 }
+
+func TestAttachALPN(t *testing.T) {
+	tab := New(0)
+	tup := mkTuple("10.0.0.5", 33333, "1.2.3.4", 443)
+	tab.OnConnect(ConnectEvent{PID: 1, Tuple: tup})
+	tab.AttachALPN(tup, "grpc")
+	if c, _ := tab.Lookup(tup); c.ALPN != "grpc" {
+		t.Fatalf("alpn = %q", c.ALPN)
+	}
+	// Second AttachALPN does not overwrite.
+	tab.AttachALPN(tup, "h2")
+	if c, _ := tab.Lookup(tup); c.ALPN != "grpc" {
+		t.Fatalf("alpn overwritten: %q", c.ALPN)
+	}
+}

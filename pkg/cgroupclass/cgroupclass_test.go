@@ -45,6 +45,18 @@ func TestClassifyPath(t *testing.T) {
 			wantCID:   "9f8e7d6c5b4a3210fedcba9876543210fedcba9876543210fedcba9876543210",
 		},
 		{
+			name:      "docker daemon service is NOT a container",
+			path:      "/system.slice/docker.service",
+			wantClass: ClassSystem,
+			wantUnit:  "docker.service",
+		},
+		{
+			name:      "containerd daemon service is NOT a container",
+			path:      "/system.slice/containerd.service",
+			wantClass: ClassSystem,
+			wantUnit:  "containerd.service",
+		},
+		{
 			name:      "kubepods cri-containerd",
 			path:      "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod1234.slice/cri-containerd-abc123.scope",
 			wantClass: ClassContainer,
@@ -158,6 +170,19 @@ func TestClassifyMissingProc(t *testing.T) {
 	info := c.Classify(99999)
 	if info.Class != ClassKernel {
 		t.Fatalf("missing proc class = %s, want kernel", info.Class)
+	}
+}
+
+func TestNewWithReaderContainer(t *testing.T) {
+	c := NewWithReader(8, func(path string) ([]byte, error) {
+		return []byte("0::/system.slice/docker-9f8e7d6c5b4a3210fedcba9876543210fedcba9876543210fedcba9876543210.scope\n"), nil
+	})
+	info := c.Classify(1234)
+	if info.Class.String() != "container" {
+		t.Fatalf("class = %s, want container", info.Class)
+	}
+	if info.ContainerID == "" {
+		t.Fatalf("container id empty, want non-empty")
 	}
 }
 

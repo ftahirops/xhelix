@@ -1,0 +1,79 @@
+# Credential-relay / lateral-movement correlator chains.
+#
+# Each rule is a CEL `select` sequence grouped by cgroup_id (stamped on
+# every ebpf.* event by pkg/pipeline before correlator.Ingest). A chain
+# fires only when ALL steps occur in the same cgroup within `window`, so
+# it is strictly higher-confidence — and lower false-positive — than any
+# single step alone (notably cred_proc_scrape, which is noisy by itself).
+#
+# Tags used are the live, pipeline-stamped shapes verified against
+# pkg/pipeline (cred_proc_scrape / secret_read / secret_taint at ~L1937;
+# net_connect+outbound from ebpf.net; cgroup_id at ~L1064). No invented
+# tags — an unverifiable correlation rule is worse than none.
+---
+id: cred_access_then_exfil
+desc: |
+  A process scraped credentials (process-memory scrape or a sensitive
+  secret read), then the same cgroup opened an outbound connection
+  within 10 minutes. The canonical credential-theft → relay/exfil
+  hand-off: steal the secret, then carry it off-host.
+severity: critical
+mitre: [T1003, T1041, T1071]
+window: 10m
+group_by: [cgroup_id]
+steps:
+  # Step 0 — credential access. cred_proc_scrape is the procscrape
+  # allowlist verdict; secret_read marks a read of a catalog secret
+  # path. Either is the theft signal. Suppress package-manager windows
+  # (build tooling legitimately touches keys/secrets during installs).
+  - select: |
+      (event.tags["cred_proc_scrape"] == "true" || event.tags["secret_read"] == "true") &&
+      event.tags["pkg_install_window"] != "true"
+    within: 10m
+  # Step 1 — outbound connect from the same cgroup. ebpf.net stamps
+  # `outbound=true` on the initiator side (audited live tag shape).
+  - select: |
+      event.sensor == "ebpf.net" &&
+      event.tags["kind"] == "net_connect" &&
+      event.tags["outbound"] == "true" &&
+      event.tags["pkg_install_window"] != "true"
+    within: 10m
+remediation: |
+  A lineage that just accessed credentials then reached the network.
+  Treat as active credential exfiltration / relay: freeze the lineage,
+  capture the destination + any payload, rotate the touched credentials,
+  and snapshot the host. Cross-check the destination against the egress
+  ledger — a NEW or rare destination raises confidence further.
+narrative: |
+  Step 0 was the credential access (process scrape or secret read).
+  Step 1 was the outbound connection carrying it off-host.
+---
+id: tainted_secret_egress
+desc: |
+  A lineage carrying a secret-taint label (it previously touched a
+  catalog secret, propagated by the taint tracker) initiated an
+  outbound connection. Data-leak hand-off where the theft and the
+  egress may be separated by intermediate steps the simple
+  cred-access chain would miss.
+severity: high
+mitre: [T1041, T1071]
+window: 15m
+group_by: [cgroup_id]
+steps:
+  - select: |
+      event.tags["secret_taint"] == "true" &&
+      event.tags["pkg_install_window"] != "true"
+    within: 15m
+  - select: |
+      event.sensor == "ebpf.net" &&
+      event.tags["kind"] == "net_connect" &&
+      event.tags["outbound"] == "true" &&
+      event.tags["pkg_install_window"] != "true"
+    within: 15m
+remediation: |
+  A secret-tainted lineage reached the network. Inspect what secret was
+  touched upstream (taint origin), the destination, and whether the
+  egress is to a declared/known endpoint. Rotate the implicated secret.
+narrative: |
+  Step 0: lineage carried a secret-taint label.
+  Step 1: it connected outbound — potential leak of the tainted secret.

@@ -30,4 +30,10 @@ type Health struct {
 	Reason    string
 	DropCount uint64
 	LastEvent time.Time
+
+	// Drop breakdown by cause (eBPF sensor; other sensors leave these 0).
+	// DropCount remains the combined total for backward compatibility.
+	DropRingbuf      uint64
+	DropConsumerFull uint64
+	DropDecode       uint64
 }

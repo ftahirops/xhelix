@@ -106,6 +106,142 @@ type Config struct {
 	// classifies every outbound connect and records per-lineage
 	// counters for the takeover scorer + operator CLI.
 	Egress EgressConfig `yaml:"egress"`
+
+	// FleetCohort identifies this host's peer group for fleet
+	// comparison in xhub rollups. All fields are optional — empty
+	// cohort means "uncategorized, compare against the global fleet."
+	FleetCohort FleetCohortConfig `yaml:"fleet_cohort"`
+
+	// EgressLedger is the per-host portmaster-style telemetry store.
+	EgressLedger EgressLedgerConfig `yaml:"egress_ledger"`
+
+	// TLSPlaintext controls the L2 plaintext capture ledger (Phase
+	// TLS-L2). Default DISABLED — operator must explicitly enable
+	// AND opt-in per binary. See pkg/tlsledger for redaction +
+	// audit-log details. Hot, in-memory only; no persistence.
+	TLSPlaintext TLSPlaintextConfig `yaml:"tls_plaintext"`
+
+	// SafetyNet — global never-block allow list + block-with-observe list.
+	// AlwaysAllow vetoes any block decision in netban / egressguard /
+	// containment. BlockObserve installs an nftables drop+log rule and
+	// surfaces every blocked attempt to the operator.
+	SafetyNet SafetyNetConfig `yaml:"safety_net"`
+
+	// Detection — verdict-engine alert gating. Default visibility.
+	Detection DetectionConfig `yaml:"detection"`
+}
+
+// DetectionConfig bundles the verdict-engine controls. AlertMode gates
+// which rule categories actually emit alerts at the alert bus:
+//
+//	visibility — only CategoryHardDeny and CategoryIncident emit alerts.
+//	             fact and weak_signal categories are recorded but never
+//	             paged. SAFE DEFAULT.
+//	detection  — every category emits (legacy behavior). Use for
+//	             trace-replay regression testing only.
+type DetectionConfig struct {
+	AlertMode      string `yaml:"alert_mode"`
+	FleetRarity    bool   `yaml:"fleet_rarity"`     // default false — fleet too small to matter by default
+	FleetMinCohort int    `yaml:"fleet_min_cohort"` // default 5
+
+	// OnlineReputation enables optional external IP-reputation lookups
+	// (VirusTotal / AbuseIPDB). DEFAULT OFF. When enabled, destination
+	// IPs are sent to a third-party service — this PUBLISHES egress
+	// metadata externally and is not appropriate for air-gapped hosts.
+	OnlineReputation OnlineReputationConfig `yaml:"online_reputation"`
+}
+
+// OnlineReputationConfig controls optional external IP-reputation lookups.
+// Enabled defaults to false: when false, NO external request is ever made.
+type OnlineReputationConfig struct {
+	Enabled   bool   `yaml:"enabled"`     // default false — no external calls
+	Provider  string `yaml:"provider"`    // "virustotal" | "abuseipdb"
+	APIKeyEnv string `yaml:"api_key_env"` // env var holding the API key
+}
+
+// normalize validates and defaults the detection config. Empty AlertMode
+// becomes "visibility"; unknown values are an error.
+func (d *DetectionConfig) normalize() error {
+	switch d.AlertMode {
+	case "", "visibility":
+		d.AlertMode = "visibility"
+	case "detection":
+		// allowed
+	default:
+		return fmt.Errorf("detection.alert_mode: unknown %q (want visibility|detection)", d.AlertMode)
+	}
+	if d.FleetMinCohort <= 0 {
+		d.FleetMinCohort = 5
+	}
+	if d.OnlineReputation.Enabled {
+		switch d.OnlineReputation.Provider {
+		case "virustotal", "abuseipdb":
+		default:
+			return fmt.Errorf("detection.online_reputation.provider: unknown %q (want virustotal|abuseipdb)", d.OnlineReputation.Provider)
+		}
+		if d.OnlineReputation.APIKeyEnv == "" {
+			return fmt.Errorf("detection.online_reputation.api_key_env must be set when online_reputation.enabled is true")
+		}
+	}
+	return nil
+}
+
+// SafetyNetConfig is the bootstrap content of the safety net at
+// daemon start. Modifiable at runtime via REST API / xhelixctl.
+type SafetyNetConfig struct {
+	Enabled        bool     `yaml:"enabled"`         // default true
+	AlwaysAllow    []string `yaml:"always_allow"`    // CIDRs that veto any block
+	BlockObserve   []string `yaml:"block_observe"`   // CIDRs to drop+log (v4 only)
+	AttemptHistory int      `yaml:"attempt_history"` // ring size; default 1000
+	// AutoAddSSHSource, if true, adds $SSH_CLIENT's IP to AlwaysAllow at
+	// startup. Defaults true for fail-safe — the operator's current
+	// management session must remain reachable even if a buggy auto-block
+	// fires against it.
+	AutoAddSSHSource bool `yaml:"auto_add_ssh_source"`
+}
+
+// EgressLedgerConfig controls the 3-tier egress telemetry ledger
+// (memory + badger + parquet). RetentionDays governs the cold tier.
+type EgressLedgerConfig struct {
+	Enabled       bool `yaml:"enabled"`
+	RetentionDays int  `yaml:"retention_days"`
+	// ExcludePrivate, if true, drops private/loopback/link-local
+	// destinations at write time. Saves ~30-50% on storage for
+	// operators who only care about external egress.
+	ExcludePrivate bool `yaml:"exclude_private"`
+	// RecentRingCap bounds the in-memory (PID → dest) side ring used
+	// by the country drilldown for historical PID recall. Default
+	// 65536 (~1-3 hours on a busy host). The ring is persisted to
+	// disk so it survives daemon restart.
+	RecentRingCap int `yaml:"recent_ring_cap"`
+}
+
+// TLSPlaintextConfig controls the TLS plaintext ledger. Default
+// DISABLED — operator must explicitly enable and opt-in binaries
+// via AllowedBinaries. Hot in-memory only.
+type TLSPlaintextConfig struct {
+	Enabled         bool     `yaml:"enabled"`
+	AllowedBinaries []string `yaml:"allowed_binaries"`
+	MaxBodyKB       int      `yaml:"max_body_kb"`
+	RingSize        int      `yaml:"ring_size"`
+}
+
+// FleetCohortConfig identifies this host's peer group for fleet
+// comparison. All fields optional — empty cohort means "uncategorized,
+// compare against the global fleet."
+//
+// TODO: detect OSFamily from /etc/os-release on first start if the
+// operator left it blank. Until then operators set tags manually.
+type FleetCohortConfig struct {
+	HostRole      string `yaml:"host_role,omitempty"`
+	AppRole       string `yaml:"app_role,omitempty"`
+	OSFamily      string `yaml:"os_family,omitempty"`
+	PackageOrigin string `yaml:"package_origin,omitempty"`
+	VersionFamily string `yaml:"version_family,omitempty"`
+	Environment   string `yaml:"environment,omitempty"`
+	ControlPanel  string `yaml:"control_panel,omitempty"`
+	NetworkZone   string `yaml:"network_zone,omitempty"`
+	Tenant        string `yaml:"tenant,omitempty"`
 }
 
 // IntegrityConfig controls the B1+B2+B3 binary integrity subsystem.
@@ -318,6 +454,10 @@ type ProcScrapeSensorConfig struct {
 type EBPFSensorConfig struct {
 	Enabled       bool `yaml:"enabled"`
 	RingbufSizeMB uint `yaml:"ringbuf_size_mb"`
+	// DeepCapture gates EO.5c deep L7 capture (QUIC long-header peek on
+	// udp/443, raw first-payload). DEFAULT false — new hot-path eBPF that
+	// must be soak-validated for verifier acceptance + overhead before use.
+	DeepCapture bool `yaml:"deep_capture"`
 }
 
 type FIMSensorConfig struct {
@@ -648,6 +788,9 @@ type SessionConfig struct {
 // UIConfig is the web dashboard's protection layer.
 type UIConfig struct {
 	Enabled          bool     `yaml:"enabled"`
+	// NoAuth disables bearer-token + CSRF checks. IP allowlist still
+	// applies. Use ONLY when the network/SSH layer is the boundary.
+	NoAuth           bool     `yaml:"no_auth"`
 	Bind             string   `yaml:"bind"` // 0.0.0.0:18443
 	TLSEnabled       bool     `yaml:"tls_enabled"`
 	TLSCert          string   `yaml:"tls_cert"`
@@ -661,6 +804,10 @@ type UIConfig struct {
 	AuditLog         string   `yaml:"audit_log"`
 	RateLimit        int      `yaml:"rate_limit_per_second"`
 	TrustForwarded   bool     `yaml:"trust_forwarded_for"`
+	// RoleTokens optionally maps a role name ("viewer"|"operator") to a
+	// token file, enabling RBAC-on-arm. The primary token_file is always
+	// admin. Omitted → single-token (admin-only) behavior, unchanged.
+	RoleTokens map[string]string `yaml:"role_tokens"`
 }
 
 // WebhookConfig is a single webhook endpoint for response.
@@ -803,6 +950,16 @@ type DNSExfilConfig struct {
 func Default() Config {
 	return Config{
 		Preset: "server",
+		EgressLedger: EgressLedgerConfig{
+			Enabled:       true,
+			RetentionDays: 14,
+		},
+		SafetyNet: SafetyNetConfig{
+			Enabled:          true,
+			AlwaysAllow:      []string{"127.0.0.1/32", "::1/128"},
+			AttemptHistory:   1000,
+			AutoAddSSHSource: true,
+		},
 		Logging: LoggingConfig{
 			Level:       "info",
 			Format:      "text",
@@ -852,6 +1009,7 @@ func Default() Config {
 				GlobalPerSecond:  500,
 			},
 		},
+		Detection: DetectionConfig{AlertMode: "visibility", FleetMinCohort: 5},
 	}
 }
 
@@ -874,6 +1032,9 @@ func Load(path string) (Config, error) {
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config: %w", err)
+	}
+	if err := cfg.Detection.normalize(); err != nil {
+		return cfg, fmt.Errorf("config: %w", err)
 	}
 	cfg = ApplyPreset(cfg)
 	return cfg, nil

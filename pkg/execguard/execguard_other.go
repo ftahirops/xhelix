@@ -25,12 +25,21 @@ type Rule struct {
 
 type EventCallback func(path string, pid int, decision Decision, reason string)
 
+// AllowOverride is the pre-deny hook; stub for non-Linux builds.
+type AllowOverride func(binaryPath string, pid int32) bool
+
+// PolicyHook is the compiled per-app exec-allowlist hook; stub for
+// non-Linux builds.
+type PolicyHook func(binaryPath string, pid int32) (deny bool, reason string)
+
 type Guard struct{}
 
 type Stats struct{ Seen, Denied, Errors uint64 }
 
-func New(_ EventCallback) *Guard               { return &Guard{} }
-func (g *Guard) SetRules(_ []Rule)             {}
+func New(_ EventCallback) *Guard                    { return &Guard{} }
+func (g *Guard) SetRules(_ []Rule)                  {}
+func (g *Guard) SetAllowOverride(_ AllowOverride)   {}
+func (g *Guard) SetPolicyHook(_ PolicyHook)         {}
 func (g *Guard) Start(_ context.Context, _ []string) error {
 	return errors.New("execguard: only supported on Linux")
 }

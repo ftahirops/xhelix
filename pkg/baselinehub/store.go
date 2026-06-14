@@ -94,10 +94,11 @@ func (s *Store) IngestUploadWithSize(u Upload, payloadBytes int) error {
 		// Tag every persisted window with the source host. The hub
 		// reads these back when computing rare-endpoint aggregates.
 		envelope := struct {
-			HostTag string             `json:"host_tag"`
-			RoleTag string             `json:"role_tag,omitempty"`
-			Window  *baseline.Window   `json:"window"`
-		}{u.HostTag, u.RoleTag, w}
+			HostTag string           `json:"host_tag"`
+			RoleTag string           `json:"role_tag,omitempty"`
+			Cohort  CohortTags       `json:"cohort,omitempty"`
+			Window  *baseline.Window `json:"window"`
+		}{u.HostTag, u.RoleTag, u.Cohort, w}
 		if err := enc.Encode(envelope); err != nil {
 			return err
 		}
@@ -154,6 +155,16 @@ func (s *Store) Close() error {
 //
 // O(hosts × windows) per call; cache at the caller for hot binaries.
 func (s *Store) ComputeRare(binary string, lookbackDays int, rarityCutoff float64) (*RareList, error) {
+	return s.ComputeRareFiltered(binary, lookbackDays, rarityCutoff, nil)
+}
+
+// ComputeRareFiltered is ComputeRare restricted to a set of trusted
+// hosts. If trusted != nil, every host_tag for which trusted(hostTag)
+// is false is dropped before totalHosts and endpoint host-counts are
+// computed — so a compromised peer no longer dilutes cohort rarity in
+// either the numerator (endpoint host-count) or the denominator (total
+// hosts). A nil predicate includes all hosts (identical to ComputeRare).
+func (s *Store) ComputeRareFiltered(binary string, lookbackDays int, rarityCutoff float64, trusted func(hostTag string) bool) (*RareList, error) {
 	if rarityCutoff <= 0 || rarityCutoff >= 1 {
 		rarityCutoff = 0.95 // default: endpoints seen on < 5% of hosts
 	}
@@ -193,6 +204,16 @@ func (s *Store) ComputeRare(binary string, lookbackDays int, rarityCutoff float6
 				s.mu.Unlock()
 			} else {
 				_ = s.scanFileFor(path, binary, perHostEndpoints)
+			}
+		}
+	}
+
+	// Prune untrusted hosts before counting, so they affect neither
+	// the rarity numerator nor the denominator.
+	if trusted != nil {
+		for hostTag := range perHostEndpoints {
+			if !trusted(hostTag) {
+				delete(perHostEndpoints, hostTag)
 			}
 		}
 	}

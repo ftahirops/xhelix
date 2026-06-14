@@ -15,6 +15,7 @@ import (
 
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/dpi"
+	"github.com/xhelix/xhelix/pkg/ja3"
 )
 
 func htons(h uint16) uint16 { return (h<<8)&0xff00 | h>>8 }
@@ -156,8 +157,26 @@ func processTCP(tcp []byte, srcIP, dstIP netip.Addr, maxParse int, tab *connstat
 	if maxParse > 0 && len(payload) > maxParse {
 		payload = payload[:maxParse]
 	}
-	sni, ok := dpi.ParseClientHelloSNI(payload)
-	if !ok {
+	// Parse the ClientHello once via ja3 to recover SNI and the
+	// client-offered ALPN list (EO.5b). ja3 is heavier than the
+	// SNI-only parser but operates on the same already-sliced bytes,
+	// so there are no per-packet allocations beyond this one parse.
+	var (
+		sni  string
+		alpn string
+	)
+	if fp, err := ja3.Parse(payload); err == nil {
+		sni = fp.SNI
+		alpn = alpnHint(fp.ALPN)
+	}
+	// Never regress SNI: if ja3 failed or yielded no SNI, fall back to
+	// the original SNI-only parser.
+	if sni == "" {
+		if s, ok := dpi.ParseClientHelloSNI(payload); ok {
+			sni = s
+		}
+	}
+	if sni == "" && alpn == "" {
 		return
 	}
 	if dstPort == 443 {
@@ -167,7 +186,31 @@ func processTCP(tcp []byte, srcIP, dstIP netip.Addr, maxParse int, tab *connstat
 			DstAddr: dstIP,
 			DstPort: dstPort,
 		}
-		tab.AttachSNI(tup, sni)
+		if sni != "" {
+			tab.AttachSNI(tup, sni)
+		}
+		if alpn != "" {
+			tab.AttachALPN(tup, alpn)
+		}
 	}
 	_ = srcIP // unused; kept for symmetry when we add reverse-direction parsing
+}
+
+// alpnHint reduces a client-offered ALPN list to a single coarse hint
+// token: "grpc" if grpc is offered, else "h2" if HTTP/2 is offered,
+// else "" (http/1.1 is too noisy to use as a label).
+func alpnHint(offered []string) string {
+	var hasH2 bool
+	for _, p := range offered {
+		switch p {
+		case "grpc":
+			return "grpc"
+		case "h2", "h2c":
+			hasH2 = true
+		}
+	}
+	if hasH2 {
+		return "h2"
+	}
+	return ""
 }

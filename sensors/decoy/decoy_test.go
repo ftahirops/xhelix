@@ -72,6 +72,66 @@ func TestFilesSensorRendersAndDetectsAccess(t *testing.T) {
 	}
 }
 
+// TestFilesSensorWatchesPreexistingHoneyFile: an operator pre-seeds the
+// honey file on a read-only-visible path (the only way decoys work under
+// the daemon's own ProtectSystem=strict hardening). Start must watch it
+// without overwriting. Found by live validation 2026-06-13.
+func TestFilesSensorWatchesPreexistingHoneyFile(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "credentials.bak")
+	const seeded = "OPERATOR_SEEDED=keepme\n"
+	if err := os.WriteFile(target, []byte(seeded), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewFilesSensor([]HoneyFile{{Path: target, Persona: "aws-creds"}}, "h")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := s.Start(ctx, make(chan model.Event, 4)); err != nil {
+		t.Fatalf("Start should watch a pre-existing honey file, got: %v", err)
+	}
+	defer s.Stop(context.Background())
+	if body, _ := os.ReadFile(target); string(body) != seeded {
+		t.Errorf("pre-existing honey file was overwritten: %q", body)
+	}
+}
+
+// TestFilesSensorBestEffortRender: a path that can't be rendered or
+// located must be skipped, not abort the whole sensor — unless EVERY
+// path is unwatchable, which is a real error. Uses an ENOTDIR path so it
+// fails even when tests run as root.
+func TestFilesSensorBestEffortRender(t *testing.T) {
+	tmp := t.TempDir()
+	good := filepath.Join(tmp, "good.bak")
+	notADir := filepath.Join(tmp, "iamafile")
+	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(notADir, "bad.bak") // mkdir under a file → ENOTDIR
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// mix: one good + one unwatchable → Start succeeds, good is rendered.
+	s := NewFilesSensor([]HoneyFile{
+		{Path: good, Persona: "aws-creds"},
+		{Path: bad, Persona: "aws-creds"},
+	}, "h")
+	if err := s.Start(ctx, make(chan model.Event, 4)); err != nil {
+		t.Fatalf("Start should be best-effort with one bad path, got: %v", err)
+	}
+	s.Stop(context.Background())
+	if _, err := os.Stat(good); err != nil {
+		t.Errorf("good honey file not rendered: %v", err)
+	}
+
+	// all-bad → Start errors (nothing watchable).
+	s2 := NewFilesSensor([]HoneyFile{{Path: bad, Persona: "aws-creds"}}, "h")
+	if err := s2.Start(ctx, make(chan model.Event, 4)); err == nil {
+		s2.Stop(context.Background())
+		t.Fatal("Start should error when no honey file is watchable")
+	}
+}
+
 func TestServicesSensorAcceptsConnect(t *testing.T) {
 	s := NewServicesSensor([]HoneyService{
 		{Persona: "redis", Bind: "127.0.0.1:0"},

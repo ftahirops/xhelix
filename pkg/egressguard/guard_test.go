@@ -303,6 +303,81 @@ func TestHostMatch_Exact(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────
+// PolicyCtx override (Week 4)
+// ─────────────────────────────────────────────────────────────────
+
+func TestDecide_PolicyCtx_EgressPolicyDeny(t *testing.T) {
+	g := mkGuard(t, nil, ModeShadow)
+	d, reason := g.Decide(Request{
+		AppRole:  "user-shell",
+		DestIP:   "10.0.0.5", // would normally allow as private
+		PolicyCtx: PolicyContext{
+			EgressPolicyAction: "deny",
+			PolicyMatchedBy:    "deny[0]: dns_name=evil.example.com",
+			PolicyID:           "/usr/bin/foo",
+		},
+	})
+	if d != EgressDeny {
+		t.Errorf("PolicyCtx deny: got %s, want deny (reason=%s)", d, reason)
+	}
+	if !strings.Contains(reason, "egresspolicy") {
+		t.Errorf("PolicyCtx deny: reason should mention egresspolicy, got %q", reason)
+	}
+}
+
+func TestDecide_PolicyCtx_EgressPolicyAllow_BeatsLegacyDeny(t *testing.T) {
+	// Protected role + raw IP would legacy-deny; PolicyCtx allow wins.
+	g := mkGuard(t, nil, ModeShadow)
+	d, _ := g.Decide(Request{
+		AppRole:  "nginx-reverse-proxy",
+		DestIP:   "203.0.113.5",
+		DestPort: 443,
+		PolicyCtx: PolicyContext{
+			EgressPolicyAction: "allow",
+			PolicyID:           "/usr/sbin/nginx",
+		},
+	})
+	if d != EgressAllow {
+		t.Errorf("PolicyCtx allow: got %s, want allow", d)
+	}
+}
+
+func TestDecide_PolicyCtx_TrustZoneDeny(t *testing.T) {
+	g := mkGuard(t, nil, ModeShadow)
+	d, _ := g.Decide(Request{
+		DestIP:    "203.0.113.5",
+		PolicyCtx: PolicyContext{TrustZoneAction: "deny", ZoneLabel: "isolated"},
+	})
+	if d != EgressDeny {
+		t.Errorf("PolicyCtx trustzone deny: got %s, want deny", d)
+	}
+}
+
+func TestDecide_PolicyCtx_TorRequireDenies(t *testing.T) {
+	g := mkGuard(t, nil, ModeShadow)
+	d, _ := g.Decide(Request{
+		DestIP:    "203.0.113.5",
+		PolicyCtx: PolicyContext{TrustZoneAction: "tor_require"},
+	})
+	if d != EgressDeny {
+		t.Errorf("PolicyCtx tor_require: got %s, want deny", d)
+	}
+}
+
+func TestDecide_PolicyCtx_Empty_FallsThroughToLegacy(t *testing.T) {
+	g := mkGuard(t, nil, ModeShadow)
+	// No PolicyCtx → legacy rules → protected role + raw IP → deny.
+	d, _ := g.Decide(Request{
+		AppRole:  "nginx-reverse-proxy",
+		DestIP:   "203.0.113.5",
+		DestPort: 443,
+	})
+	if d != EgressDeny {
+		t.Errorf("empty PolicyCtx with legacy deny condition: got %s, want deny", d)
+	}
+}
+
 func TestHostMatch_Wildcard(t *testing.T) {
 	if !hostMatch("*.example.com", "api.example.com") {
 		t.Error("wildcard should match")

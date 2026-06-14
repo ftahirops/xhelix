@@ -129,6 +129,22 @@ input[type=text]:focus,input[type=search]:focus,select:focus{
   width:8px;height:8px;border-radius:50%;background:var(--accent);
   box-shadow:0 0 0 3px var(--bg)}
 .empty{text-align:center;color:var(--mut);padding:40px 20px;font-style:italic}
+.chain-link{color:var(--accent);text-decoration:none;font-size:12px;white-space:nowrap}
+.chain-link:hover{text-decoration:underline}
+.chain-modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;
+  align-items:flex-start;justify-content:center}
+.chain-box{background:var(--card);border:1px solid var(--border);border-radius:8px;
+  margin-top:8vh;max-width:680px;width:90%;max-height:78vh;overflow:auto;
+  box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.chain-head{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600}
+.chain-x{background:none;border:none;color:var(--mut);font-size:20px;cursor:pointer;line-height:1}
+.chain-body{padding:16px}
+.chain-origin{font-size:13px;padding:8px 10px;background:var(--card2);
+  border:1px solid var(--accent);border-radius:6px;margin-bottom:10px}
+.chain-tree{font-size:13px;line-height:1.7}
+.chain-hop{padding:1px 0}
+.chain-target{color:var(--high,#fa0);font-weight:600}
 `
 
 // pageHeader/Footer wrap each page so we don't have name collisions
@@ -149,6 +165,7 @@ const pageHeader = `
     <a href="/ui/bans" class="{{if eq .Active "bans"}}active{{end}}">Bans</a>
     <a href="/ui/rules" class="{{if eq .Active "rules"}}active{{end}}">Rules</a>
     <a href="/ui/doctor" class="{{if eq .Active "doctor"}}active{{end}}">Doctor</a>
+    <a href="/apps" class="{{if eq .Active "apps"}}active{{end}}">Apps</a>
   </nav>
   <div class="right">
     <span class="live">live</span>
@@ -157,12 +174,18 @@ const pageHeader = `
 <main>{{end}}
 
 {{define "footer"}}</main>
+<div id="chainModal" class="chain-modal" style="display:none" onclick="if(event.target===this)closeChain()">
+  <div class="chain-box">
+    <div class="chain-head"><span>Causal Chain</span>
+      <button class="chain-x" onclick="closeChain()">×</button></div>
+    <div id="chainBody" class="chain-body"></div>
+  </div>
+</div>
 <script>
 // Live updates via SSE — degrades gracefully when JS is off.
 if (typeof EventSource !== "undefined") {
   const es = new EventSource("/ui/sse");
   es.addEventListener("alert", e => {
-    // Refresh stats on every alert; debounce to once per 2s.
     if (window.__xhelix_refresh) return;
     window.__xhelix_refresh = setTimeout(() => {
       window.__xhelix_refresh = null;
@@ -171,6 +194,37 @@ if (typeof EventSource !== "undefined") {
     }, 250);
   });
 }
+// View chain — trace an alert's PID back to its root cause (P6).
+function cesc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function closeChain(){var m=document.getElementById("chainModal");if(m)m.style.display="none";}
+async function viewChain(pid){
+  var m=document.getElementById("chainModal"), b=document.getElementById("chainBody");
+  if(!m||!b)return;
+  m.style.display="flex"; b.innerHTML='<span class="muted">tracing pid '+cesc(pid)+'…</span>';
+  try{
+    var r=await fetch("/api/causal?pid="+encodeURIComponent(pid));
+    if(!r.ok){b.innerHTML='<span class="muted">lookup failed ('+r.status+')</span>';return;}
+    var c=await r.json();
+    if(!c.found){b.innerHTML='<span class="muted">pid '+cesc(pid)+' is not in the live process graph (exited+evicted, or never graphed).</span>';return;}
+    var h="";
+    if(c.origin){var o=c.origin;
+      h+='<div class="chain-origin">▸ root: <strong>'+cesc(o.type)+'</strong>'+
+        (o.user?' · user '+cesc(o.user):'')+
+        (o.source_ip?' · from '+cesc(o.source_ip)+(o.source_port?':'+o.source_port:''):'')+
+        (o.started_at?' · '+new Date(o.started_at).toLocaleTimeString():'')+'</div>';
+    } else if(c.origin_ip){h+='<div class="chain-origin">▸ origin IP: '+cesc(c.origin_ip)+'</div>';}
+    h+='<div class="chain-tree">';
+    (c.processes||[]).forEach(function(p,i){
+      var indent="&nbsp;".repeat(i*2), arrow=i===0?"":"└─ ",
+          tgt=(i===c.processes.length-1)?" chain-target":"";
+      h+='<div class="chain-hop'+tgt+'">'+indent+arrow+'<span class="code">'+cesc(p.comm)+'</span>'+
+        ' <span class="muted">pid '+p.pid+(p.exited?" · exited":"")+(p.exe_path?" · "+cesc(p.exe_path):"")+'</span></div>';
+    });
+    h+='</div>';
+    b.innerHTML=h;
+  }catch(e){b.innerHTML='<span class="muted">error: '+cesc(e)+'</span>';}
+}
+document.addEventListener("keydown",function(e){if(e.key==="Escape")closeChain();});
 </script>
 </body></html>{{end}}
 `
@@ -193,7 +247,7 @@ const dashboardHTML = `
     <h2>Recent Alerts <span class="count">{{len .Alerts}}</span></h2>
     {{if .Alerts}}
     <table>
-      <thead><tr><th>When</th><th>Severity</th><th>Rule</th><th>Comm</th><th>Tags</th></tr></thead>
+      <thead><tr><th>When</th><th>Severity</th><th>Rule</th><th>Comm</th><th>Tags</th><th></th></tr></thead>
       <tbody>
       {{range .Alerts}}
       <tr>
@@ -202,6 +256,7 @@ const dashboardHTML = `
         <td><span class="code">{{.RuleID}}</span></td>
         <td>{{.Event.Comm}}</td>
         <td class="muted">{{truncate 60 .Reason}}</td>
+        <td>{{if .Event.PID}}<a href="#" class="chain-link" onclick="viewChain({{.Event.PID}});return false">⛓</a>{{end}}</td>
       </tr>
       {{end}}
       </tbody>
@@ -272,7 +327,7 @@ const alertsHTML = `
       <h2>Alerts <span class="count">{{len .Alerts}}</span></h2>
       {{if .Alerts}}
       <table>
-        <thead><tr><th>Time</th><th>Severity</th><th>Rule</th><th>Sensor</th><th>Comm</th><th>PID</th><th>Reason</th></tr></thead>
+        <thead><tr><th>Time</th><th>Severity</th><th>Rule</th><th>Sensor</th><th>Comm</th><th>PID</th><th>Reason</th><th></th></tr></thead>
         <tbody>
         {{range .Alerts}}
         <tr>
@@ -283,6 +338,7 @@ const alertsHTML = `
           <td>{{.Event.Comm}}</td>
           <td class="muted">{{.Event.PID}}</td>
           <td>{{truncate 80 .Reason}}</td>
+          <td>{{if .Event.PID}}<a href="#" class="chain-link" onclick="viewChain({{.Event.PID}});return false">⛓ chain</a>{{end}}</td>
         </tr>
         {{end}}
         </tbody>

@@ -39,6 +39,10 @@ packaging/deb/usr/local/bin/xhelix-verify
 !docs/XGENGUARDIAN_INTEGRATION_SPEC.md
 !docs/KILL_CHAIN_COVERAGE.md
 !docs/REAL_USE_CASES.md
+!docs/DESKTOP_EGRESS_ISOLATION_APP_STRATEGY.md
+!docs/NPM_SUPPLY_CHAIN_RAT_CONTAINMENT_STRATEGY.md
+!docs/BEHAVIORAL_COMPILER_BUILD_PLAN.md
+!docs/BEHAVIORAL_COMPILER_ARCHITECTURE.md
 
 # Local state for development
 /var/
@@ -54,3 +58,4 @@ Thumbs.db
 
 # Backups
 .git-old-history-backup/
+xhelix-replay

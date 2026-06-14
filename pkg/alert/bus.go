@@ -15,11 +15,14 @@ import (
 // and the drop counter is incremented. Sensors must never block on
 // alert delivery.
 type Bus struct {
-	sinks   []model.Sink
-	queue   chan model.Alert
-	dropped atomic.Uint64
-	wg      sync.WaitGroup
-	log     *slog.Logger
+	sinks      []model.Sink
+	queue      chan model.Alert
+	dropped    atomic.Uint64
+	suppressed atomic.Uint64
+	gate       func(model.Alert) bool
+	router     func(model.Alert) (emit bool, synth *model.Alert)
+	wg         sync.WaitGroup
+	log        *slog.Logger
 }
 
 // NewBus creates a bus with the given sinks and a queue capacity.
@@ -39,6 +42,19 @@ func NewBus(sinks []model.Sink, capacity int, log *slog.Logger) *Bus {
 	}
 }
 
+// SetGate installs an emission predicate. When set, Send drops any
+// alert for which gate returns false, incrementing the suppressed
+// counter instead of enqueuing. A nil gate (the default) emits
+// everything. Safe to call once during startup before Run.
+func (b *Bus) SetGate(gate func(model.Alert) bool) { b.gate = gate }
+
+// SetRouter installs a routing function richer than SetGate: it returns
+// whether to emit the original alert AND an optional synthesized alert
+// to ALSO enqueue (e.g. a verdict.incident produced by correlating
+// several signals). The synthesized alert is enqueued directly, NOT
+// re-routed (no recursion). A router takes precedence over a gate.
+func (b *Bus) SetRouter(r func(model.Alert) (bool, *model.Alert)) { b.router = r }
+
 // Send enqueues an alert. Returns true if accepted, false if dropped.
 //
 // CRITICAL: callers continue to mutate event.Tags after this returns
@@ -48,6 +64,27 @@ func NewBus(sinks []model.Sink, capacity int, log *slog.Logger) *Bus {
 // observed crashes "fatal error: concurrent map iteration and map
 // write" during attack-sim runs on prod (2026-05-23).
 func (b *Bus) Send(a model.Alert) bool {
+	if b.router != nil {
+		emit, synth := b.router(a)
+		if synth != nil {
+			b.enqueue(*synth) // direct; never re-routed
+		}
+		if !emit {
+			b.suppressed.Add(1)
+			return false
+		}
+		return b.enqueue(a)
+	}
+	if b.gate != nil && !b.gate(a) {
+		b.suppressed.Add(1)
+		return false
+	}
+	return b.enqueue(a)
+}
+
+// enqueue snapshots tags and does the non-blocking channel send. Returns
+// true if accepted, false if dropped (queue full).
+func (b *Bus) enqueue(a model.Alert) bool {
 	if a.Event.Tags != nil {
 		snap := make(map[string]string, len(a.Event.Tags))
 		for k, v := range a.Event.Tags {
@@ -66,6 +103,10 @@ func (b *Bus) Send(a model.Alert) bool {
 
 // Dropped returns the running count of dropped alerts.
 func (b *Bus) Dropped() uint64 { return b.dropped.Load() }
+
+// Suppressed returns the running count of alerts dropped by the gate
+// (distinct from Dropped, which counts queue-full drops).
+func (b *Bus) Suppressed() uint64 { return b.suppressed.Load() }
 
 // Run pumps the queue into every sink until ctx is cancelled.
 //

@@ -1,6 +1,7 @@
 # Process plane rules. See docs/RULES.md for grammar.
 ---
 id: web_server_spawns_shell
+category: incident
 desc: A web server worker spawned an interactive shell
 severity: high
 mitre: [T1059.004, T1190]
@@ -15,6 +16,7 @@ remediation: |
 test_id: K-01
 ---
 id: binary_runs_from_tmp
+category: incident
 desc: A binary in /tmp, /var/tmp, or /dev/shm was invoked
 severity: warn
 mitre: [T1059, T1204.002]
@@ -28,6 +30,7 @@ remediation: Capture and hash the binary; check it against threat-intel.
 test_id: K-03
 ---
 id: uid0_no_transition
+category: weak_signal
 desc: Process gained uid 0 without observed setuid transition
 severity: critical
 mitre: [T1068, T1548.001]
@@ -44,6 +47,7 @@ remediation: |
 test_id: K-02
 ---
 id: ptrace_sensitive_target
+category: weak_signal
 desc: ptrace attached to sshd, init, systemd, or the agent itself
 severity: critical
 mitre: [T1055.008, T1003]
@@ -56,6 +60,7 @@ remediation: Investigate immediately. Possible memory injection or credential du
 test_id: K-05
 ---
 id: memfd_run_pattern
+category: weak_signal
 desc: Process invoked from memfd (fileless)
 severity: high
 mitre: [T1055.009, T1620]
@@ -68,6 +73,7 @@ remediation: Fileless payload. Capture memory of the running pid.
 test_id: S-01
 ---
 id: shell_with_socket_fd
+category: incident
 desc: Shell started with stdin or stdout pointing at a TCP socket
 severity: critical
 mitre: [T1059, T1041]
@@ -81,6 +87,7 @@ remediation: Reverse shell pattern. Identify peer; isolate host; snapshot.
 test_id: S-01
 ---
 id: kernel_module_load
+category: hard_deny
 desc: A kernel module was loaded
 severity: warn
 mitre: [T1547.006]
@@ -91,6 +98,7 @@ tags: [persistence, defense_evasion]
 remediation: Module loads on stable systems are rare. Verify expected baseline.
 ---
 id: bpf_syscall_unexpected
+category: fact
 desc: A non-allowlisted process used the bpf syscall
 severity: high
 mitre: [T1562]
@@ -102,6 +110,7 @@ remediation: Possible attempt to detach or load BPF programs. Investigate.
 test_id: SD-02
 ---
 id: container_escape_mount
+category: incident
 desc: A container mounted the host filesystem
 severity: critical
 mitre: [T1611]
@@ -114,6 +123,7 @@ remediation: Container escape attempt. Stop the container; capture image.
 test_id: S-05
 ---
 id: download_then_run
+category: incident
 desc: A binary newly seen on disk was invoked from a download tool ancestor
 severity: high
 mitre: [T1105, T1059]
@@ -128,6 +138,7 @@ test_id: K-04
 ---
 # ─── P-AB.7 backbone-persistence pack ──────────────────────────
 id: ssh_tunnel_listener
+category: weak_signal
 desc: SSH invoked with port-forwarding flags (-R / -L / -D)
 severity: high
 mitre: [T1572, T1090.001]
@@ -148,6 +159,7 @@ remediation: |
 test_id: NET-02
 ---
 id: web_user_runs_db_client
+category: incident
 desc: A database client was invoked by a webserver / php-fpm worker
 severity: high
 mitre: [T1059, T1505]
@@ -165,6 +177,7 @@ remediation: |
 test_id: K-06
 ---
 id: env_secret_read_by_web
+category: incident
 desc: A web worker opened a known secret file (.env / wp-config.php / config.php)
 severity: warn
 mitre: [T1552.001]
@@ -187,6 +200,7 @@ test_id: K-07
 ---
 # ─── P-AB.11 memory-execution detection (Doc 2 gaps) ──────────
 id: deleted_binary_running
+category: incident
 desc: Process is executing from a binary the kernel reports as (deleted)
 severity: critical
 mitre: [T1070.004, T1620]
@@ -206,6 +220,7 @@ remediation: |
 test_id: PMEM-01
 ---
 id: thread_outside_module
+category: weak_signal
 desc: A thread is executing from anonymous (non-file-backed) memory
 severity: critical
 mitre: [T1055, T1620]

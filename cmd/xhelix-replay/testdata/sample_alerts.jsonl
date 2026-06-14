@@ -1,0 +1,10 @@
+{"event":{"id":"a1","time":"2026-05-27T20:23:00Z"},"rule_id":"cap.gained","class":3}
+{"event":{"id":"a2","time":"2026-05-27T20:24:00Z"},"rule_id":"tls_no_sni","class":3}
+{"event":{"id":"a3","time":"2026-05-27T20:25:00Z"},"rule_id":"memfd_run_pattern","class":2}
+{"event":{"id":"a4","time":"2026-05-27T20:26:00Z"},"rule_id":"shell_with_socket_fd","class":1}
+{"event":{"id":"a5","time":"2026-05-27T20:27:00Z"},"rule_id":"brp.hard_deny","class":1}
+{"event":{"id":"a6","time":"2026-05-27T20:28:00Z"},"rule_id":"rc_local_modified","class":1}
+{"event":{"id":"a7","time":"2026-05-27T20:29:00Z"},"rule_id":"messaging_platform_egress","class":3}
+{"event":{"id":"a8","time":"2026-05-27T20:30:00Z"},"rule_id":"cap.gained","class":3}
+{"event":{"id":"a9","time":"2026-05-27T20:31:00Z"},"rule_id":"tls_no_sni","class":3}
+{"event":{"id":"a10","time":"2026-05-27T20:32:00Z"},"rule_id":"fim.drift","class":3}

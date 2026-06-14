@@ -60,8 +60,11 @@ func (s *Sensor) Stop(ctx context.Context) error {
 // Health implements sensors.Sensor.
 func (s *Sensor) Health() sensors.Health {
 	return sensors.Health{
-		Healthy:   s.backend.Healthy(),
-		DropCount: s.backend.Drops(),
-		LastEvent: time.Unix(0, s.last.Load()),
+		Healthy:          s.backend.Healthy(),
+		DropCount:        s.backend.Drops(),
+		DropRingbuf:      s.backend.DropRingbuf(),
+		DropConsumerFull: s.backend.DropConsumerFull(),
+		DropDecode:       s.backend.DropDecode(),
+		LastEvent:        time.Unix(0, s.last.Load()),
 	}
 }

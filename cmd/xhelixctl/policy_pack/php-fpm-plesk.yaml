@@ -1,0 +1,39 @@
+# PHP-FPM under Plesk (or any LAMP-shaped stack).
+#
+# PHP workers legitimately talk to MySQL/Postgres/Redis on the
+# private network and to 3rd-party APIs on TLS:443. Raw IPs with no
+# SNI/DNS and cleartext HTTP/80 are likely beacons or scrapers.
+schema_version: 1
+binary: php-fpm
+mode: observe
+comment: "PHP-FPM — DB on private + APIs on TLS:443 with SNI"
+allow:
+  - dest_cidr: 127.0.0.0/8
+    comment: "loopback (MySQL/Redis local)"
+  - dest_cidr: 10.0.0.0/8
+    ports: [3306, 5432, 6379, 11211, 27017]
+    comment: "private DB tier"
+  - dest_cidr: 172.16.0.0/12
+    ports: [3306, 5432, 6379, 11211, 27017]
+    comment: "private DB tier"
+  - dest_cidr: 192.168.0.0/16
+    ports: [3306, 5432, 6379, 11211, 27017]
+    comment: "private DB tier"
+  - dest_class: cloudflare
+    ports: [443]
+    comment: "3rd-party API on Cloudflare"
+  - dest_class: akamai
+    ports: [443]
+    comment: "3rd-party API on Akamai"
+  - dest_class: fastly
+    ports: [443]
+    comment: "3rd-party API on Fastly"
+  - dest_class: cloud_provider
+    ports: [443]
+    comment: "SaaS API on a major cloud"
+  - ports: [53]
+    protocols: [udp]
+    comment: "DNS"
+deny:
+  - ports: [80]
+    comment: "no cleartext HTTP"

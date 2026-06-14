@@ -137,3 +137,63 @@ func TestEngineTagsAndTreeAccessible(t *testing.T) {
 		t.Errorf("fires = %d, want 1", got)
 	}
 }
+
+// TestKernelModuleAndModprobeRulesMatch guards the 2026-06-13 detection
+// fixes: kernel_module_dropped must match drift-scanner events (sensor
+// "fim.drift", not just "fim") via sensor.startsWith, and the new
+// modprobe_persistence rule must match a /etc/modprobe.d write. Tags are
+// the exact shapes observed live on the dev box. These rules are
+// category:incident, so live they feed the verdict scorer rather than
+// emitting a named alert — this test asserts the raw MATCH that the
+// scorer depends on.
+func TestKernelModuleAndModprobeRulesMatch(t *testing.T) {
+	cases := []struct {
+		name, match, sensor string
+		tags                map[string]string
+		want                bool
+	}{
+		{
+			name:   "kernel_module_dropped via drift scanner",
+			match:  `event.sensor.startsWith("fim") && (path.startsWith("/lib/modules/") || path.startsWith("/usr/lib/modules/")) && path.endsWith(".ko") && event.tags["create"] == "true" && (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")`,
+			sensor: "fim.drift",
+			tags:   map[string]string{"create": "true", "path": "/usr/lib/modules/evil.ko"},
+			want:   true,
+		},
+		{
+			name:   "kernel_module_dropped skips package-managed",
+			match:  `event.sensor.startsWith("fim") && (path.startsWith("/lib/modules/") || path.startsWith("/usr/lib/modules/")) && path.endsWith(".ko") && event.tags["create"] == "true" && (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")`,
+			sensor: "fim.drift",
+			tags:   map[string]string{"create": "true", "path": "/usr/lib/modules/legit.ko", "package_managed": "true"},
+			want:   false,
+		},
+		{
+			name:   "modprobe_persistence on modprobe.d write",
+			match:  `event.sensor.startsWith("fim") && (path.startsWith("/etc/modprobe.d/") || path.startsWith("/etc/modules-load.d/") || path == "/etc/modules") && (event.tags["create"] == "true" || event.tags["write"] == "true") && (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")`,
+			sensor: "fim",
+			tags:   map[string]string{"create": "true", "path": "/etc/modprobe.d/backdoor.conf"},
+			want:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var fires atomic.Uint64
+			eng, err := NewEngine(func(model.Alert) { fires.Add(1) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := model.Rule{ID: "t", SeverityRaw: "high", Match: tc.match}
+			if err := r.Normalize(); err != nil {
+				t.Fatalf("normalize: %v", err)
+			}
+			if err := eng.Load([]model.Rule{r}); err != nil {
+				t.Fatalf("compile: %v", err)
+			}
+			ev := model.NewEvent(tc.sensor, model.SeverityHigh)
+			ev.Tags = tc.tags
+			eng.Eval(context.Background(), ev)
+			if got := fires.Load() == 1; got != tc.want {
+				t.Errorf("fired=%v want=%v", got, tc.want)
+			}
+		})
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/xhelix/xhelix/pkg/autobaseline"
+	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/posture/host"
 	"github.com/xhelix/xhelix/pkg/posture/modsig"
 	"github.com/xhelix/xhelix/pkg/vendorcatalog"
@@ -155,6 +156,23 @@ func newBaselineCmd() *cobra.Command {
 			return baselineSeal()
 		},
 	})
+	cmd.AddCommand(newBaselineReviewCmd())
+	return cmd
+}
+
+func newBaselineReviewCmd() *cobra.Command {
+	var sock string
+	cmd := &cobra.Command{
+		Use:   "review",
+		Short: "Show all recorded (image, action, detail) rows with timestamps",
+		Long: `Queries the running daemon for all baseline observations recorded so far.
+Shows each (image, action, detail) row with hit count and first/last seen times.
+Use before sealing to verify no suspicious behaviors were recorded.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return baselineReview(sock)
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", defaultSock, "path to xhelix LocalAPI socket")
 	return cmd
 }
 
@@ -260,6 +278,39 @@ func baselineShow() error {
 	fmt.Fprintln(tw, "IMAGE\tACTION\tDETAIL\tHITS")
 	for _, r := range all {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", r.Image, r.Action, r.Detail, r.Hits)
+	}
+	return tw.Flush()
+}
+
+func baselineReview(sock string) error {
+	c, err := localapi.Dial(sock)
+	if err != nil {
+		return fmt.Errorf("dial daemon: %w", err)
+	}
+	defer c.Close()
+
+	var entries []autobaseline.ReviewEntry
+	if err := c.Call("baseline.review", nil, &entries); err != nil {
+		return fmt.Errorf("baseline.review: %w", err)
+	}
+	if len(entries) == 0 {
+		fmt.Println("No baseline entries recorded yet.")
+		return nil
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "IMAGE\tACTION\tDETAIL\tHITS\tFIRST_SEEN\tLAST_SEEN")
+	for _, e := range entries {
+		fs := "-"
+		ls := "-"
+		if !e.FirstSeen.IsZero() {
+			fs = e.FirstSeen.Local().Format(time.RFC3339)
+		}
+		if !e.LastSeen.IsZero() {
+			ls = e.LastSeen.Local().Format(time.RFC3339)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
+			e.Image, e.Action, e.Detail, e.Hits, fs, ls)
 	}
 	return tw.Flush()
 }

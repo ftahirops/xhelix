@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -58,19 +59,31 @@ func (s *FilesSensor) Start(parent context.Context, out chan<- model.Event) erro
 	defer s.mu.Unlock()
 	s.out = out
 
+	// Best-effort render: a path we can neither render nor find is
+	// unwatchable (commonly a read-only fs under the daemon's own
+	// hardening). Skip it with a warning rather than killing the whole
+	// sensor — other honey files may be perfectly watchable.
+	var watch []HoneyFile
 	for i := range s.files {
 		if s.files[i].Token == "" {
 			s.files[i].Token = randomToken()
 		}
 		if err := s.render(&s.files[i]); err != nil {
-			return fmt.Errorf("render %s: %w", s.files[i].Path, err)
+			slog.Warn("decoy: skipping unwatchable honey file",
+				"path", s.files[i].Path, "err", err,
+				"hint", "pre-create the file on a read-only-visible path; avoid /tmp (PrivateTmp)")
+			continue
 		}
+		watch = append(watch, s.files[i])
+	}
+	if len(watch) == 0 {
+		return fmt.Errorf("decoy: no honey files watchable (all %d failed to render or locate)", len(s.files))
 	}
 
 	ctx, cancel := context.WithCancel(parent)
 	s.cancel = cancel
 
-	w, err := newFileWatcher(s.files, s.onHit)
+	w, err := newFileWatcher(watch, s.onHit)
 	if err != nil {
 		return err
 	}
@@ -156,6 +169,20 @@ func (s *FilesSensor) render(f *HoneyFile) error {
 	}
 	if f.Path == "" {
 		f.Path = p.DefaultPath
+	}
+	// If the honey file already exists (operator pre-seeded it, or a
+	// prior run rendered it), watch it as-is — don't overwrite and
+	// don't require write access. The daemon's own hardening
+	// (ProtectSystem=strict / ProtectHome=read-only) makes most
+	// realistic honey-file paths read-only; an existing file can still
+	// be fanotify-marked and watched. Found by live validation
+	// 2026-06-13: render-then-fail aborted the whole sensor on every
+	// read-only path. Operators place honey files on a shared,
+	// read-only-visible path (e.g. /root/.aws/credentials.bak), NOT
+	// under /tmp — PrivateTmp gives the daemon a private /tmp, so a
+	// /tmp honey file is a different inode than the host's.
+	if _, err := os.Stat(f.Path); err == nil {
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(f.Path), 0o750); err != nil {
 		return err

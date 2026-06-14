@@ -32,6 +32,24 @@ func lookupSNIFromConnstate(tab *connstate.Table, pid uint32, dstIP string, dstP
 	return ""
 }
 
+// lookupALPNFromConnstate returns the client-offered ALPN hint recorded
+// for any active flow on (pid, dst_ip, dst_port). Empty string if not yet
+// known or if connstate / dpi isn't active. Mirrors lookupSNIFromConnstate.
+func lookupALPNFromConnstate(tab *connstate.Table, pid uint32, dstIP string, dstPort uint16) string {
+	if tab == nil || pid == 0 {
+		return ""
+	}
+	for _, c := range tab.SnapshotByPID(pid) {
+		if c.ALPN == "" {
+			continue
+		}
+		if c.Tuple.DstAddr.String() == dstIP && c.Tuple.DstPort == dstPort {
+			return c.ALPN
+		}
+	}
+	return ""
+}
+
 // splitCSV is a forgiving comma-and-space splitter used for the
 // dns_answers tag emitted by sensors/netids. Empty input returns nil.
 func splitCSV(s string) []string {
@@ -130,7 +148,7 @@ func feedConnstate(tab *connstate.Table, classifier *cgroupclass.Classifier, ev 
 		ce.Unit = info.Unit
 		ce.UserID = info.UserID
 	}
-	if sha := ev.Tags["image_sha256"]; sha != "" {
+	if sha := ev.Tags["exe_sha256"]; sha != "" {
 		ce.ExeSHA = sha
 	}
 	tab.OnConnect(ce)
@@ -161,6 +179,16 @@ func parseUint32(s string) uint32 {
 		return 0
 	}
 	var v uint32
+	_, _ = fmt.Sscanf(s, "%d", &v)
+	return v
+}
+
+// parseUint16 parses decimal; 0 on error. Used for dest_port tags.
+func parseUint16(s string) uint16 {
+	if s == "" {
+		return 0
+	}
+	var v uint16
 	_, _ = fmt.Sscanf(s, "%d", &v)
 	return v
 }

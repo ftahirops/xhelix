@@ -38,6 +38,17 @@ import (
 	"github.com/xhelix/xhelix/pkg/cdndetect"
 	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/longwindow"
+	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/contractarm"
+	"github.com/xhelix/xhelix/pkg/contractaudit"
+	"github.com/xhelix/xhelix/pkg/contractcompiler"
+	"github.com/xhelix/xhelix/pkg/contracthealth"
+	"github.com/xhelix/xhelix/pkg/contractpropose"
+	"github.com/xhelix/xhelix/pkg/contractsign"
+	"github.com/xhelix/xhelix/pkg/denyledger"
+	"github.com/xhelix/xhelix/pkg/maintenancechain"
+	"github.com/xhelix/xhelix/pkg/redzones"
+	"github.com/xhelix/xhelix/pkg/pkglifecycle"
 	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
@@ -131,8 +142,40 @@ type foundationContext struct {
 	IncidentStore *incidentgraph.Store
 	// SSHBrute is the per-source-IP SSH auth-failure counter (Phase J.1).
 	SSHBrute *sshbrute.Detector
+	// MaintenanceChains is the signed, time-boxed capability grant store
+	// (Phase 2 of the behavioral compiler). Execguard checks it before
+	// blocking any red-zone exec to allow declared maintenance windows.
+	MaintenanceChains *maintenancechain.Store
+	// AppRegistry stores declared app stacks and provides the cgroup→app
+	// mapping for per-app event attribution (P-UI).
+	AppRegistry *appregistry.Registry
+	// DenyLedger records exec-guard red-zone blocks bucketed by app for
+	// the per-app health view (P4). In-memory, bounded, non-persistent.
+	DenyLedger *denyledger.Ledger
+	// Compiler turns declared apps + red zones into compiled contracts
+	// and answers the execguard per-app exec-allowlist hook (P5a).
+	Compiler *contractcompiler.Manager
+	// Armorer installs/removes systemd unit drop-ins to arm a compiled
+	// contract's staged seccomp/AppArmor profiles (P5a.2). Non-disruptive
+	// arm (write + daemon-reload); restart is a separate explicit action.
+	Armorer *contractarm.Armorer
+	// Breaker is the deny-storm circuit breaker (alert-only). Latches a
+	// per-app alert when policy denies spike; never auto-disables
+	// enforcement (deny volume is attacker-controllable).
+	Breaker *contracthealth.Breaker
+	// ContractAudit is the hash-chained, append-only audit trail for
+	// control actions (arm/disarm/restart/mode/delete) with RBAC actor.
+	ContractAudit *contractaudit.Store
+	// ContractSign stores trusted Ed25519 signatures over compiled-contract
+	// versions (P7). Sealed-mode arming requires a valid signature for the
+	// current ArtifactSHA, so unsigned drift is blocked.
+	ContractSign *contractsign.Store
+	// ContractPropose stores CI deploy proposals awaiting operator approval (P7).
+	ContractPropose *contractpropose.Store
 	// PkgMgr tracks package-manager transaction windows (Phase K.2).
 	PkgMgr *pkgmgr.Store
+	// PkgLifecycle detects npm/yarn/pnpm lifecycle-script lineages.
+	PkgLifecycle *pkglifecycle.Tagger
 	// LongWindow is the disk-backed long-horizon event journal (Phase H.2).
 	LongWindow *longwindow.Store
 	// CDNDNS is the Phase H.4 per-process recent-DNS cache used by
@@ -158,7 +201,13 @@ type foundationContext struct {
 // The EAC begins admitting events immediately but its Out() channel
 // is consumed by the dispatch wiring elsewhere — this constructor
 // is responsible only for liveness, not routing.
-func newFoundationContext(parent context.Context) (*foundationContext, error) {
+func newFoundationContext(parent context.Context, stateDir string) (*foundationContext, error) {
+	// stateDir roots every persistent store. Defaulting keeps existing
+	// single-instance behavior; an override (cfg.Agent.StateDir) lets a
+	// sandbox/validation instance run fully isolated from production.
+	if stateDir == "" {
+		stateDir = "/var/lib/xhelix"
+	}
 	selfPID := uint32(os.Getpid())
 	self, err := canonical.ReadProcKey(selfPID)
 	if err != nil {
@@ -233,7 +282,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 
 	// Data Passport store. Key lives separately from the chain
 	// signing key — different responsibilities.
-	passportKeyPath := "/var/lib/xhelix/passport.key"
+	passportKeyPath := filepath.Join(stateDir, "passport.key")
 	if priv, err := loadOrGenerateEd25519Key(passportKeyPath); err == nil {
 		fc.Passports = passport.NewStore(priv)
 		fc.Egress.AttachPassportSource(fc.Passports)
@@ -265,7 +314,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// endpoints — replay-resistance. Distinct key from reqcontract
 	// because the trust scope is different (nonces only authorise
 	// one redemption; contracts identify a request).
-	nonceKeyPath := "/var/lib/xhelix/nonce.key"
+	nonceKeyPath := filepath.Join(stateDir, "nonce.key")
 	if nk, err := loadOrGenerateRCKey(nonceKeyPath); err == nil {
 		if ns, err := nonce.NewStore(nk, 0); err == nil {
 			fc.Nonces = ns
@@ -276,7 +325,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Request Contract store (P-RC.1). Per-HTTP-request capability
 	// tokens, HMAC-signed, 30s default TTL. Substrate for the
 	// behavioral defenses in BEHAVIORAL_DEFENSE.md.
-	rcKeyPath := "/var/lib/xhelix/reqcontract.key"
+	rcKeyPath := filepath.Join(stateDir, "reqcontract.key")
 	if rcKey, err := loadOrGenerateRCKey(rcKeyPath); err == nil {
 		if rcStore, err := reqcontract.NewStore(rcKey, 0); err == nil {
 			fc.ReqContract = rcStore
@@ -287,7 +336,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Cold store (P2.3). Durable per-day-partitioned event store.
 	// Best-effort: failure to open isn't fatal — the daemon still
 	// runs without cold persistence. Path lives under StateDir.
-	coldPath := "/var/lib/xhelix/cold.db"
+	coldPath := filepath.Join(stateDir, "cold.db")
 	if cs, err := coldstore.New(coldstore.Options{
 		Path:          coldPath,
 		RetentionDays: 3, // 3-day local retention; off-host mirror
@@ -327,7 +376,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// Open the persistent SourceAnchor store. Missing parent dir or
 	// write failure is non-fatal — Minter is nil-safe and the daemon
 	// keeps running with in-memory-only Origins. T01 / Phase A1.
-	if st, err := source.Open("/var/lib/xhelix/source.db"); err == nil {
+	if st, err := source.Open(filepath.Join(stateDir, "source.db")); err == nil {
 		fc.SourceStore = st
 		hostname, _ := os.Hostname()
 		fc.SourceMinter = source.NewMinter(st, fc.Minter, fc.Origins, hostname)
@@ -409,7 +458,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// continues with an in-memory-only engine.
 	{
 		base := incidentgraph.NewEngine(30 * time.Minute)
-		store, err := incidentgraph.OpenStore("/var/lib/xhelix/incidents.db")
+		store, err := incidentgraph.OpenStore(filepath.Join(stateDir, "incidents.db"))
 		if err != nil {
 			slog.Warn("incidentgraph store unavailable; running in-memory only", "err", err)
 			fc.IncidentGraph = base
@@ -436,6 +485,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// dropped_binary_lifecycle on legitimate apt-get install flows.
 	{
 		fc.PkgMgr = pkgmgr.New(slog.Default())
+		fc.PkgLifecycle = pkglifecycle.New(slog.Default())
 		slog.Info("pkgmgr ready", "tailers", "apt+dpkg+dnf+snap")
 		go fc.sweepPkgMgr(parent)
 		go func() {
@@ -482,7 +532,7 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 	// per-net_connect (image, "egress_ip", dst_ip); a poller fires
 	// when a configured threshold is met over a long window.
 	{
-		path := "/var/lib/xhelix/longwindow.db"
+		path := filepath.Join(stateDir, "longwindow.db")
 		st, err := longwindow.OpenStore(path)
 		if err != nil {
 			slog.Warn("longwindow: open failed; continuing without long-window correlation",
@@ -508,7 +558,145 @@ func newFoundationContext(parent context.Context) (*foundationContext, error) {
 		go fc.sweepSSHBrute(parent)
 	}
 
+	// Maintenance chains (Phase 2 — behavioral compiler). Trust root is
+	// the same key directory as BRP so operators use one key set. An
+	// empty trust map is valid — the store opens but grants require a
+	// registered key to validate, so AddSigned from untrusted signers
+	// is rejected. Missing directory → empty trust → observe-only mode.
+	{
+		trust := loadBRPTrustRoot("/etc/xhelix/brp/trusted-keys.d")
+		dbPath := filepath.Join(stateDir, "maintenance.db")
+		if mc, err := maintenancechain.Open(dbPath, trust); err != nil {
+			slog.Warn("maintenancechain: store unavailable; red-zone bypasses disabled",
+				"path", dbPath, "err", err)
+		} else {
+			fc.MaintenanceChains = mc
+			slog.Info("maintenancechain ready",
+				"path", dbPath, "trust_signers", len(trust))
+			go fc.sweepMaintenanceChains(parent)
+		}
+	}
+
+	// App Registry (P-UI). Best-effort: failure to open is logged but
+	// never blocks daemon startup. The registry is empty until an
+	// operator declares apps via the UI or API.
+	{
+		path := filepath.Join(stateDir, "apps.db")
+		if ar, err := appregistry.Open(path); err != nil {
+			slog.Warn("appregistry: store unavailable; per-app attribution disabled",
+				"path", path, "err", err)
+		} else {
+			fc.AppRegistry = ar
+			slog.Info("appregistry ready", "path", path)
+		}
+	}
+
+	// Deny ledger (P4). In-memory, no persistence — bounded ring per app.
+	// Fed from the execguard deny callback in run.go.
+	fc.DenyLedger = denyledger.New()
+	slog.Info("denyledger ready", "scope", "in-memory per-app")
+
+	// Contract compiler (P5a). Compiles declared apps + the red-zone floor
+	// into per-app contracts; answers the execguard exec-allowlist hook.
+	// Staged seccomp/AppArmor artifacts (not armed) land under the dir.
+	fc.Compiler = contractcompiler.NewManager(
+		redzones.Default(), filepath.Join(stateDir, "compiled"), slog.Default())
+	if fc.AppRegistry != nil {
+		if apps, err := fc.AppRegistry.List(); err == nil {
+			fc.Compiler.RecompileAll(apps)
+			slog.Info("contractcompiler ready", "apps_compiled", len(apps))
+		}
+	}
+
+	// Armorer (P5a.2). Arms staged profiles via systemd unit drop-ins.
+	fc.Armorer = contractarm.New()
+	slog.Info("contractarm ready",
+		"systemd_dir", fc.Armorer.SystemdDir, "apparmor", fc.Armorer.Apparmor)
+
+	// Deny-storm circuit breaker (safety layer). Alert-only — onTrip is
+	// attached to the alert bus in run.go. 60s window, 25 denies.
+	fc.Breaker = contracthealth.NewBreaker(time.Minute, 25, nil)
+	go fc.sweepBreaker(parent)
+	slog.Info("contracthealth breaker ready",
+		"window", fc.Breaker.Window().String(), "threshold", fc.Breaker.Threshold())
+
+	// Control-action audit trail (hash-chained). Best-effort: failure to
+	// open is logged but never blocks startup.
+	{
+		path := filepath.Join(stateDir, "contract-audit.db")
+		if as, err := contractaudit.Open(path); err != nil {
+			slog.Warn("contractaudit: store unavailable; control actions unaudited",
+				"path", path, "err", err)
+		} else {
+			fc.ContractAudit = as
+			slog.Info("contractaudit ready", "path", path)
+		}
+	}
+
+	// Contract signature store (P7). Trust root is the BRP key directory
+	// (CI signs with a key whose public half lives there). Best-effort.
+	{
+		trust := loadBRPTrustRoot("/etc/xhelix/brp/trusted-keys.d")
+		path := filepath.Join(stateDir, "contract-sign.db")
+		if ss, err := contractsign.Open(path, trust); err != nil {
+			slog.Warn("contractsign: store unavailable; sealed-mode signing disabled",
+				"path", path, "err", err)
+		} else {
+			fc.ContractSign = ss
+			slog.Info("contractsign ready", "path", path, "trust_signers", len(trust))
+		}
+	}
+
+	// Deploy-proposal store (P7 CI webhook). Best-effort.
+	{
+		path := filepath.Join(stateDir, "contract-propose.db")
+		if ps, err := contractpropose.Open(path); err != nil {
+			slog.Warn("contractpropose: store unavailable; CI propose disabled",
+				"path", path, "err", err)
+		} else {
+			fc.ContractPropose = ps
+			slog.Info("contractpropose ready", "path", path)
+		}
+	}
+
 	return fc, nil
+}
+
+// sweepBreaker prunes the breaker's rolling deny windows once a minute.
+func (fc *foundationContext) sweepBreaker(ctx context.Context) {
+	if fc.Breaker == nil {
+		return
+	}
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			fc.Breaker.Sweep(now)
+		}
+	}
+}
+
+// sweepMaintenanceChains removes expired grants from the in-memory cache
+// once per minute. Expired rows remain in SQLite for the audit trail.
+func (fc *foundationContext) sweepMaintenanceChains(ctx context.Context) {
+	if fc.MaintenanceChains == nil {
+		return
+	}
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if n := fc.MaintenanceChains.Sweep(now); n > 0 {
+				slog.Info("maintenancechain: swept expired grants", "count", n)
+			}
+		}
+	}
 }
 
 // sweepPkgMgr runs the package-manager window cleanup once per minute.
@@ -793,6 +981,21 @@ func (fc *foundationContext) Stop() {
 	}
 	if fc.SourceStore != nil {
 		_ = fc.SourceStore.Close()
+	}
+	if fc.MaintenanceChains != nil {
+		_ = fc.MaintenanceChains.Close()
+	}
+	if fc.AppRegistry != nil {
+		_ = fc.AppRegistry.Close()
+	}
+	if fc.ContractAudit != nil {
+		_ = fc.ContractAudit.Close()
+	}
+	if fc.ContractSign != nil {
+		_ = fc.ContractSign.Close()
+	}
+	if fc.ContractPropose != nil {
+		_ = fc.ContractPropose.Close()
 	}
 }
 

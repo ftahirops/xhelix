@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>xhelix — network monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/egress/v2/v2.css" />
+</head>
+<body class="v2-body">
+<div class="v2-shell">
+
+  <!-- ╭─ Far-left rail (SPN + apps list) ─╮ -->
+  <aside class="v2-rail">
+    <div class="v2-spn-card">
+      <div class="v2-spn-head">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 5v6c0 5 3.5 9.5 8 11 4.5-1.5 8-6 8-11V5l-8-3z"/></svg>
+        <div>
+          <div class="v2-spn-label">SPN</div>
+          <div class="v2-spn-status">Active</div>
+        </div>
+      </div>
+      <canvas id="v2-spn-spark" width="180" height="42"></canvas>
+    </div>
+
+    <div class="v2-rail-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="v2-search" placeholder="Search apps…" />
+    </div>
+
+    <div class="v2-rail-section">Applications</div>
+    <div id="v2-applist" class="v2-applist"><div class="v2-loading">loading…</div></div>
+
+    <div class="v2-rail-foot">
+      <a href="/egress" class="v2-back-link" title="Classic /egress view">← Classic view</a>
+    </div>
+  </aside>
+
+  <!-- ╭─ Center pane (app detail) ─╮ -->
+  <main class="v2-center">
+    <header class="v2-c-head">
+      <div class="v2-crumbs"><span class="v2-c-section">Apps</span><span class="v2-c-sep">›</span><span id="v2-c-current" class="v2-c-current">—</span></div>
+      <div class="v2-c-actions">
+        <div class="v2-pulse"></div><span class="v2-pulse-label">live</span>
+      </div>
+    </header>
+    <div id="v2-center-body" class="v2-c-body">
+      <div class="v2-empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+        <h2>Select an application</h2>
+        <p>Pick any application from the left rail to inspect its network activity, connection history, and per-flow details.</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- ╭─ Right pane (connection detail) ─╮ -->
+  <aside id="v2-right" class="v2-right hidden">
+    <div class="v2-r-head">
+      <div id="v2-r-title">Connection</div>
+      <button id="v2-r-close" class="v2-r-close" aria-label="close">✕</button>
+    </div>
+    <div id="v2-r-body" class="v2-r-body"></div>
+  </aside>
+
+</div>
+<script src="/static/egress/v2/v2.js"></script>
+</body>
+</html>

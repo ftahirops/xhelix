@@ -18,7 +18,7 @@
 //   - Requires CAP_SYS_ADMIN (root).
 //   - Requires CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y (set on every
 //     mainstream distro since 2020).
-//   - Marks the entire mount with FAN_MARK_MOUNT, so deny rules apply
+//   - Marks the whole filesystem (FAN_MARK_FILESYSTEM) so deny rules apply
 //     to every exec on that mount.
 //   - Must write a response within the kernel's timeout (default 30s)
 //     or the kernel auto-allows. We write within ~milliseconds.
@@ -93,11 +93,27 @@ type IntegrityVerifier interface {
 	Verify(path string, pid uint32) (allow bool, reason string)
 }
 
+// AllowOverride is consulted when a rule-based Deny is about to be sent
+// to the kernel. If it returns true the decision is flipped to Allow
+// (e.g., a maintenance chain grant covers this PID + binary). The
+// callback must be fast — it is called synchronously on the fanotify
+// loop goroutine before respond() is called.
+type AllowOverride func(binaryPath string, pid int32) bool
+
+// PolicyHook is the compiled per-app exec-allowlist hook (P5a). It is
+// consulted only when rule evaluation produced Allow, and may TIGHTEN
+// that to Deny when a locked/sealed app forbids this exec inside its
+// cgroup. It never loosens a Deny — the red-zone floor always governs.
+// Returns (true, reason) to deny; (false, "") to leave the decision.
+type PolicyHook func(binaryPath string, pid int32) (deny bool, reason string)
+
 // Guard is the public API.
 type Guard struct {
 	mu      sync.RWMutex
 	rules   []Rule
 	cb      EventCallback
+	override AllowOverride
+	policyHook PolicyHook
 
 	verifier IntegrityVerifier
 	intMode  IntegrityMode
@@ -117,6 +133,25 @@ type Guard struct {
 // New returns an unstarted guard. Call SetRules then Start.
 func New(cb EventCallback) *Guard {
 	return &Guard{cb: cb, fd: -1}
+}
+
+// SetAllowOverride registers a callback that is consulted before a
+// rule-based Deny is sent to the kernel. If the callback returns true
+// the exec is allowed (e.g., a maintenance chain grant is active for
+// this PID + binary). Pass nil to clear. Safe to call after Start.
+func (g *Guard) SetAllowOverride(fn AllowOverride) {
+	g.mu.Lock()
+	g.override = fn
+	g.mu.Unlock()
+}
+
+// SetPolicyHook registers the compiled per-app exec-allowlist hook
+// (P5a). Consulted after rule evaluation when the decision is Allow;
+// may tighten to Deny. Pass nil to clear. Safe to call after Start.
+func (g *Guard) SetPolicyHook(fn PolicyHook) {
+	g.mu.Lock()
+	g.policyHook = fn
+	g.mu.Unlock()
 }
 
 // SetIntegrity wires a baseline verifier into the guard. Pass mode =
@@ -160,15 +195,25 @@ func (g *Guard) Start(parent context.Context, mountPoints []string) error {
 
 	mask := uint64(unix.FAN_OPEN_EXEC_PERM)
 	for _, mp := range mountPoints {
-		if err := unix.FanotifyMark(fd,
-			unix.FAN_MARK_ADD|unix.FAN_MARK_MOUNT,
-			mask,
-			unix.AT_FDCWD,
-			mp); err != nil {
-			_ = unix.Close(fd)
-			g.fd = -1
-			g.running.Store(false)
-			return fmt.Errorf("fanotify_mark %s: %w", mp, err)
+		// FAN_MARK_FILESYSTEM marks the whole superblock, so exec events
+		// are caught even when this daemon runs in a PRIVATE MOUNT
+		// NAMESPACE (systemd ProtectSystem=strict / ProtectHome /
+		// PrivateTmp all create one). FAN_MARK_MOUNT would mark only the
+		// daemon's own mount object — a distinct instance from where host
+		// execs occur — so it silently catches nothing. This was found by
+		// live validation: with FAN_MARK_MOUNT even an explicit deny rule
+		// never fired. Fall back to per-mount on kernels < 4.20 that lack
+		// FAN_MARK_FILESYSTEM.
+		err := unix.FanotifyMark(fd,
+			unix.FAN_MARK_ADD|unix.FAN_MARK_FILESYSTEM, mask, unix.AT_FDCWD, mp)
+		if err != nil {
+			if err2 := unix.FanotifyMark(fd,
+				unix.FAN_MARK_ADD|unix.FAN_MARK_MOUNT, mask, unix.AT_FDCWD, mp); err2 != nil {
+				_ = unix.Close(fd)
+				g.fd = -1
+				g.running.Store(false)
+				return fmt.Errorf("fanotify_mark %s: filesystem=%v / mount=%v", mp, err, err2)
+			}
 		}
 	}
 
@@ -302,6 +347,33 @@ func (g *Guard) handle(buf []byte) {
 						decision = Deny
 					}
 				}
+			}
+		}
+		// Compiled per-app policy hook (P5a): may TIGHTEN an Allow to
+		// Deny when a locked/sealed app forbids this exec in its cgroup.
+		// Consulted only on Allow — red-zone Denies short-circuit and
+		// the floor is never weakened here.
+		if decision == Allow {
+			g.mu.RLock()
+			ph := g.policyHook
+			g.mu.RUnlock()
+			if ph != nil {
+				if deny, preason := ph(path, pid); deny {
+					decision = Deny
+					reason = preason
+				}
+			}
+		}
+		// Maintenance chain override: a signed grant may temporarily
+		// allow a red-zone binary OR a compiled-policy deny. Checked only
+		// when the decision is Deny, so non-denied execs are never slower.
+		if decision == Deny {
+			g.mu.RLock()
+			ov := g.override
+			g.mu.RUnlock()
+			if ov != nil && ov(path, pid) {
+				decision = Allow
+				reason = "maintenance-chain-grant"
 			}
 		}
 		if mask&unix.FAN_OPEN_EXEC_PERM != 0 {

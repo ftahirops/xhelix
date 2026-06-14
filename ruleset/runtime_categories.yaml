@@ -1,0 +1,61 @@
+# Runtime-emitted rule categories.
+#
+# These rule_ids are produced directly by Go code (pkg/pipeline/pipeline.go
+# and friends), NOT by YAML rules in ruleset/core/. They have no `category:`
+# field of their own, so their classification lives here. The alert-bus gate
+# (pkg/alert) and the xhelix-replay tool merge this map with the YAML-rule
+# categories into one rule_id -> Category resolver.
+#
+# Categories: fact | weak_signal | incident | hard_deny
+# See docs/RULE_CATEGORIES.md for the rubric and justifications.
+
+categories:
+  # --- facts (structural; never alert; biggest noise sources) ---
+  cap.gained: fact
+  ungated: fact
+
+  # --- weak signals (scored, never alert standalone) ---
+  lolbin.suspicious: weak_signal
+  process_spawn_burst: weak_signal
+  contescape.detected: weak_signal
+  shm.exec: weak_signal
+  memfd_run_pattern: weak_signal
+  ptrace.suspicious: weak_signal
+  phishing.brand_lookalike: weak_signal
+  beacon.detected: weak_signal
+  beacon.periodic_callback: weak_signal
+  netids.dga: weak_signal
+  ml.anomaly: weak_signal
+  ssh_bruteforce: weak_signal
+  baseline.behavioural_deviation: weak_signal
+  baseline.rate_spike: weak_signal
+
+  # --- incidents (alert when chain-confirmed) ---
+  webdrop.php_drop: incident
+  revshell.detected: incident
+  shell_with_socket_fd: incident
+  webshell.argv: incident
+  metadata.access_by_unexpected: incident
+  intel.bad_ip: incident
+  dnsexfil.tunnel_pattern: incident
+  yara.match: incident
+  takeover.composite: incident
+  containment.endpoint_breach: incident
+  baseline.poison_attempt: incident
+  brp.verify_protected_path: incident
+
+  # --- hard denies (always alert; explicit policy / canary) ---
+  # verdict.incident is the synthesized alert the lineage verdict engine
+  # emits when a process lineage crosses the score threshold. It bypasses
+  # the bus router (enqueued directly), but is classified hard_deny so the
+  # replay tool and any future consumer treat it as always-emit.
+  verdict.incident: hard_deny
+  brp.hard_deny: hard_deny
+  egressguard.deny: hard_deny
+  policy.global.deny: hard_deny
+  policy.app.deny: hard_deny
+  policy.app.allow-only-domains: hard_deny
+  policy.app.asn-restricted: hard_deny
+  policy.app.country-restricted: hard_deny
+  dropped_binary_lifecycle: incident
+  h2.slow_egress_fanout_24h: weak_signal

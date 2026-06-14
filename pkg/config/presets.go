@@ -118,6 +118,13 @@ func defaultServerWatchPaths() []string {
 		"/var/spool/cron",
 		"/var/spool/cron/crontabs",
 		"/var/spool/anacron",
+		// at/batch one-shot scheduling — a quieter sibling of cron and
+		// a real persistence/exec vector (T1053.002). /var/spool/at* is
+		// where queued jobs land; /etc/at.{allow,deny} gate who may use it.
+		"/var/spool/at",
+		"/var/spool/cron/atjobs",
+		"/etc/at.allow",
+		"/etc/at.deny",
 		// ─── systemd / init ───────────────────────────────────
 		"/etc/systemd/system",
 		"/lib/systemd/system",
@@ -220,6 +227,15 @@ func defaultServerWatchPaths() []string {
 		// real rootkit surface.
 		"/lib/modules",
 		"/usr/lib/modules",
+		// Module auto-load + modprobe config. Writing an "install"
+		// line in /etc/modprobe.d or naming a module in
+		// /etc/modules-load.d / /etc/modules is a quiet persistence
+		// vector (T1547.006): the payload runs at boot via the module
+		// loader without ever dropping a .ko. Was uncovered until
+		// live validation 2026-06-13.
+		"/etc/modprobe.d",
+		"/etc/modules-load.d",
+		"/etc/modules",
 	}
 }
 

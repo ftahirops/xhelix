@@ -17,3 +17,6 @@ func (s *stubBackend) Start(ctx context.Context, out chan<- model.Event) error {
 func (s *stubBackend) Stop(ctx context.Context) error                          { return nil }
 func (s *stubBackend) Healthy() bool                                           { return true }
 func (s *stubBackend) Drops() uint64                                           { return 0 }
+func (s *stubBackend) DropRingbuf() uint64                                     { return 0 }
+func (s *stubBackend) DropConsumerFull() uint64                                { return 0 }
+func (s *stubBackend) DropDecode() uint64                                      { return 0 }

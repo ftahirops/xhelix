@@ -35,9 +35,224 @@ shape of a beaconing implant. Mode 2 disarm (future) will gate
 these into default-deny.`,
 	}
 	cmd.AddCommand(newEgressObserveCmd())
+	cmd.AddCommand(newEgressLiveCmd())
+	cmd.AddCommand(newEgressLedgerTimelineCmd())
+	cmd.AddCommand(newEgressBinaryCmd())
+	cmd.AddCommand(newEgressStatsCmd())
 	if extendEgressCmd != nil {
 		extendEgressCmd(cmd)
 	}
+	return cmd
+}
+
+// flowRecord mirrors egressledger.FlowRecord for JSON decoding.
+type flowRecord struct {
+	Key struct {
+		Binary    string `json:"binary"`
+		ExeSHA    string `json:"exe_sha,omitempty"`
+		UID       uint32 `json:"uid"`
+		CGroupID  uint64 `json:"cgroup_id"`
+		DestCIDR  string `json:"dest_cidr"`
+		DestPort  uint16 `json:"dest_port"`
+		Protocol  string `json:"protocol"`
+		SNI       string `json:"sni,omitempty"`
+		DNSName   string `json:"dns_name,omitempty"`
+		DestClass string `json:"dest_class,omitempty"`
+	} `json:"key"`
+	Metrics struct {
+		FirstSeen    time.Time `json:"first_seen"`
+		LastSeen     time.Time `json:"last_seen"`
+		Connects     uint64    `json:"connects"`
+		BytesOut     uint64    `json:"bytes_out"`
+		BytesIn      uint64    `json:"bytes_in"`
+		DenyEvents   uint64    `json:"deny_events"`
+		VerifyEvents uint64    `json:"verify_events"`
+	} `json:"metrics"`
+	Bucket time.Time `json:"bucket"`
+}
+
+func printFlowRecords(records []flowRecord) {
+	if len(records) == 0 {
+		fmt.Println("(no records)")
+		return
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "BUCKET\tBINARY\tUID\tDEST\tPORT\tPROTO\tSNI\tCLASS\tCONNECTS\tBYTES_OUT\tBYTES_IN\tDENY")
+	for _, r := range records {
+		sni := r.Key.SNI
+		if len(sni) > 24 {
+			sni = sni[:24]
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\n",
+			r.Bucket.Format("15:04:05"),
+			truncStr(r.Key.Binary, 24),
+			r.Key.UID,
+			r.Key.DestCIDR,
+			r.Key.DestPort,
+			r.Key.Protocol,
+			sni,
+			r.Key.DestClass,
+			r.Metrics.Connects,
+			r.Metrics.BytesOut,
+			r.Metrics.BytesIn,
+			r.Metrics.DenyEvents,
+		)
+	}
+	tw.Flush()
+}
+
+func truncStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+func newEgressLiveCmd() *cobra.Command {
+	var sock, binary, sni, class string
+	var uid, port int
+	var denyOnly bool
+	cmd := &cobra.Command{
+		Use:   "live",
+		Short: "Live snapshot from the egress ledger hot tier (last 60 min)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			req := map[string]any{
+				"binary":     binary,
+				"uid":        uid,
+				"cgroup_id":  -1,
+				"dest_port":  port,
+				"sni":        sni,
+				"dest_class": class,
+				"deny_only":  denyOnly,
+			}
+			var resp []flowRecord
+			if err := c.Call("egress.live", req, &resp); err != nil {
+				return fmt.Errorf("egress.live: %w", err)
+			}
+			sort.SliceStable(resp, func(i, j int) bool { return resp[i].Metrics.LastSeen.After(resp[j].Metrics.LastSeen) })
+			printFlowRecords(resp)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", "/run/xhelix/api.sock", "daemon socket")
+	cmd.Flags().StringVar(&binary, "binary", "", "filter by binary substring")
+	cmd.Flags().IntVar(&uid, "uid", -1, "filter by uid (-1 = any)")
+	cmd.Flags().IntVar(&port, "port", -1, "filter by dest port (-1 = any)")
+	cmd.Flags().StringVar(&sni, "sni", "", "filter by SNI substring")
+	cmd.Flags().StringVar(&class, "class", "", "filter by dest_class")
+	cmd.Flags().BoolVar(&denyOnly, "deny-only", false, "only rows with deny events")
+	return cmd
+}
+
+func newEgressLedgerTimelineCmd() *cobra.Command {
+	var sock, binary string
+	var hours int
+	cmd := &cobra.Command{
+		Use:   "timeline",
+		Short: "Range query across hot/warm/cold tiers",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			end := time.Now()
+			start := end.Add(-time.Duration(hours) * time.Hour)
+			req := map[string]any{
+				"start": start,
+				"end":   end,
+				"filter": map[string]any{
+					"binary":    binary,
+					"uid":       -1,
+					"cgroup_id": -1,
+					"dest_port": -1,
+				},
+			}
+			var resp []flowRecord
+			if err := c.Call("egress.timeline", req, &resp); err != nil {
+				return fmt.Errorf("egress.timeline: %w", err)
+			}
+			printFlowRecords(resp)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", "/run/xhelix/api.sock", "daemon socket")
+	cmd.Flags().StringVar(&binary, "binary", "", "filter by binary substring")
+	cmd.Flags().IntVar(&hours, "hours", 1, "range width in hours back from now")
+	return cmd
+}
+
+func newEgressBinaryCmd() *cobra.Command {
+	var sock string
+	var days int
+	cmd := &cobra.Command{
+		Use:   "binary <name>",
+		Short: "All egress activity for one binary",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			end := time.Now()
+			start := end.Add(-time.Duration(days) * 24 * time.Hour)
+			req := map[string]any{
+				"binary": args[0],
+				"start":  start,
+				"end":    end,
+			}
+			var resp []flowRecord
+			if err := c.Call("egress.binary", req, &resp); err != nil {
+				return fmt.Errorf("egress.binary: %w", err)
+			}
+			printFlowRecords(resp)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", "/run/xhelix/api.sock", "daemon socket")
+	cmd.Flags().IntVar(&days, "days", 1, "lookback in days")
+	return cmd
+}
+
+func newEgressStatsCmd() *cobra.Command {
+	var sock string
+	cmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Egress ledger storage stats",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			var resp struct {
+				HotRows       int       `json:"hot_rows"`
+				WarmKeys      int       `json:"warm_keys"`
+				ColdDays      int       `json:"cold_days"`
+				ColdBytes     int64     `json:"cold_bytes"`
+				LastTickAt    time.Time `json:"last_tick_at"`
+				LastCompactAt time.Time `json:"last_compact_at"`
+				RetentionDays int       `json:"retention_days"`
+			}
+			if err := c.Call("egress.stats", nil, &resp); err != nil {
+				return fmt.Errorf("egress.stats: %w", err)
+			}
+			fmt.Printf("Hot rows:          %d\n", resp.HotRows)
+			fmt.Printf("Warm keys:         %d\n", resp.WarmKeys)
+			fmt.Printf("Cold days:         %d (%.1f MB)\n", resp.ColdDays, float64(resp.ColdBytes)/1024/1024)
+			fmt.Printf("Retention:         %d days\n", resp.RetentionDays)
+			fmt.Printf("Last tick:         %s\n", resp.LastTickAt.Format(time.RFC3339))
+			fmt.Printf("Last compaction:   %s\n", resp.LastCompactAt.Format(time.RFC3339))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", "/run/xhelix/api.sock", "daemon socket")
 	return cmd
 }
 

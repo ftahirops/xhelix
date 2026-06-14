@@ -32,6 +32,14 @@ type XDPAdmin interface {
 	List() ([]net.IP, error)
 }
 
+// SafetyVeto is the small surface netban needs from the safety-net
+// subsystem. Implemented by *safetynet.SafetyNet. Kept as an interface
+// to avoid a hard dependency cycle (safetynet imports nothing from
+// netban; netban only takes a tiny interface).
+type SafetyVeto interface {
+	AllowAlways(ip net.IP) bool
+}
+
 // Banner is the public API.
 type Banner struct {
 	xdp     XDPAdmin
@@ -40,6 +48,14 @@ type Banner struct {
 	mu      sync.Mutex
 	entries map[string]*entry
 
+	// safetynet, if non-nil, can veto Ban() decisions. Set via
+	// SetSafetyNet so wiring is decoupled from construction.
+	safetynet SafetyVeto
+
+	// vetoedCount tracks how many Ban() calls were vetoed by the
+	// safety net — surfaced via Stats for the operator dashboard.
+	vetoedCount uint64
+
 	quarantineOn atomic.Bool
 
 	// SkipOperatorIPCheck disables the safety check that EngageQuarantine
@@ -47,6 +63,17 @@ type Banner struct {
 	// Default false. Set to true ONLY for headless automation that
 	// runs outside an SSH session (e.g. cron-driven incident response).
 	SkipOperatorIPCheck bool
+}
+
+// SetSafetyNet wires a SafetyVeto into the banner. Pass nil to clear.
+// Safe to call at any time.
+func (b *Banner) SetSafetyNet(s SafetyVeto) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.safetynet = s
+	b.mu.Unlock()
 }
 
 type entry struct {
@@ -111,6 +138,16 @@ func (b *Banner) EnsureNFT(ctx context.Context) error {
 func (b *Banner) Ban(ip net.IP, reason string, ttl time.Duration) error {
 	if ttl <= 0 {
 		ttl = time.Hour
+	}
+	// Safety-net veto — the single source of truth for "this IP must
+	// never be blocked". Operator-installed allow-list (incl. their own
+	// management IP) overrides any auto-ban decision.
+	b.mu.Lock()
+	sn := b.safetynet
+	b.mu.Unlock()
+	if sn != nil && sn.AllowAlways(ip) {
+		atomic.AddUint64(&b.vetoedCount, 1)
+		return nil // pretend success; safety net wins
 	}
 	b.mu.Lock()
 	b.entries[ip.String()] = &entry{
@@ -218,12 +255,16 @@ func (b *Banner) nftDel(ip net.IP) error {
 
 // Stats reports current ban counters.
 type Stats struct {
-	Active uint64
+	Active        uint64
+	SafetyVetoed  uint64
 }
 
 // Stats returns ban counters for the dashboard.
 func (b *Banner) Stats() Stats {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return Stats{Active: uint64(len(b.entries))}
+	return Stats{
+		Active:       uint64(len(b.entries)),
+		SafetyVetoed: atomic.LoadUint64(&b.vetoedCount),
+	}
 }

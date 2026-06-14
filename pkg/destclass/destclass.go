@@ -81,6 +81,7 @@ func (noopIntel) IsBad(net.IP) bool { return false }
 type Classifier struct {
 	intel        IntelProvider
 	fleet        FleetBaseline
+	org          OrgProvider
 	minFleetSeen int
 
 	// mu protects the live CIDR pointers — hot-swappable by SetCIDRs
@@ -108,6 +109,17 @@ func (c *Classifier) SetCloudCIDRs(cidrs []string) {
 	c.mu.Unlock()
 }
 
+// SetOrgProvider attaches/replaces the ASN-org provider after construction
+// (the geoip DB is often built later than the classifier). Nil is ignored.
+func (c *Classifier) SetOrgProvider(p OrgProvider) {
+	if p == nil {
+		return
+	}
+	c.mu.Lock()
+	c.org = p
+	c.mu.Unlock()
+}
+
 // SetCDNCIDRs hot-swaps the CDN CIDR table.
 func (c *Classifier) SetCDNCIDRs(cidrs []string) {
 	parsed := parseCIDRs(cidrs)
@@ -116,8 +128,28 @@ func (c *Classifier) SetCDNCIDRs(cidrs []string) {
 	c.mu.Unlock()
 }
 
+// OrgProvider resolves an IP to its owning organisation + ASN (e.g. via
+// pkg/geoip). Used as a fallback classification signal when the CIDR/SNI
+// tables miss but the org name reveals a known cloud/CDN operator.
+type OrgProvider interface {
+	OrgOf(ip net.IP) (org, asn string, ok bool)
+}
+
+type noopOrg struct{}
+
+func (noopOrg) OrgOf(net.IP) (string, string, bool) { return "", "", false }
+
 // Option configures the classifier.
 type Option func(*Classifier)
+
+// WithOrgProvider attaches an ASN/org provider for org-based classification.
+func WithOrgProvider(p OrgProvider) Option {
+	return func(c *Classifier) {
+		if p != nil {
+			c.org = p
+		}
+	}
+}
 
 // WithIntel attaches a threat-intel provider.
 func WithIntel(i IntelProvider) Option { return func(c *Classifier) { c.intel = i } }
@@ -173,6 +205,7 @@ func New(opts ...Option) *Classifier {
 	c := &Classifier{
 		intel:            noopIntel{},
 		fleet:            noopBaseline{},
+		org:              noopOrg{},
 		minFleetSeen:     3,
 		registrySuffixes: defaultRegistrySuffixes(),
 		osUpdateSuffixes: defaultOSUpdateSuffixes(),
@@ -258,7 +291,23 @@ func (c *Classifier) Classify(ip net.IP, sni string, port uint16) Decision {
 			Source: "cidr:cdn",
 		}
 	}
-	// 5. Fleet baseline.
+	// 5. ASN / org attribution. When the CIDR/SNI tables miss, the owning
+	//    org name still reveals major cloud/CDN operators.
+	c.mu.RLock()
+	orgProv := c.org
+	c.mu.RUnlock()
+	if orgProv != nil {
+		if org, asn, ok := orgProv.OrgOf(ip); ok && org != "" {
+			if cls := classByOrg(org); cls != "" {
+				return Decision{
+					Class:  cls,
+					Reason: "ASN org " + org + " (" + asn + ")",
+					Source: "asn-org",
+				}
+			}
+		}
+	}
+	// 6. Fleet baseline.
 	if c.fleet != nil && c.minFleetSeen > 0 {
 		if c.fleet.SeenCount(ip, sni) >= c.minFleetSeen {
 			return Decision{
@@ -274,6 +323,68 @@ func (c *Classifier) Classify(ip net.IP, sni string, port uint16) Decision {
 		Reason: "no static or fleet match",
 		Source: "default",
 	}
+}
+
+// ptrSuffix maps a known reverse-DNS (PTR) suffix to a class + operator
+// name. Ordered most-specific-first is not required since suffix match is
+// exact-tail; keep entries non-overlapping.
+var ptrSuffixes = []struct {
+	suffix string
+	class  Class
+	org    string
+}{
+	{"1e100.net", ClassCloudProvider, "Google"},
+	{"googleusercontent.com", ClassCloudProvider, "Google"},
+	{"cloudfront.net", ClassCDN, "Amazon CloudFront"},
+	{"compute.amazonaws.com", ClassCloudProvider, "Amazon AWS"},
+	{"amazonaws.com", ClassCloudProvider, "Amazon AWS"},
+	{"akamaitechnologies.com", ClassCDN, "Akamai"},
+	{"akamaiedge.net", ClassCDN, "Akamai"},
+	{"akamai.net", ClassCDN, "Akamai"},
+	{"fastly.net", ClassCDN, "Fastly"},
+	{"fastlylb.net", ClassCDN, "Fastly"},
+	{"cloudflare.com", ClassCDN, "Cloudflare"},
+	{"cloudapp.azure.com", ClassCloudProvider, "Microsoft Azure"},
+	{"cloudapp.net", ClassCloudProvider, "Microsoft Azure"},
+	{"your-server.de", ClassCloudProvider, "Hetzner"},
+	{"clients.your-server.de", ClassCloudProvider, "Hetzner"},
+	{"digitalocean.com", ClassCloudProvider, "DigitalOcean"},
+	{"linodeusercontent.com", ClassCloudProvider, "Linode"},
+	{"ovh.net", ClassCloudProvider, "OVH"},
+}
+
+// ClassFromPTR maps a reverse-DNS name to a cdn/cloud class + operator name,
+// or (ClassUnknown, "") if no known suffix matches. Pure; suitable for the
+// dashboard/IP-info enrichment path (NOT the hot classify path, which has
+// no PTR available without a blocking lookup).
+func ClassFromPTR(ptr string) (Class, string) {
+	p := strings.ToLower(strings.TrimRight(ptr, "."))
+	if p == "" {
+		return ClassUnknown, ""
+	}
+	for _, e := range ptrSuffixes {
+		if p == e.suffix || strings.HasSuffix(p, "."+e.suffix) {
+			return e.class, e.org
+		}
+	}
+	return ClassUnknown, ""
+}
+
+// classByOrg maps an ASN org name to a cdn/cloud class by keyword, or ""
+// if the org is not a recognised cloud/CDN operator.
+func classByOrg(org string) Class {
+	o := strings.ToLower(org)
+	for _, k := range []string{"cloudflare", "akamai", "fastly", "cloudfront", "edgecast", "edgio", "stackpath", "bunny", "limelight"} {
+		if strings.Contains(o, k) {
+			return ClassCDN
+		}
+	}
+	for _, k := range []string{"amazon", "aws", "google", "microsoft", "azure", "digitalocean", "hetzner", "ovh", "linode", "oracle", "alibaba", "tencent", "vultr", "scaleway", "leaseweb"} {
+		if strings.Contains(o, k) {
+			return ClassCloudProvider
+		}
+	}
+	return ""
 }
 
 // matchSuffix returns the suffix that matched sni, or "".

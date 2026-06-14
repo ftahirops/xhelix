@@ -1,6 +1,7 @@
 # File / FIM plane rules.
 ---
 id: tamper_passwd
+category: hard_deny
 desc: Write to /etc/passwd (or any /passwd file under a watched dir)
 severity: critical
 mitre: [T1098, T1136]
@@ -12,6 +13,7 @@ remediation: Compare diff against backup; identify writer pid and uid.
 test_id: F-01
 ---
 id: tamper_shadow
+category: hard_deny
 desc: Write to /etc/shadow from a non-system tool
 severity: critical
 mitre: [T1098]
@@ -24,6 +26,7 @@ remediation: Only the listed system tools should write shadow. Investigate.
 test_id: F-01
 ---
 id: ld_so_preload_modified
+category: hard_deny
 desc: /etc/ld.so.preload was created or modified (classic rootkit)
 severity: critical
 mitre: [T1574.006]
@@ -35,6 +38,7 @@ remediation: Classic rootkit technique. Capture the file; identify the writer.
 test_id: F-02
 ---
 id: ssh_key_added_root
+category: hard_deny
 desc: New entry added to root's authorized_keys
 severity: high
 mitre: [T1098.004]
@@ -48,6 +52,7 @@ remediation: Diff against backup. Identify new public-key fingerprint.
 test_id: F-03
 ---
 id: ssh_key_added_user
+category: incident
 desc: New authorized_keys entry on any user account
 severity: warn
 mitre: [T1098.004]
@@ -61,6 +66,7 @@ remediation: Verify the user added the key intentionally.
 test_id: F-03
 ---
 id: pam_module_drop
+category: hard_deny
 desc: New shared object placed in PAM module directory
 severity: critical
 mitre: [T1556.003]
@@ -77,6 +83,7 @@ remediation: Backdoor PAM module. Identify writer; hash file; check vs package m
 test_id: F-04
 ---
 id: cron_new_unit
+category: incident
 desc: New cron job created
 severity: high
 mitre: [T1053.003]
@@ -113,7 +120,28 @@ remediation: |
   silencing the rule.
 test_id: FIM-02
 ---
+id: at_job_new
+category: incident
+desc: New at/batch job queued (one-shot scheduled execution)
+severity: high
+mitre: [T1053.002]
+match: |
+  event.sensor == "fim" &&
+  (path.startsWith("/var/spool/at/") ||
+   path.startsWith("/var/spool/cron/atjobs/")) &&
+  event.tags["create"] == "true" &&
+  event.tags["pkg_install_window"] != "true" &&
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
+tags: [persistence]
+remediation: |
+  An at job runs a command once at a scheduled time, then removes itself —
+  quieter than cron and easy to miss. Inspect the spool file's payload and
+  the owning UID; cross-check the ops change log. Legitimate at use is rare
+  on servers, so a create here is high-signal.
+test_id: FIM-02
+---
 id: systemd_unit_new
+category: incident
 desc: New systemd unit installed outside the package manager
 severity: high
 mitre: [T1543.002]
@@ -127,6 +155,7 @@ remediation: Inspect unit file ExecStart and User= directive.
 test_id: FIM-02
 ---
 id: package_diff_critical_binary
+category: incident
 desc: A critical system binary differs from package manifest
 severity: critical
 mitre: [T1554]
@@ -140,6 +169,7 @@ remediation: Possible backdoored system binary. Reinstall package; capture alter
 test_id: FIM-01
 ---
 id: webshell_heuristic
+category: incident
 desc: PHP/JSP file in web root contains code-execution patterns
 severity: high
 mitre: [T1505.003]
@@ -153,6 +183,7 @@ test_id: FIM-03
 ---
 # ─── P-AB.7 backbone-persistence pack ──────────────────────────
 id: user_crontab_modified
+category: weak_signal
 desc: A per-user crontab was created or modified
 severity: high
 mitre: [T1053.003]
@@ -168,6 +199,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: shell_rc_modified
+category: weak_signal
 desc: A system or per-user shell-startup file was modified
 severity: high
 mitre: [T1546.004]
@@ -190,6 +222,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: profile_d_dropped
+category: incident
 desc: New file dropped into /etc/profile.d
 severity: high
 mitre: [T1546.004]
@@ -205,6 +238,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: rc_local_modified
+category: hard_deny
 desc: /etc/rc.local or sysv init script was modified
 severity: high
 mitre: [T1037.004]
@@ -220,6 +254,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: xdg_autostart_dropped
+category: incident
 desc: New .desktop file in an XDG autostart directory
 severity: high
 mitre: [T1547.013]
@@ -236,6 +271,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: hosts_allow_deny_modified
+category: weak_signal
 desc: tcpwrappers hosts.allow / hosts.deny was modified
 severity: warn
 mitre: [T1562.004]
@@ -249,6 +285,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: sysctl_drift
+category: weak_signal
 desc: A sysctl tunable file was modified (kernel-policy drift)
 severity: warn
 mitre: [T1562.001]
@@ -263,6 +300,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: ssh_login_hook_dropped
+category: incident
 desc: SSH per-account login hook (.ssh/rc) was created or modified
 severity: high
 mitre: [T1546]
@@ -276,6 +314,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: ld_so_conf_modified
+category: incident
 desc: Dynamic linker search path config was modified
 severity: high
 mitre: [T1574.006]
@@ -291,6 +330,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: webroot_bootstrap_modified
+category: incident
 desc: A CMS / web-app bootstrap file was modified (wp-config.php, .htaccess, configuration.php)
 severity: high
 mitre: [T1505, T1505.003]
@@ -309,6 +349,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: webroot_mu_plugin_dropped
+category: incident
 desc: New PHP file in WordPress mu-plugins (auto-loaded, no admin UI to disable)
 severity: critical
 mitre: [T1505]
@@ -324,6 +365,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: docker_compose_modified
+category: weak_signal
 desc: A docker-compose.yml was modified outside the package manager
 severity: high
 mitre: [T1610]
@@ -339,6 +381,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: kube_manifest_modified
+category: weak_signal
 desc: A static kubelet manifest was modified
 severity: critical
 mitre: [T1610]
@@ -353,6 +396,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: boot_artifact_modified
+category: hard_deny
 desc: A file under /boot (vmlinuz / initrd / grub) was modified
 severity: critical
 mitre: [T1542.003]
@@ -369,11 +413,12 @@ remediation: |
 test_id: FIM-05
 ---
 id: kernel_module_dropped
+category: incident
 desc: A new .ko file was placed under /lib/modules
 severity: critical
 mitre: [T1547.006]
 match: |
-  event.sensor == "fim" &&
+  event.sensor.startsWith("fim") &&
   (path.startsWith("/lib/modules/") || path.startsWith("/usr/lib/modules/")) &&
   path.endsWith(".ko") &&
   event.tags["create"] == "true" &&
@@ -383,9 +428,34 @@ remediation: |
   Out-of-tree kernel module drop. Capture, hash, check signature.
   Pair with the kernel_module_load rule (which fires when one
   actually loads).
+# sensor.startsWith("fim") matches BOTH the realtime inotify sensor
+# ("fim") and the periodic drift scanner ("fim.drift"). /lib/modules
+# is realistically only covered by the recursive drift scanner; the
+# old "== fim" never matched a real .ko drop (live validation 2026-06-13).
 test_id: FIM-05
 ---
+id: modprobe_persistence
+category: incident
+desc: Module-loader config changed (modprobe.d / modules-load.d / etc/modules)
+severity: high
+mitre: [T1547.006]
+match: |
+  event.sensor.startsWith("fim") &&
+  (path.startsWith("/etc/modprobe.d/") ||
+   path.startsWith("/etc/modules-load.d/") ||
+   path == "/etc/modules") &&
+  (event.tags["create"] == "true" || event.tags["write"] == "true") &&
+  (!("package_managed" in event.tags) || event.tags["package_managed"] != "true")
+tags: [persistence, kernel]
+remediation: |
+  An "install"/"options" line in /etc/modprobe.d, or a module named in
+  /etc/modules-load.d or /etc/modules, runs at boot via the module
+  loader — persistence without dropping a .ko. Inspect the added line;
+  a modprobe "install <mod> /path/to/cmd" is arbitrary command exec.
+test_id: FIM-06
+---
 id: cron_malware_shape
+category: incident
 desc: Cron entry has a malware-shaped command (shell-pipe / remote-fetch / tmp script / web-user / hidden script)
 severity: critical
 mitre: [T1053.003, T1059]
@@ -403,6 +473,7 @@ remediation: |
 test_id: FIM-04
 ---
 id: cron_web_user_added
+category: incident
 desc: Cron file owned by a web/service user (almost-certain RCE)
 severity: critical
 mitre: [T1053.003]

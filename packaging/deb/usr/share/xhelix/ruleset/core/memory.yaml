@@ -1,6 +1,7 @@
 # Memory exploit primitives. v1.0 plane.
 ---
 id: mem_mprotect_rwx
+category: weak_signal
 desc: A page was made writable+executable in a single mprotect call (shellcode pattern)
 severity: critical
 mitre: [T1055.009, T1620, T1027]
@@ -15,6 +16,7 @@ remediation: |
 test_id: M-01
 ---
 id: mem_kernel_anomaly
+category: weak_signal
 desc: Kernel emitted GPF / BUG / KASAN / oops
 severity: critical
 mitre: [T1068]
@@ -30,6 +32,7 @@ remediation: |
   failed kernel LPE attempt; capture full dmesg + correlate.
 ---
 id: mem_lkrg_violation
+category: incident
 desc: LKRG (kernel runtime guard) reported a tampering attempt
 severity: critical
 mitre: [T1014, T1068]

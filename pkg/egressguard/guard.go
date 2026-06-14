@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// SafetyVeto is the small surface egressguard needs from the
+// safety-net subsystem. Implemented by *safetynet.SafetyNet.
+type SafetyVeto interface {
+	AllowAlways(ip net.IP) bool
+}
+
 // guard implements the Guard interface.
 //
 // Decision flow (per Build Spec §3.3):
@@ -42,7 +48,18 @@ type guard struct {
 	// peers). Operator-tunable; default set covers common server roles.
 	protectedRoles map[string]bool
 
+	// safetynet, if non-nil, vetoes ApplyDeny against IPs on the
+	// always-allow list. Same single-source-of-truth as netban.
+	safetynet SafetyVeto
+
 	mu sync.RWMutex
+}
+
+// SetSafetyNet wires a SafetyVeto into the guard. Pass nil to clear.
+func (g *guard) SetSafetyNet(s SafetyVeto) {
+	g.mu.Lock()
+	g.safetynet = s
+	g.mu.Unlock()
 }
 
 // ProfileLookup is the abstraction the guard uses to fetch declared
@@ -112,6 +129,29 @@ func (g *guard) BackendName() string {
 
 // Decide is the per-event verdict. Read-mostly; takes RLock.
 func (g *guard) Decide(r Request) (Decision, string) {
+	// (0) Policy + trust-zone override (Week 4). When the pipeline has
+	// pre-computed a per-binary policy or trust-zone decision via the
+	// tag stamps, honor it before consulting legacy rules. This is
+	// what makes signed policies actually enforce — without this
+	// short-circuit, the legacy rule set would always run and the
+	// signed-policy "deny" stayed observation-only.
+	switch r.PolicyCtx.EgressPolicyAction {
+	case "deny":
+		return EgressDeny, "egresspolicy: " + r.PolicyCtx.PolicyMatchedBy
+	case "allow":
+		return EgressAllow, "egresspolicy: " + r.PolicyCtx.PolicyID
+	case "verify":
+		return EgressVerify, "egresspolicy: " + r.PolicyCtx.PolicyMatchedBy
+	}
+	switch r.PolicyCtx.TrustZoneAction {
+	case "deny":
+		return EgressDeny, "trustzone " + r.PolicyCtx.ZoneLabel + ": forbidden destination"
+	case "tor_require":
+		return EgressDeny, "trustzone tor_only: non-tor destination"
+	case "verify":
+		return EgressVerify, "trustzone " + r.PolicyCtx.ZoneLabel
+	}
+
 	// (1) Loopback + private: always allow. Internal traffic is governed
 	// by other layers; egressguard is for external/raw-IP control.
 	if isLoopbackOrPrivate(r.DestIP) {
@@ -160,6 +200,21 @@ func (g *guard) Decide(r Request) (Decision, string) {
 // logged but not pushed to kernel. Deny cache prevents duplicate pushes
 // for the same lineage+dest within TTL.
 func (g *guard) ApplyDeny(lineageID uint64, destKey string, ttl time.Duration) error {
+	// Safety-net veto — single source of truth across enforce planes.
+	// If the destination IP (when parseable) is on always-allow we
+	// suppress the push entirely.
+	g.mu.RLock()
+	sn := g.safetynet
+	g.mu.RUnlock()
+	if sn != nil {
+		if ipStr := destKeyToIP(destKey); ipStr != "" {
+			if parsed := net.ParseIP(ipStr); parsed != nil && sn.AllowAlways(parsed) {
+				slog.Info("egressguard deny vetoed by safety net",
+					"lineage", lineageID, "dest", destKey)
+				return nil
+			}
+		}
+	}
 	if g.cache.has(lineageID, destKey) {
 		return nil // already denied within TTL
 	}

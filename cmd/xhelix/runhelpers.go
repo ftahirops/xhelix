@@ -235,6 +235,40 @@ func buildExecGuardRules(specs []string) []execguard.Rule {
 	return out
 }
 
+// readProcCgroup returns the unified cgroup v2 path for the given PID by
+// reading /proc/<pid>/cgroup and extracting the "0::" line. Returns ""
+// on any error (PID exited, kernel too old, etc.). Used by the
+// maintenance chain override in the execguard callback.
+func readProcCgroup(pid int32) string {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		// cgroup v2 unified hierarchy: "0::<path>"
+		if strings.HasPrefix(line, "0::") {
+			return strings.TrimSpace(line[3:])
+		}
+	}
+	return ""
+}
+
+// execDenyRuleID maps an execguard deny reason to a stable, low-cardinality
+// rule ID for the deny ledger's by-rule aggregation. Execguard rules carry
+// only a free-text Reason; this collapses them into a handful of IDs.
+func execDenyRuleID(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "redzone:"):
+		return "redzone_exec"
+	case strings.Contains(reason, "/tmp"):
+		return "exec_from_tmp"
+	case reason == "":
+		return "execguard_deny"
+	default:
+		return "execguard_deny"
+	}
+}
+
 // scoreOneWindow runs both the set-diff scorer and the rate detector
 // against one freshly-flushed baseline Window, and synthesises an
 // Alert through the response pipeline whenever either fires.

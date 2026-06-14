@@ -57,8 +57,66 @@ type Server struct {
 	srv      *http.Server
 	mux      *http.ServeMux
 	entPages *enterprisePages
-	mu       sync.RWMutex
-	alerts   []model.Alert
+	egress   EgressProvider
+	// Intel providers for the redesigned egress dashboard. All nil-safe;
+	// handlers return empty results when unwired. Wired by the daemon
+	// via SetGeoIP / SetDestClass / SetConnstate (see egress_intel.go).
+	geoip         GeoIPLookup
+	destclass     DestClassify
+	connstateSnap ConnSnap
+	proctree      ProcTreeLookup
+	// alertSnap returns a snapshot of the most recent alerts (typically
+	// the daemon's RingSink). Used by the country drilldown to surface
+	// alerts that touch any destination in the active country.
+	alertSnap AlertSnap
+	procAnc   ProcAncestry
+	// safety is the operator-facing SafetyNet provider. Wired by the
+	// daemon via SetSafetyNet. nil-safe.
+	safety SafetyNetProvider
+	// trustzone is the Week 5 operator-facing trust-zone provider.
+	// Wired by the daemon via SetTrustZone. nil-safe.
+	trustzone TrustZoneProvider
+	// egressPolicy is the read+reload surface for signed per-binary
+	// egress policies (Week 3). Nil-safe; when nil, /api/egress/policy/list
+	// falls back to the Week 2 "suggestions from observed flows" stub.
+	egressPolicy EgressPolicyProvider
+	// pcap is the on-demand packet-capture manager (operator-initiated
+	// tcpdump). Nil when tcpdump is not installed; handlers return 503
+	// and the UI surfaces a "packet capture unavailable" placeholder.
+	pcap PCAPProvider
+	// fleet is the Week 6 fleet calibration provider. Nil-safe — when
+	// no fleet hub is configured, /api/egress/fleet/* endpoints return
+	// {"available": false, ...} and the UI shows a placeholder card.
+	fleet FleetIntel
+	// tlsplaintext is the Phase TLS-L2 opt-in plaintext capture
+	// surface. Nil-safe; handlers return 503 when unwired.
+	tlsplaintext TLSPlaintextProvider
+	// IP deep-analysis providers (egress_ipinfo.go). All nil-safe.
+	// When unwired, the corresponding IPInfo fields are simply empty.
+	revdns      ReverseDNSResolver
+	dnsobs      DNSObservations
+	threatintel ThreatIntelHits
+	// maintenance is the Phase-2 behavioral compiler maintenance chain
+	// store. Wired by the daemon via SetMaintenance. Nil-safe.
+	maintenance MaintenanceProvider
+	// appRegistry is the P-UI app registry. Wired via SetAppRegistry. Nil-safe.
+	appRegistry AppRegistryProvider
+	// appHealth is the P4 per-app deny ledger. Wired via SetAppHealth. Nil-safe.
+	appHealth AppHealthProvider
+	// compiledPolicy is the P5a contract compiler view. Wired via
+	// SetCompiledPolicy. Nil-safe.
+	compiledPolicy CompiledPolicyProvider
+	// auditProvider records/reads the control-action audit trail. Wired
+	// via SetAuditProvider. Nil-safe.
+	auditProvider AuditProvider
+	// proposalProvider handles the CI deploy-proposal flow (P7). Wired via
+	// SetProposalProvider. Nil-safe.
+	proposalProvider ProposalProvider
+	// causal assembles causal chains from the live process graph (P6).
+	// Wired via SetCausal. Nil-safe.
+	causal CausalProvider
+	mu     sync.RWMutex
+	alerts []model.Alert
 }
 
 // SetXDP attaches an XDP admin (used by the daemon when the
@@ -93,7 +151,39 @@ func NewServer(cfg Config) *Server {
 	if cfg.SourceStore != nil {
 		mux.Handle("/api/v1/source/", source.NewHTTPHandler(cfg.SourceStore))
 	}
+	// Egress dashboard (Week 2). Nil-safe — handlers return empty
+	// results when SetEgress hasn't been called.
+	mux.HandleFunc("/egress", s.handleEgressIndex)
+	mux.HandleFunc("/egress/", s.handleEgressIndex)
+	mux.HandleFunc("/api/egress/live", s.handleEgressLive)
+	mux.HandleFunc("/api/egress/timeline", s.handleEgressTimeline)
+	mux.HandleFunc("/api/egress/binary", s.handleEgressBinary)
+	mux.HandleFunc("/api/egress/stats", s.handleEgressStats)
+	// Egress intelligence (countries, companies, connections, overview, policy).
+	mux.HandleFunc("/api/egress/countries", s.handleEgressCountries)
+	mux.HandleFunc("/api/egress/companies", s.handleEgressCompanies)
+	mux.HandleFunc("/api/egress/connections", s.handleEgressConnections)
+	mux.HandleFunc("/api/egress/overview", s.handleEgressOverview)
+	mux.HandleFunc("/api/egress/country", s.handleEgressCountry)
+	mux.HandleFunc("/api/egress/policy/list", s.handleEgressPolicyList)
+	mux.HandleFunc("/api/egress/ipinfo", s.handleEgressIPInfo)
+	mux.HandleFunc("/api/egress/flow", s.handleEgressFlow)
+	// Packet capture (on-demand tcpdump).
+	s.RegisterEgressCaptureRoutes(mux)
+	// Week 3 — signed policy read+reload endpoints.
+	s.RegisterEgressPolicyRoutes(mux)
+	// Week 6 — fleet calibration (cohort vs. host overlays).
+	s.RegisterEgressFleetRoutes(mux)
 	s.registerAdminRoutes(mux)
+	// Safety-net operator surface. Nil-safe — handlers return empty
+	// results / 503 when SetSafetyNet hasn't been called.
+	s.RegisterSafetyRoutes(mux)
+	// Trust-zone operator surface (Week 5). Nil-safe — handlers return
+	// empty results / 503 when SetTrustZone hasn't been called.
+	s.RegisterZoneRoutes(mux)
+	// Phase TLS-L2 — opt-in plaintext capture from libssl uprobes.
+	// Handlers return 503 until SetTLSPlaintext is called.
+	s.RegisterTLSPlaintextRoutes(mux)
 	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
 	s.mux = mux
 
@@ -222,11 +312,14 @@ func (s *Server) handleSensors(w http.ResponseWriter, r *http.Request) {
 	for _, sn := range s.Sensors {
 		h := sn.Health()
 		out = append(out, map[string]interface{}{
-			"name":       sn.Name(),
-			"healthy":    h.Healthy,
-			"reason":     h.Reason,
-			"drop_count": h.DropCount,
-			"last_event": h.LastEvent,
+			"name":               sn.Name(),
+			"healthy":            h.Healthy,
+			"reason":             h.Reason,
+			"drop_count":         h.DropCount,
+			"drop_ringbuf":       h.DropRingbuf,
+			"drop_consumer_full": h.DropConsumerFull,
+			"drop_decode":        h.DropDecode,
+			"last_event":         h.LastEvent,
 		})
 	}
 	writeJSON(w, out)

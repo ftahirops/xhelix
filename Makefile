@@ -11,9 +11,10 @@ HSH := xhelix-honeysh
 SNK := xhelix-sinkhole
 DNS := xhelix-dnspoison
 WD  := xhelix-watchdog
+RPL := xhelix-replay
 DIST := dist
 
-.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint sbom checksums verify-checksums govulncheck modverify supplychain corpus corpus-mega corpus-check
+.PHONY: all build test vet clean tidy deb rpm static-check race docs-pdf ebpf vmlinux rules-lint sbom checksums verify-checksums govulncheck modverify supplychain corpus corpus-mega corpus-check xhelix-replay
 
 all: build
 
@@ -54,6 +55,10 @@ build:
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(SNK) ./cmd/xhelix-sinkhole
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(DNS) ./cmd/xhelix-dnspoison
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(WD)  ./cmd/xhelix-watchdog
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(RPL) ./cmd/xhelix-replay
+
+xhelix-replay:
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(RPL) ./cmd/xhelix-replay
 
 race:
 	go test -race -count=1 ./...
@@ -167,7 +172,7 @@ tidy:
 	go mod tidy
 
 clean:
-	rm -f $(BIN) $(CTL) $(VFY) $(HSH) $(SNK) $(DNS) $(WD)
+	rm -f $(BIN) $(CTL) $(VFY) $(HSH) $(SNK) $(DNS) $(WD) $(RPL)
 	rm -rf $(DIST)
 
 deb: build rules-lint
@@ -180,6 +185,13 @@ deb: build rules-lint
 	mkdir -p packaging/deb/usr/share/xhelix/ruleset
 	cp -a ruleset/core packaging/deb/usr/share/xhelix/ruleset/
 	cp -a ruleset/dlcf packaging/deb/usr/share/xhelix/ruleset/
+	# runtime_categories.yaml maps code-emitted rule_ids (cap.gained,
+	# brp.hard_deny, ...) to verdict categories. The daemon loads it from
+	# <ruleset>/runtime_categories.yaml (one level up from core/). Without
+	# it the alert-bus category gate sees 0 runtime classifications and
+	# every code-emitted alert falls to the weak_signal default — observed
+	# as classified_rules=0 on a binary-only deploy (2026-05-30).
+	cp -a ruleset/runtime_categories.yaml packaging/deb/usr/share/xhelix/ruleset/
 	# Optional: include compiled eBPF programs if present.
 	@if [ -f sensors/ebpf/progs/xhelix-progs.o ]; then \
 	  mkdir -p packaging/deb/usr/lib/xhelix; \

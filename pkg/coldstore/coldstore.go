@@ -185,6 +185,25 @@ func (s *Store) Submit(e *model.Event) {
 	if e == nil || s.closed.Load() {
 		return
 	}
+	// Snapshot the Tags map before enqueueing. The flusher goroutine
+	// json.Marshals e.Tags (writeBatch) on its own schedule, while the
+	// dispatch/pipeline goroutine keeps stamping the SAME map after
+	// Submit returns (dest_class, app_id, egress_policy_action, …).
+	// Sharing the live map races marshal-iterate against map-write →
+	// Go runtime fatal "concurrent map iteration and map write" (found
+	// in the 2026-06-12 soak, ~1h in). Copying here — on the caller's
+	// goroutine, which is the map's writer, so this read is safe —
+	// gives the cold store an owned snapshot that later mutation can't
+	// reach. Tags is the only map field writeBatch touches; the other
+	// fields it reads are scalars/strings.
+	snap := *e
+	if e.Tags != nil {
+		tags := make(map[string]string, len(e.Tags))
+		for k, v := range e.Tags {
+			tags[k] = v
+		}
+		snap.Tags = tags
+	}
 	s.submitted.Add(1)
 	s.queueMu.Lock()
 	if len(s.queue) >= s.queueSize {
@@ -192,7 +211,7 @@ func (s *Store) Submit(e *model.Event) {
 		s.queue = s.queue[1:]
 		s.dropped.Add(1)
 	}
-	s.queue = append(s.queue, e)
+	s.queue = append(s.queue, &snap)
 	// Signal if a flusher is waiting.
 	if len(s.queue) >= s.batchSize {
 		s.queueCond.Signal()
