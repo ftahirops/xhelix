@@ -1,0 +1,145 @@
+# npm supply-chain RAT detection rules.
+#
+# These rules require event.tags["install_script"] == "true", which is
+# stamped by pkg/pkglifecycle on every event from a process inside an
+# npm/yarn/pnpm postinstall/preinstall lineage.
+#
+# Without that tag, all of these rules are no-ops — the tagger is the
+# foundational primitive that makes lineage-aware gating possible.
+#
+# Reference: docs/NPM_SUPPLY_CHAIN_RAT_CONTAINMENT_STRATEGY.md
+---
+
+# Raw IP outbound from install script — the noon-contracts C2 pattern.
+# A postinstall that connects directly to an IP without SNI is almost
+# certainly exfiltrating credentials to a hardcoded C2 address.
+id: npm_install_script_raw_ip_connect
+category: incident
+desc: npm lifecycle script made a raw-IP outbound connection (no SNI) — likely C2 exfil
+severity: critical
+mitre: [T1195.001, T1071.001, T1573]
+match: |
+  event.tags["install_script"] == "true" &&
+  event.sensor == "snicheck" &&
+  event.tags["kind"] == "tls_no_sni"
+tags: [supply_chain, npm, c2, exfiltration]
+remediation: |
+  An npm lifecycle script connected to a raw IP over TLS with no SNI extension.
+  This is the noon-contracts / Megalodon supply-chain exfil pattern.
+  Quarantine the process, block the destination IP, and audit the package.
+  Check: event.tags["npm_package_name"] for the offending package.
+
+---
+
+# Messaging-platform exfil from install script — ntfy.sh / Telegram / Discord
+# C2 notification or credential dump via a webhook-style channel.
+id: npm_install_script_messaging_exfil
+category: incident
+desc: npm lifecycle script contacted a messaging platform — credential or key exfil via webhook
+severity: high
+mitre: [T1195.001, T1071.001, T1567]
+match: |
+  event.tags["install_script"] == "true" &&
+  event.sensor == "ebpf.net" &&
+  event.tags["outbound"] == "true" &&
+  event.tags["asset_class"] == "messaging_platform"
+tags: [supply_chain, npm, exfiltration, webhook]
+remediation: |
+  npm lifecycle script sent traffic to a messaging platform (Telegram, ntfy.sh,
+  Discord, etc.). This is a data-exfil pattern used by RAT-style npm packages
+  to exfiltrate SSH keys, AWS credentials, or browser wallet data via webhook.
+  Audit event.tags["npm_package_name"].
+
+---
+
+# Plaintext credential read from install script.
+# Any read of ~/.ssh/*, ~/.aws/credentials, kubeconfig, .env from within
+# a postinstall lineage is high-confidence malicious.
+id: npm_install_script_reads_credential
+category: incident
+desc: npm lifecycle script read a plaintext credential file
+severity: high
+mitre: [T1195.001, T1552.001, T1552.004]
+match: |
+  event.tags["install_script"] == "true" &&
+  event.sensor == "ebpf.file" &&
+  (
+    event.tags["secret_class"] != "" ||
+    event.tags["credential_read"] == "true"
+  )
+tags: [supply_chain, npm, credential_theft]
+remediation: |
+  npm lifecycle script opened a credential file. The postinstall hook of
+  event.tags["npm_package_name"] is attempting credential theft.
+  Enable credbroker.plaintext.enforce=true to block at the open() call.
+
+---
+
+# Cloud-API invocation from install script.
+# aws/gcloud/az/kubectl called from postinstall = credential use, not just read.
+id: npm_install_script_invokes_cloud_cli
+category: incident
+desc: npm lifecycle script invoked a cloud CLI tool (aws, gcloud, kubectl, az)
+severity: high
+mitre: [T1195.001, T1078.004, T1552.001]
+match: |
+  event.tags["install_script"] == "true" &&
+  event.sensor == "ebpf.spawn" &&
+  (
+    event.comm == "aws" ||
+    event.comm == "gcloud" ||
+    event.comm == "gsutil" ||
+    event.comm == "az" ||
+    event.comm == "kubectl" ||
+    event.comm == "doctl"
+  )
+tags: [supply_chain, npm, credential_use, cloud]
+remediation: |
+  A cloud CLI was spawned inside an npm lifecycle script. This indicates the
+  malicious package is using the victim's cloud credentials to make API calls
+  (exfil, create backdoor IAM users, list S3 buckets, etc.).
+  Block immediately. event.tags["npm_package_name"] names the package.
+
+---
+
+# User-level systemd persistence from install script.
+# Dropping a .service file into ~/.config/systemd/user/ from postinstall
+# is the noon-contracts persistence mechanism.
+id: npm_install_script_user_systemd_persistence
+category: incident
+desc: npm lifecycle script created a user-level systemd service (persistence)
+severity: critical
+mitre: [T1195.001, T1543.002]
+match: |
+  event.tags["install_script"] == "true" &&
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  event.tags["create"] == "true" &&
+  path.contains(".config/systemd/user/") &&
+  path.endsWith(".service")
+tags: [supply_chain, npm, persistence, systemd]
+remediation: |
+  npm lifecycle script created a user-level systemd service file. This is a
+  persistence mechanism — the service will survive the npm install and restart
+  on login/reboot. Delete the service file and run systemctl --user disable.
+  Package: event.tags["npm_package_name"].
+
+---
+
+# Suspicious user-level systemd service created by any process (not just npm).
+# FIM watch for ~/.config/systemd/user/ catches persistence from any vector.
+id: user_systemd_suspicious_service
+category: incident
+desc: New user-level systemd service file created — inspect ExecStart for persistence
+severity: high
+mitre: [T1543.002]
+match: |
+  (event.sensor == "fim" || event.sensor == "fim.drift") &&
+  event.tags["create"] == "true" &&
+  path.contains(".config/systemd/user/") &&
+  path.endsWith(".service")
+tags: [persistence, systemd, lateral_movement]
+remediation: |
+  A new user-level systemd service file was created. Inspect the ExecStart
+  directive — malicious services typically point to paths under ~/.cache/,
+  ~/.local/share/, or run shell interpreters with -c arguments.
+  Use: systemctl --user list-units && cat <service-file>
