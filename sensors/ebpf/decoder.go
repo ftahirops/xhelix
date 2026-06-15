@@ -541,6 +541,14 @@ func decodeRawSockEvent(b []byte, ev *model.Event) {
 	ev.Severity = model.SeverityWarn
 }
 
+// bpf() command numbers we care about (uapi/linux/bpf.h, stable ABI).
+const (
+	bpfCmdProgLoad   = 5  // BPF_PROG_LOAD   — load a program (rootkit's first move)
+	bpfCmdProgAttach = 8  // BPF_PROG_ATTACH — attach a program to a hook
+	bpfCmdBTFLoad    = 18 // BPF_BTF_LOAD    — load BTF (precedes modern PROG_LOAD)
+	bpfCmdLinkCreate = 28 // BPF_LINK_CREATE — attach via bpf_link (fentry/lsm/etc.)
+)
+
 func decodeBPFSyscall(b []byte, ev *model.Event) {
 	if len(b) < 4 {
 		return
@@ -548,6 +556,21 @@ func decodeBPFSyscall(b []byte, ev *model.Event) {
 	cmd := binary.LittleEndian.Uint32(b[0:4])
 	ev.Tags["bpf_cmd"] = fmt.Sprintf("%d", cmd)
 	ev.Tags["bpf_syscall"] = "true"
+	// Surface the security-relevant commands as boolean tags so CEL rules
+	// can gate on the dangerous primitive (load/attach) instead of every
+	// bpf() call. A bare bpf_syscall fact is ~all-noise (legit users); a
+	// PROG_LOAD/ATTACH/LINK_CREATE by a non-allowlisted process is the
+	// actual eBPF-malware signal.
+	switch cmd {
+	case bpfCmdProgLoad:
+		ev.Tags["bpf_prog_load"] = "true"
+	case bpfCmdProgAttach:
+		ev.Tags["bpf_prog_attach"] = "true"
+	case bpfCmdLinkCreate:
+		ev.Tags["bpf_link_create"] = "true"
+	case bpfCmdBTFLoad:
+		ev.Tags["bpf_btf_load"] = "true"
+	}
 }
 
 func decodePtrace(b []byte, ev *model.Event) {

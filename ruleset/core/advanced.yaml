@@ -53,17 +53,30 @@ test_id: ADV-03
 ---
 id: ebpf_program_load_unexpected
 category: weak_signal
-desc: Unexpected eBPF program or map load by a non-system process
+desc: Unexpected eBPF program load/attach by a non-allowlisted process
 severity: high
 mitre: [T1562.001]
 match: |
   event.sensor == "ebpf.self" &&
-  event.tags["bpf_prog_load"] == "true" &&
-  !(event.comm in ["xhelix", "systemd", "dockerd", "containerd", "sshd"])
+  (event.tags["bpf_prog_load"] == "true" ||
+   event.tags["bpf_prog_attach"] == "true" ||
+   event.tags["bpf_link_create"] == "true") &&
+  !(event.comm in [
+    "xhelix", "systemd", "systemd-udevd", "systemd-journal",
+    "dockerd", "containerd", "containerd-shim", "runc", "sshd",
+    "bpftrace", "bpftool", "cilium-agent", "tetragon", "falcon-sensor",
+    "falco", "ig", "node_exporter", "datadog-agent", "snap-confine"
+  ])
 tags: [defense_evasion, bpf]
 remediation: |
-  Unauthorized BPF program load detected.
-  Verify the process; inspect loaded program with bpftool.
+  A process loaded or attached an eBPF program (BPF_PROG_LOAD /
+  PROG_ATTACH / LINK_CREATE) and is not on the known-loader allowlist.
+  This is the BPFDoor / TripleCross / ebpfkit primitive. Inspect with
+  `bpftool prog show` / `bpftool link show`; correlate the comm + parent.
+  NOTE: the allowlist is comm-based (spoofable) and cheap — a rootkit
+  can masquerade as 'systemd'. Loud standalone alerting requires bumping
+  the category above weak_signal (a deliberate FP tradeoff on hosts that
+  run cilium/bpftrace/etc.).
 test_id: ADV-04
 ---
 id: docker_socket_access

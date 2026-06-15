@@ -631,7 +631,13 @@ int kp_sys_bpf(struct pt_regs *ctx) {
     struct xh_bpf_syscall_evt *e = bpf_ringbuf_reserve(&xh_events, sizeof(*e), 0);
     if (!e) return 0;
     xh_fill_hdr(&e->hdr, XH_EV_BPF_SYSCALL);
-    e->cmd = (__u32)PT_REGS_PARM1(ctx);
+    // __x64_sys_bpf(const struct pt_regs *regs): on a syscall-wrapper
+    // kernel the kprobe's PARM1 is a POINTER to the syscall's pt_regs,
+    // NOT the cmd. The real first arg of bpf(int cmd, ...) is in regs->di.
+    // Reading PT_REGS_PARM1(ctx) directly captured that kernel pointer
+    // (garbage ~3.2e9 values) and left cmd useless — fixed 2026-06-15.
+    struct pt_regs *sysregs = (struct pt_regs *)PT_REGS_PARM1(ctx);
+    e->cmd = (__u32)BPF_CORE_READ(sysregs, di);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }

@@ -231,3 +231,44 @@ func TestDecodeSSLReadNonHTTP(t *testing.T) {
 		t.Errorf("ssl_read tag missing")
 	}
 }
+
+// TestDecodeBPFSyscallProgLoad guards the 2026-06-15 fix: the bpf()
+// decoder must derive the security-relevant boolean tags from the cmd
+// number, so ebpf_program_load_unexpected (which gates on bpf_prog_load)
+// can fire. Before the fix only the raw bpf_cmd was set and the tag was
+// never produced -> dead rule. (The kernel-side cmd-capture bug is fixed
+// separately in all.bpf.c and verified by `make ebpf` + live.)
+func TestDecodeBPFSyscallProgLoad(t *testing.T) {
+	cases := []struct {
+		cmd     uint32
+		wantTag string
+	}{
+		{5, "bpf_prog_load"},
+		{8, "bpf_prog_attach"},
+		{28, "bpf_link_create"},
+		{18, "bpf_btf_load"},
+		{0, ""}, // BPF_MAP_CREATE — benign, no security tag
+	}
+	for _, tc := range cases {
+		hdr := buildHdr(KindBPFSyscall, 4242, 1, 0, "rootkit")
+		var payload bytes.Buffer
+		binary.Write(&payload, binary.LittleEndian, tc.cmd)
+		ev, err := Decode(append(hdr, payload.Bytes()...))
+		if err != nil {
+			t.Fatalf("cmd=%d: decode: %v", tc.cmd, err)
+		}
+		if ev.Tags["bpf_syscall"] != "true" {
+			t.Errorf("cmd=%d: bpf_syscall tag missing", tc.cmd)
+		}
+		if tc.wantTag != "" && ev.Tags[tc.wantTag] != "true" {
+			t.Errorf("cmd=%d: expected tag %q=true, tags=%v", tc.cmd, tc.wantTag, ev.Tags)
+		}
+		if tc.wantTag == "" {
+			for _, k := range []string{"bpf_prog_load", "bpf_prog_attach", "bpf_link_create", "bpf_btf_load"} {
+				if ev.Tags[k] == "true" {
+					t.Errorf("cmd=%d (benign): unexpected tag %q set", tc.cmd, k)
+				}
+			}
+		}
+	}
+}
