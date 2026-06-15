@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"github.com/xhelix/xhelix/pkg/model"
@@ -99,6 +100,19 @@ func (s *Sensor) Enrich(ev *model.Event) {
 	if targetPID != 0 && targetPID == ev.PID {
 		ev.Tags["allowlisted_reader"] = "true"
 		ev.Tags["allowlist_reason"] = "self-read"
+		s.allowed.Add(1)
+		return
+	}
+	// Self-read via the magic symlink: /proc/self/* and
+	// /proc/thread-self/* ALWAYS resolve to the opening process, but the
+	// path carries the literal "self" so target_pid is never numeric and
+	// the check above misses it. Reading your own maps/environ is not
+	// credential scraping. (Found 2026-06-15: `ip`/`node`/runc reading
+	// /proc/self/maps were flagged cred_proc_scrape — pure FP.)
+	if p := ev.Tags["path"]; strings.HasPrefix(p, "/proc/self/") ||
+		strings.HasPrefix(p, "/proc/thread-self/") {
+		ev.Tags["allowlisted_reader"] = "true"
+		ev.Tags["allowlist_reason"] = "self-read-symlink"
 		s.allowed.Add(1)
 		return
 	}

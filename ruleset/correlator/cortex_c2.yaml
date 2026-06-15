@@ -42,7 +42,7 @@ steps:
   # set fires; system / package paths are excluded by virtue of NOT
   # matching this prefix list.
   - select: |
-      event.sensor == "ebpf.proc" && event.tags["kind"] == "proc_spawn" && (event.tags["path"].startsWith("/tmp/") || event.tags["path"].startsWith("/var/tmp/") || event.tags["path"].startsWith("/dev/shm/")) && event.tags["pkg_install_window"] != "true"
+      event.sensor == "ebpf.proc" && event.tags["kind"] == "proc_spawn" && (event.tags["path"].startsWith("/tmp/") || event.tags["path"].startsWith("/var/tmp/") || event.tags["path"].startsWith("/dev/shm/")) && !event.tags["path"].contains("/go-build") && event.tags["pkg_install_window"] != "true"
     within: 5m
 remediation: |
   Pattern: outbound fetch → non-package file write → exec from same

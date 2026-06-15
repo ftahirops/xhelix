@@ -95,3 +95,28 @@ func TestAllowlist_LoadFile(t *testing.T) {
 func writeFile(path, body string) error {
 	return os.WriteFile(path, []byte(body), 0o600)
 }
+
+// TestEnrichSelfReadViaProcSelfSymlink guards the 2026-06-15 FP fix:
+// reading /proc/self/maps (literal "self", no numeric target_pid) must
+// be treated as a self-read, not cred_proc_scrape. ip/node/runc hit this.
+func TestEnrichSelfReadViaProcSelfSymlink(t *testing.T) {
+	s := NewSensor(Default())
+	for _, p := range []string{"/proc/self/maps", "/proc/self/environ", "/proc/thread-self/maps"} {
+		ev := &model.Event{PID: 4242, Comm: "ip", Image: "/usr/bin/ip",
+			Tags: map[string]string{"kind": "proc_scrape", "path": p, "scrape_kind": "maps"}}
+		s.Enrich(ev)
+		if ev.Tags["cred_proc_scrape"] == "true" {
+			t.Errorf("path %s: self-read flagged as cred_proc_scrape (FP)", p)
+		}
+		if ev.Tags["allowlist_reason"] != "self-read-symlink" {
+			t.Errorf("path %s: expected self-read-symlink, got %q", p, ev.Tags["allowlist_reason"])
+		}
+	}
+	// Sanity: reading ANOTHER pid's maps is still flagged.
+	ev := &model.Event{PID: 4242, Comm: "evil", Image: "/tmp/evil",
+		Tags: map[string]string{"kind": "proc_scrape", "path": "/proc/999/maps", "target_pid": "999", "scrape_kind": "maps"}}
+	s.Enrich(ev)
+	if ev.Tags["cred_proc_scrape"] != "true" {
+		t.Error("reading another pid's maps must still flag cred_proc_scrape")
+	}
+}

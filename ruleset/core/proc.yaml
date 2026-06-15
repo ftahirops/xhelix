@@ -24,9 +24,15 @@ match: |
   event.sensor == "ebpf.proc" &&
   (event.image.startsWith("/tmp/") ||
    event.image.startsWith("/var/tmp/") ||
-   event.image.startsWith("/dev/shm/"))
+   event.image.startsWith("/dev/shm/")) &&
+  !event.image.contains("/go-build")
 tags: [post_exploitation, dropper]
 remediation: Capture and hash the binary; check it against threat-intel.
+# Go's toolchain compiles+runs test/build binaries under
+# /tmp/go-buildNNN/.../exe/* and *.test — the dominant FP source on any
+# host running `go test` (2026-06-15 triage: codemap_gen, *.test, etc.).
+# NOTE: a payload dropped under a /tmp/go-buildXXX/ path evades this;
+# narrow tradeoff vs. flooding on every build.
 test_id: K-03
 ---
 id: uid0_no_transition
@@ -67,9 +73,19 @@ mitre: [T1055.009, T1620]
 match: |
   event.sensor == "ebpf.proc" &&
   (event.image.startsWith("/proc/self/fd/") ||
-   event.tags["from_memfd"] == "true")
+   event.tags["from_memfd"] == "true") &&
+  !(("argv" in event.tags) && (
+    event.tags["argv"].startsWith("/usr/lib/systemd/systemd-executor") ||
+    event.tags["argv"].startsWith("runc")
+  ))
 tags: [defense_evasion, fileless]
 remediation: Fileless payload. Capture memory of the running pid.
+# Core OS/container infra re-execs via /proc/self/fd by design:
+# systemd-executor (sealed-memfd service launch) and `runc init`
+# (container namespace setup). Both scored critical verdict.incidents
+# on a clean box (2026-06-15 triage) — excluded by argv. NOTE: argv is
+# spoofable; a payload naming itself systemd-executor evades this. A
+# tighter gate (cgroup + parent lineage) is the real fix.
 test_id: S-01
 ---
 id: shell_with_socket_fd
