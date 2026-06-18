@@ -410,6 +410,11 @@ func runActivityPersister(ctx context.Context, log *slog.Logger,
 	// flow ID; this is a smaller correct-by-construction approach
 	// for the integration MVP.
 	seen := map[string]struct{}{}
+	// Cache OS-PID -> processes.id. The activities table FKs
+	// processes(id) (an autoincrement rowid), NOT the OS pid; resolve
+	// (and lazily insert) the real row id once per pid so InsertActivity
+	// below doesn't fail the FK on every call. Bounded alongside `seen`.
+	procIDByPID := map[uint32]int64{}
 
 	for {
 		select {
@@ -424,8 +429,25 @@ func runActivityPersister(ctx context.Context, log *slog.Logger,
 				}
 				seen[key] = struct{}{}
 
+				procID, ok := procIDByPID[c.PID]
+				if !ok {
+					rctx, rcancel := context.WithTimeout(ctx, 5*time.Second)
+					id, err := store.ProcessIDForPID(rctx, storehistory.Process{
+						PID: c.PID, PPID: c.PPID, Comm: c.Comm, Exe: c.Exe,
+						ExeSHA: c.ExeSHA, CGroupClass: c.CGroupClass.String(),
+						Unit: c.Unit, UserID: c.UserID, StartedAt: c.OpenedAt,
+					})
+					rcancel()
+					if err != nil {
+						log.Warn("history process resolve failed", "pid", c.PID, "err", err)
+						continue
+					}
+					procID = id
+					procIDByPID[c.PID] = procID
+				}
+
 				clusterer.Add(activity.Flow{
-					ProcessID: int64(c.PID),
+					ProcessID: procID,
 					Proto:     c.Tuple.Proto.String(),
 					DstIP:     c.Tuple.DstAddr.String(),
 					DstPort:   c.Tuple.DstPort,
@@ -440,6 +462,12 @@ func runActivityPersister(ctx context.Context, log *slog.Logger,
 			// Bound the seen map to recent samples.
 			if len(seen) > 100_000 {
 				seen = map[string]struct{}{}
+			}
+			// Bound the pid->row cache too (pids are reused over time;
+			// a periodic flush keeps it from growing and lets a reused
+			// pid re-resolve to a fresh process row).
+			if len(procIDByPID) > 50_000 {
+				procIDByPID = map[uint32]int64{}
 			}
 
 			closed := clusterer.Flush(time.Now())

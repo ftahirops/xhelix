@@ -2,6 +2,7 @@ package history
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -249,5 +250,51 @@ func TestEmptyCounts(t *testing.T) {
 	if c.Sessions != 0 || c.Processes != 0 || c.Activities != 0 ||
 		c.Flows != 0 || c.DNSQueries != 0 {
 		t.Fatalf("non-zero on empty store: %+v", c)
+	}
+}
+
+// TestProcessIDForPID guards the 2026-06-18 FK fix: resolving a live PID
+// must insert a process row when missing, reuse it on repeat, and yield
+// an id that satisfies the activities.process_id FK (which raw PIDs did
+// not — every activity insert failed FOREIGN KEY constraint).
+func TestProcessIDForPID(t *testing.T) {
+	// Temp FILE (not :memory:) so foreign_keys(ON) is applied — the FK is
+	// enforced only on file DBs, which is the production path.
+	s, err := Open(filepath.Join(t.TempDir(), "h.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	// First call for a never-seen pid inserts a row.
+	id1, err := s.ProcessIDForPID(ctx, Process{PID: 529551, Comm: "isolex", Exe: "/usr/local/bin/isolex"})
+	if err != nil {
+		t.Fatalf("resolve (insert): %v", err)
+	}
+	if id1 == 0 {
+		t.Fatal("expected a non-zero process id")
+	}
+	// Second call for the same still-open pid reuses the row (no dup).
+	id2, err := s.ProcessIDForPID(ctx, Process{PID: 529551, Comm: "isolex"})
+	if err != nil {
+		t.Fatalf("resolve (reuse): %v", err)
+	}
+	if id1 != id2 {
+		t.Errorf("reuse mismatch: id1=%d id2=%d", id1, id2)
+	}
+	// The resolved id satisfies the activities FK (the original bug).
+	if _, err := s.InsertActivity(ctx, Activity{
+		ProcessID: id1, StartedAt: time.Now(), EndedAt: time.Now(),
+		PrimaryHost: "example.com", Verdict: "green",
+	}); err != nil {
+		t.Fatalf("activity insert with resolved id must satisfy FK, got: %v", err)
+	}
+	// Sanity: a raw OS PID that is NOT a row id still fails the FK
+	// (proving the FK is real and the fix is what makes it pass).
+	if _, err := s.InsertActivity(ctx, Activity{
+		ProcessID: 999999, StartedAt: time.Now(), EndedAt: time.Now(), Verdict: "green",
+	}); err == nil {
+		t.Error("expected FK failure for a non-existent process_id")
 	}
 }

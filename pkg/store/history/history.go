@@ -142,6 +142,31 @@ func (s *Store) EndProcess(ctx context.Context, id int64, when time.Time) error 
 	return err
 }
 
+// ProcessIDForPID returns the id of the most recent still-open process
+// row for p.PID, inserting a new row from p if none exists. It exists so
+// callers that only hold a live OS PID can satisfy the
+// activities.process_id foreign key. Before this, the network-activity
+// path wrote the raw PID into activities.process_id (a FK to
+// processes.id, an autoincrement rowid) — they never matched, so every
+// insert failed with "FOREIGN KEY constraint failed" and processes/
+// activities stayed empty (found 2026-06-18).
+func (s *Store) ProcessIDForPID(ctx context.Context, p Process) (int64, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM processes WHERE pid = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`,
+		p.PID).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("process lookup for pid %d: %w", p.PID, err)
+	}
+	if p.StartedAt.IsZero() {
+		p.StartedAt = time.Now()
+	}
+	return s.InsertProcess(ctx, p)
+}
+
 // ── Activity ───────────────────────────────────────────────────
 
 // Activity is one clustered network activity (per-page-load /
