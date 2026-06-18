@@ -38,10 +38,18 @@ func OpenHot(path string) (*HotStore, error) {
 		// SQLITE_BUSY ("hot prune (time) failed ... database is locked"),
 		// which had stalled retention and let the table grow unbounded.
 		// Matches the coldstore DSN.
+		// auto_vacuum(incremental): freed pages (from retention DELETEs)
+		// go to a freelist that PRAGMA incremental_vacuum reclaims in
+		// place — no full-rewrite VACUUM, which took an exclusive lock
+		// for tens of seconds and dropped concurrent inserts with
+		// SQLITE_BUSY (2026-06-18). NOTE: this only takes effect on a
+		// fresh DB; an existing auto_vacuum=NONE file must be converted
+		// once with `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;`.
 		dsn = "file:" + path + "?_pragma=journal_mode(WAL)" +
 			"&_pragma=synchronous(NORMAL)" +
 			"&_pragma=busy_timeout(5000)" +
-			"&_pragma=journal_size_limit(67108864)"
+			"&_pragma=journal_size_limit(67108864)" +
+			"&_pragma=auto_vacuum(incremental)"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -203,11 +211,15 @@ func (h *HotStore) PruneBySize(ctx context.Context, maxBytes int64) (int64, erro
 		return 0, fmt.Errorf("size prune delete: %w", err)
 	}
 	n, _ := res.RowsAffected()
-	// Reclaim pages. SQLite's VACUUM rewrites the file; can be slow
-	// at multi-GB sizes but we only reach here when the file is
-	// already over the cap, so the cost is justified.
-	if _, err := h.db.ExecContext(ctx, `VACUUM`); err != nil {
-		return n, fmt.Errorf("size prune vacuum: %w", err)
+	// Reclaim the pages the DELETE just freed. With auto_vacuum=
+	// INCREMENTAL these sit on a freelist; incremental_vacuum moves them
+	// to the end and truncates the file IN PLACE — no full rewrite, so
+	// it holds the write lock only briefly instead of the tens-of-seconds
+	// exclusive lock a full VACUUM took (which timed out and dropped
+	// concurrent inserts, 2026-06-18). On a DB still in auto_vacuum=NONE
+	// (pre-conversion) this is a cheap no-op rather than an error.
+	if _, err := h.db.ExecContext(ctx, `PRAGMA incremental_vacuum`); err != nil {
+		return n, fmt.Errorf("size prune incremental_vacuum: %w", err)
 	}
 	return n, nil
 }
