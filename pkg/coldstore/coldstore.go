@@ -115,11 +115,18 @@ func New(opts Options) (*Store, error) {
 
 	// Use _pragma URL params so the pragmas are applied on every
 	// connection in the pool. modernc.org/sqlite supports this.
+	// auto_vacuum(incremental): DROP TABLE during retention frees pages
+	// to a freelist that PRAGMA incremental_vacuum reclaims in place,
+	// instead of leaving them in the file forever (a 14-day prune left
+	// cold.db at 8 GiB with 5.7 GiB free, 2026-06-18). Only applies to a
+	// fresh DB; existing auto_vacuum=NONE files convert once via
+	// `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;`.
 	dsn := opts.Path + "?_pragma=journal_mode(WAL)" +
 		"&_pragma=synchronous(NORMAL)" +
 		"&_pragma=journal_size_limit(67108864)" + // 64 MB
 		"&_pragma=temp_store(MEMORY)" +
-		"&_pragma=busy_timeout(5000)"
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=auto_vacuum(incremental)"
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -571,6 +578,16 @@ func (s *Store) DropOldDays(now time.Time) ([]string, error) {
 			return dropped, fmt.Errorf("coldstore drop %s: %w", name, err)
 		}
 		dropped = append(dropped, name)
+	}
+	// Reclaim the pages the DROP TABLEs just freed. With auto_vacuum=
+	// INCREMENTAL they sit on a freelist; incremental_vacuum truncates
+	// the file IN PLACE — no full-rewrite VACUUM. No-op on a DB still in
+	// auto_vacuum=NONE (pre-conversion). Without this, dropped days left
+	// their pages in the file forever (8 GiB file / 5.7 GiB free).
+	if len(dropped) > 0 {
+		if _, err := s.db.Exec(`PRAGMA incremental_vacuum`); err != nil {
+			return dropped, fmt.Errorf("coldstore incremental_vacuum: %w", err)
+		}
 	}
 	return dropped, nil
 }
