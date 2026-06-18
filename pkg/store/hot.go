@@ -29,7 +29,19 @@ type HotStore struct {
 func OpenHot(path string) (*HotStore, error) {
 	dsn := path
 	if path != ":memory:" {
-		dsn = "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+		// journal_size_limit caps the WAL file: after each checkpoint
+		// SQLite truncates it back to 64 MiB instead of leaving it at
+		// the high-water-mark forever (a burst once grew hot.db-wal to
+		// 3.5 GiB on disk while holding only ~573 live frames —
+		// 2026-06-18). busy_timeout makes writers (esp. the retention
+		// Prune) wait for the lock instead of failing instantly with
+		// SQLITE_BUSY ("hot prune (time) failed ... database is locked"),
+		// which had stalled retention and let the table grow unbounded.
+		// Matches the coldstore DSN.
+		dsn = "file:" + path + "?_pragma=journal_mode(WAL)" +
+			"&_pragma=synchronous(NORMAL)" +
+			"&_pragma=busy_timeout(5000)" +
+			"&_pragma=journal_size_limit(67108864)"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
