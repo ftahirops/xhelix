@@ -2700,6 +2700,34 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 	}
 
+	// Self-check: the tamper-evident hash chain is a core integrity
+	// guarantee, but it can be silently off — disabled in config (drift),
+	// or enabled-but-failed-to-init (bad/missing key). It was dark for
+	// ~3 weeks via config drift and nobody noticed (2026-06-19), because
+	// a disabled chain logs nothing. Surface it loudly: a WARN AND a
+	// hard_deny alert (classified in runtime_categories.yaml so the
+	// verdict router can't suppress it) so "my own tamper-log is off"
+	// reaches operators, not just an absent log line.
+	if forensicsChain == nil {
+		log.Warn("SELF-CHECK: tamper-evident chain is NOT active — events are not signed/hash-chained; offline tamper-verification is impossible",
+			"chain_enabled", cfg.Chain.Enabled)
+		bus.Send(model.Alert{
+			RuleID: "selfcheck.chain_disabled",
+			Reason: fmt.Sprintf("tamper-evident forensics chain is not running (chain.enabled=%v) — events are not signed/hash-chained, so offline tamper-evidence is unavailable", cfg.Chain.Enabled),
+			Mode:   model.ModeDetect,
+			Event: model.Event{
+				Time:     time.Now().UTC(),
+				Host:     func() string { h, _ := os.Hostname(); return h }(),
+				Sensor:   "selfcheck",
+				Severity: model.SeverityHigh,
+				Tags: map[string]string{
+					"check":         "tamper_chain",
+					"chain_enabled": fmt.Sprintf("%v", cfg.Chain.Enabled),
+				},
+			},
+		})
+	}
+
 	// Event channel
 	events := make(chan model.Event, 4096)
 

@@ -50,6 +50,10 @@ categories:
   # the bus router (enqueued directly), but is classified hard_deny so the
   # replay tool and any future consumer treat it as always-emit.
   verdict.incident: hard_deny
+  # Self-integrity: xhelix's own tamper-evident chain is off/failed-init.
+  # hard_deny so the verdict router always emits it (a disabled chain is a
+  # standalone integrity event, not lineage-scored evidence).
+  selfcheck.chain_disabled: hard_deny
   brp.hard_deny: hard_deny
   egressguard.deny: hard_deny
   policy.global.deny: hard_deny
