@@ -16,3 +16,14 @@ func TestServiceEgressFieldsDefaultOff(t *testing.T) {
 		t.Errorf("fields not settable: %+v", s)
 	}
 }
+
+func TestServiceEgressFQDNsSettable(t *testing.T) {
+	var s Service
+	if s.EgressAllowFQDNs != nil {
+		t.Error("EgressAllowFQDNs must default to nil")
+	}
+	s.EgressAllowFQDNs = []string{"api.stripe.com"}
+	if len(s.EgressAllowFQDNs) != 1 || s.EgressAllowFQDNs[0] != "api.stripe.com" {
+		t.Errorf("not settable: %+v", s)
+	}
+}

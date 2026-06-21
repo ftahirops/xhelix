@@ -79,6 +79,14 @@ type Service struct {
 	// when EgressDefaultDeny is set. Empty + EgressDefaultDeny=true means
 	// "no external egress at all" (localhost/link-local only).
 	EgressAllowCIDRs []string `json:"egress_allow_cidrs,omitempty"`
+
+	// EgressAllowFQDNs are operator-declared hostnames allowed when
+	// EgressDefaultDeny is set. They are resolved to IPs AT ARM TIME and
+	// folded into the systemd IPAddressAllow drop-in (SP-1b.2a). This is a
+	// static snapshot — it does NOT track IP rotation; re-arm to refresh.
+	// If a declared FQDN cannot be resolved at arm time, arming fails
+	// rather than installing a lockdown that would block it.
+	EgressAllowFQDNs []string `json:"egress_allow_fqdns,omitempty"`
 }
 
 // App is the top-level declaration unit.
