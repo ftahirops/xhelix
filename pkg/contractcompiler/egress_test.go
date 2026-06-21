@@ -41,3 +41,20 @@ func TestCompileEgressDefaultsOff(t *testing.T) {
 		t.Error("egress must default off when not declared")
 	}
 }
+
+func TestCompileCarriesEgressFQDNs(t *testing.T) {
+	app := appregistry.App{
+		Name: "shop",
+		Services: []appregistry.Service{{
+			Name:              "nginx",
+			UnitName:          "nginx.service",
+			EgressDefaultDeny: true,
+			EgressAllowFQDNs:  []string{"api.stripe.com"},
+		}},
+	}
+	cc := Compile(app, redzones.Default())
+	got := cc.Services[0].EgressAllowFQDNs
+	if len(got) != 1 || got[0] != "api.stripe.com" {
+		t.Errorf("EgressAllowFQDNs not carried: %v", got)
+	}
+}

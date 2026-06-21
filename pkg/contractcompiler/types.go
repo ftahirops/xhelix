@@ -91,4 +91,5 @@ type CompiledService struct {
 	// renders them into systemd IPAddressAllow/IPAddressDeny. Default off.
 	EgressDefaultDeny bool     `json:"egress_default_deny,omitempty"`
 	EgressAllowCIDRs  []string `json:"egress_allow_cidrs,omitempty"`
+	EgressAllowFQDNs  []string `json:"egress_allow_fqdns,omitempty"`
 }

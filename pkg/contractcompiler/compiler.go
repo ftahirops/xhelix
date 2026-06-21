@@ -95,6 +95,7 @@ func compileService(app appregistry.App, svc appregistry.Service, policy *redzon
 		WriteDeny:         append([]string(nil), policy.WriteZones...),
 		EgressDefaultDeny: svc.EgressDefaultDeny,
 		EgressAllowCIDRs:  append([]string(nil), svc.EgressAllowCIDRs...),
+		EgressAllowFQDNs:  append([]string(nil), svc.EgressAllowFQDNs...),
 	}
 
 	// ExecAllow: the app's own declared binaries. In locked/sealed mode
