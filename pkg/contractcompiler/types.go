@@ -85,4 +85,10 @@ type CompiledService struct {
 	// but in P5a the live enforcement path is the cgroup-scoped policy
 	// hook, not these global path rules.
 	ExecguardRules []execguard.Rule `json:"-"`
+
+	// EgressDefaultDeny / EgressAllowCIDRs carry the operator-declared
+	// pre-start egress allowlist (SP-1b.1) through to the arm path, which
+	// renders them into systemd IPAddressAllow/IPAddressDeny. Default off.
+	EgressDefaultDeny bool     `json:"egress_default_deny,omitempty"`
+	EgressAllowCIDRs  []string `json:"egress_allow_cidrs,omitempty"`
 }

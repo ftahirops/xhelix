@@ -88,11 +88,13 @@ func writeSet(b *strings.Builder, label string, items []string) {
 // compileService builds the CompiledService for one declared service.
 func compileService(app appregistry.App, svc appregistry.Service, policy *redzones.Policy, arch seccomp.Arch) CompiledService {
 	cs := CompiledService{
-		Unit:        firstNonEmpty(svc.UnitName, svc.Name),
-		Kind:        string(svc.ServiceType),
-		CgroupMatch: svc.CgroupMatch,
-		ExecDeny:    append([]string(nil), policy.ExecPaths...),
-		WriteDeny:   append([]string(nil), policy.WriteZones...),
+		Unit:              firstNonEmpty(svc.UnitName, svc.Name),
+		Kind:              string(svc.ServiceType),
+		CgroupMatch:       svc.CgroupMatch,
+		ExecDeny:          append([]string(nil), policy.ExecPaths...),
+		WriteDeny:         append([]string(nil), policy.WriteZones...),
+		EgressDefaultDeny: svc.EgressDefaultDeny,
+		EgressAllowCIDRs:  append([]string(nil), svc.EgressAllowCIDRs...),
 	}
 
 	// ExecAllow: the app's own declared binaries. In locked/sealed mode
