@@ -37,6 +37,12 @@ func Builtin(kind protectedsvc.ServiceKind, role protectedsvc.ServiceRole) (prot
 		return builtinNginx(role)
 	case protectedsvc.KindApache:
 		return builtinApache(role)
+	case protectedsvc.KindMysql:
+		return builtinMysql(role)
+	case protectedsvc.KindPostgres:
+		return builtinPostgres(role)
+	case protectedsvc.KindRedis:
+		return builtinRedis(role)
 	}
 	return protectedsvc.ServiceContract{}, fmt.Errorf("%w: kind=%q role=%q", ErrUnsupportedRole, kind, role)
 }
