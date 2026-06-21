@@ -27,7 +27,7 @@ func newTestArmorer(t *testing.T) (*Armorer, *[]string) {
 
 func TestRenderDropIn_SeccompOnly(t *testing.T) {
 	got := RenderDropIn("wordpress", "locked", "php-fpm.service",
-		"SystemCallFilter=~ptrace bpf", "", fixedNow())
+		"SystemCallFilter=~ptrace bpf", "", "", fixedNow())
 	if !strings.Contains(got, "[Service]") {
 		t.Error("missing [Service] section")
 	}
@@ -43,7 +43,7 @@ func TestRenderDropIn_SeccompOnly(t *testing.T) {
 }
 
 func TestRenderDropIn_Empty(t *testing.T) {
-	if RenderDropIn("a", "locked", "x.service", "", "", fixedNow()) != "" {
+	if RenderDropIn("a", "locked", "x.service", "", "", "", fixedNow()) != "" {
 		t.Error("empty seccomp + empty apparmor should render empty")
 	}
 }

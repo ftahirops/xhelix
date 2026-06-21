@@ -18,6 +18,7 @@ type ServiceSpec struct {
 	Unit             string
 	SeccompDirective string            // "SystemCallFilter=~…" or ""
 	AppArmor         *apparmor.Profile // nil = no AppArmor for this service
+	EgressDirective  string            // "IPAddressAllow=…\nIPAddressDeny=any" or ""
 }
 
 // ServiceStatus is the per-service arm result/state.
@@ -108,7 +109,7 @@ func (a *Armorer) Arm(app, mode string, svcs []ServiceSpec) (ArmResult, error) {
 			}
 		}
 
-		text := RenderDropIn(app, mode, svc.Unit, svc.SeccompDirective, apparmorName, a.now())
+		text := RenderDropIn(app, mode, svc.Unit, svc.SeccompDirective, apparmorName, svc.EgressDirective, a.now())
 		if text == "" {
 			// Nothing to enforce for this service.
 			res.Services = append(res.Services, st)

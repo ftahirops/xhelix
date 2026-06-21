@@ -28,10 +28,13 @@ func DropInName(app string) string {
 //   - seccompDirective is the "SystemCallFilter=~…" line (may be empty).
 //   - apparmorProfile is the loaded AppArmor profile name (may be empty
 //     when AppArmor is unavailable or the profile wasn't loaded).
+//   - egressDirective is the "IPAddressAllow=…\nIPAddressDeny=any" block
+//     from EgressDirectives (may be empty when egress is not locked).
 //
-// Returns "" when neither seccomp nor AppArmor has anything to enforce.
-func RenderDropIn(app, mode, unit, seccompDirective, apparmorProfile string, at time.Time) string {
-	if seccompDirective == "" && apparmorProfile == "" {
+// Returns "" when there is nothing to enforce (no seccomp, no AppArmor,
+// no egress).
+func RenderDropIn(app, mode, unit, seccompDirective, apparmorProfile, egressDirective string, at time.Time) string {
+	if seccompDirective == "" && apparmorProfile == "" && egressDirective == "" {
 		return ""
 	}
 	var b strings.Builder
@@ -48,6 +51,10 @@ func RenderDropIn(app, mode, unit, seccompDirective, apparmorProfile string, at 
 	}
 	if apparmorProfile != "" {
 		fmt.Fprintf(&b, "AppArmorProfile=%s\n", apparmorProfile)
+	}
+	if egressDirective != "" {
+		b.WriteString(egressDirective)
+		b.WriteString("\n")
 	}
 	return b.String()
 }
