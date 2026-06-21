@@ -43,6 +43,7 @@ packaging/deb/usr/local/bin/xhelix-verify
 !docs/NPM_SUPPLY_CHAIN_RAT_CONTAINMENT_STRATEGY.md
 !docs/BEHAVIORAL_COMPILER_BUILD_PLAN.md
 !docs/BEHAVIORAL_COMPILER_ARCHITECTURE.md
+!docs/2026-06-21-XHELIX_APP_CAUSAL_BRP_SCOPE_LOCK.md
 
 # Local state for development
 /var/
