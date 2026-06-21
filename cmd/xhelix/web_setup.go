@@ -700,6 +700,13 @@ func specsFor(cc *contractcompiler.CompiledContract) []contractarm.ServiceSpec {
 		if cs.AppArmorText != "" {
 			spec.AppArmor = &cs.AppArmor
 		}
+		// SP-1b.1: pre-start egress lockdown, opt-in per service. When the
+		// service didn't declare EgressDefaultDeny, no directive is emitted
+		// and behaviour is unchanged. Armorer writes the drop-in but does
+		// not restart — enforcement applies on the operator's next restart.
+		if cs.EgressDefaultDeny {
+			spec.EgressDirective = contractarm.EgressDirectives(cs.EgressAllowCIDRs)
+		}
 		specs = append(specs, spec)
 	}
 	return specs
