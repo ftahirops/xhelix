@@ -94,6 +94,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/remediate"
 	"github.com/xhelix/xhelix/pkg/response"
 	"github.com/xhelix/xhelix/pkg/rulecat"
+	"github.com/xhelix/xhelix/pkg/servicerole"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/baselinegate"
@@ -726,21 +727,31 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				return mc.CoversExec(cgroup, binaryPath)
 			})
 		}
-		// Wire the compiled per-app exec-allowlist hook (P5a). For apps in
-		// locked/sealed mode, denies exec of any binary not in the app's
-		// declared set, scoped to its cgroup. Tighten-only — the red-zone
-		// floor above is never weakened, and maintenance grants still lift.
-		if foundation.Compiler != nil {
-			cm := foundation.Compiler
-			execGuard.SetPolicyHook(func(binaryPath string, pid int32) (bool, string) {
-				cgroup := readProcCgroup(pid)
-				if cgroup == "" {
-					return false, ""
-				}
-				d, reason := cm.ExecDecisionFor(binaryPath, cgroup)
-				return d == contractcompiler.DecisionDeny, reason
-			})
+		// Wire the exec PolicyHook (tighten-only — never weakens the global
+		// red-zone floor above; maintenance grants still lift it):
+		//   1. compiled per-app exec-allowlist (P5a) — for apps in
+		//      locked/sealed mode, denies exec of any binary not in the
+		//      app's declared set, scoped to its cgroup.
+		//   2. service-role floor (SP-1a.1) — scoped red-zone exec deny for
+		//      protected daemons (mysql/postgres/redis/nginx/apache),
+		//      applied to the service's own cgroup independent of any app
+		//      declaration.
+		var cm *contractcompiler.Manager
+		if foundation != nil {
+			cm = foundation.Compiler
 		}
+		execGuard.SetPolicyHook(func(binaryPath string, pid int32) (bool, string) {
+			cgroup := readProcCgroup(pid)
+			if cgroup == "" {
+				return false, ""
+			}
+			if cm != nil {
+				if d, reason := cm.ExecDecisionFor(binaryPath, cgroup); d == contractcompiler.DecisionDeny {
+					return true, reason
+				}
+			}
+			return servicerole.DenyExec(cgroup, binaryPath)
+		})
 		mounts := cfg.ExecGuard.MountPoints
 		if len(mounts) == 0 {
 			mounts = []string{"/"}
