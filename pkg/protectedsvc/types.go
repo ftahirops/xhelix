@@ -17,12 +17,17 @@ import "time"
 type ServiceKind string
 
 const (
-	KindNginx  ServiceKind = "nginx"
-	KindApache ServiceKind = "apache"
+	KindNginx    ServiceKind = "nginx"
+	KindApache   ServiceKind = "apache"
+	KindMysql    ServiceKind = "mysql"
+	KindPostgres ServiceKind = "postgres"
+	KindRedis    ServiceKind = "redis"
 )
 
 // AllKinds returns every supported kind. Used by config validation.
-func AllKinds() []ServiceKind { return []ServiceKind{KindNginx, KindApache} }
+func AllKinds() []ServiceKind {
+	return []ServiceKind{KindNginx, KindApache, KindMysql, KindPostgres, KindRedis}
+}
 
 // ServiceRole narrows the kind to a deployment shape. Roles drive
 // which built-in contract template applies.
@@ -33,11 +38,16 @@ const (
 	RoleReverseProxy ServiceRole = "reverse_proxy"
 	RoleFastCGI      ServiceRole = "fastcgi"
 	RolePHPModule    ServiceRole = "php_module"
+	RoleDatabase     ServiceRole = "database"
+	RoleCache        ServiceRole = "cache"
 )
 
 // AllRoles returns every supported role.
 func AllRoles() []ServiceRole {
-	return []ServiceRole{RoleStatic, RoleReverseProxy, RoleFastCGI, RolePHPModule}
+	return []ServiceRole{
+		RoleStatic, RoleReverseProxy, RoleFastCGI, RolePHPModule,
+		RoleDatabase, RoleCache,
+	}
 }
 
 // ProtectedService is one configured service the operator wants
