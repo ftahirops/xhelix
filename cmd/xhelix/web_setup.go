@@ -24,6 +24,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/contractarm"
 	"github.com/xhelix/xhelix/pkg/contractaudit"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
+	"github.com/xhelix/xhelix/pkg/egressresolve"
 	"github.com/xhelix/xhelix/pkg/contractdiff"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
 	"github.com/xhelix/xhelix/pkg/contractpropose"
@@ -653,6 +654,7 @@ type daemonCompiledPolicyProvider struct {
 	mc       *maintenancechain.Store    // sealed-mode break-glass
 	breaker  *contracthealth.Breaker    // deny-storm state (alert-only)
 	sign     *contractsign.Store        // sealed-mode signature gate (P7)
+	resolver egressresolve.Resolver     // egress FQDN resolution at arm (SP-1b.2a)
 }
 
 func (d *daemonCompiledPolicyProvider) Policy(name string) (*web.CompiledPolicyView, error) {
@@ -710,6 +712,27 @@ func specsFor(cc *contractcompiler.CompiledContract) []contractarm.ServiceSpec {
 		specs = append(specs, spec)
 	}
 	return specs
+}
+
+// resolveEgressFQDNs resolves each opted-in service's declared FQDNs and
+// appends the resulting host CIDRs to its in-memory EgressAllowCIDRs, so
+// specsFor renders the merged set into the drop-in. Snapshot semantics
+// (SP-1b.2a) — re-arm to refresh. Returns an error if any declared FQDN is
+// unresolvable, so the arm fails closed rather than installing a lockdown
+// that would block it.
+func resolveEgressFQDNs(ctx context.Context, r egressresolve.Resolver, cc *contractcompiler.CompiledContract) error {
+	for i := range cc.Services {
+		cs := &cc.Services[i]
+		if !cs.EgressDefaultDeny || len(cs.EgressAllowFQDNs) == 0 {
+			continue
+		}
+		cidrs, err := egressresolve.ResolveCIDRs(ctx, r, cs.EgressAllowFQDNs)
+		if err != nil {
+			return fmt.Errorf("egress FQDN resolution for %s: %w", cs.Unit, err)
+		}
+		cs.EgressAllowCIDRs = append(cs.EgressAllowCIDRs, cidrs...)
+	}
+	return nil
 }
 
 func unitsFor(cc *contractcompiler.CompiledContract) []string {
@@ -783,6 +806,19 @@ func (d *daemonCompiledPolicyProvider) Arm(name string) (*web.ArmStatusView, err
 		if !signed && !d.sealedGateOK(cc) {
 			return nil, fmt.Errorf("sealed app: arming requires a valid signature over the current contract version (%s) or an active maintenance grant (break-glass)", shortSHA(cc.ArtifactSHA))
 		}
+	}
+	// SP-1b.2a: resolve declared egress FQDNs to IPs and fold them into the
+	// per-service allow CIDRs before rendering the drop-in. Fail-closed: an
+	// unresolvable FQDN aborts the arm rather than installing a lockdown
+	// that would block it.
+	r := d.resolver
+	if r == nil {
+		r = egressresolve.Default()
+	}
+	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := resolveEgressFQDNs(rctx, r, cc); err != nil {
+		return nil, err
 	}
 	res, err := d.armorer.Arm(cc.App, string(cc.Mode), specsFor(cc))
 	if err != nil {

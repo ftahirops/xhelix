@@ -92,6 +92,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/posture"
 	"github.com/xhelix/xhelix/pkg/proctree"
 	"github.com/xhelix/xhelix/pkg/remediate"
+	"github.com/xhelix/xhelix/pkg/egressresolve"
 	"github.com/xhelix/xhelix/pkg/response"
 	"github.com/xhelix/xhelix/pkg/rulecat"
 	"github.com/xhelix/xhelix/pkg/servicerole"
@@ -3155,6 +3156,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			mc:       foundation.MaintenanceChains,
 			breaker:  foundation.Breaker,
 			sign:     foundation.ContractSign,
+			resolver: egressresolve.Default(),
 		})
 	}
 
