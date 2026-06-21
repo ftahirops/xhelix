@@ -335,6 +335,12 @@ type AgentConfig struct {
 	LogDir            string        `yaml:"log_dir"`
 	HeartbeatURL      string        `yaml:"heartbeat_url"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
+	// StrictConfigAudit promotes the startup config audit from
+	// warn-only to fail-closed: if any non-default config knob has no
+	// registered consumer, the daemon refuses to start instead of
+	// merely logging. Default off so an unknown knob can never brick a
+	// running deployment; operators opt in (and CI runs with it on).
+	StrictConfigAudit bool `yaml:"strict_config_audit"`
 }
 
 // StorageConfig describes the hot/warm/cold tiers.

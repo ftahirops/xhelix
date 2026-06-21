@@ -44,6 +44,8 @@ packaging/deb/usr/local/bin/xhelix-verify
 !docs/BEHAVIORAL_COMPILER_BUILD_PLAN.md
 !docs/BEHAVIORAL_COMPILER_ARCHITECTURE.md
 !docs/2026-06-21-XHELIX_APP_CAUSAL_BRP_SCOPE_LOCK.md
+!docs/RESPONSE_DUAL_PATH.md
+!docs/PIPELINE_HANDLE_DECOMPOSITION.md
 
 # Local state for development
 /var/

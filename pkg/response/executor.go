@@ -12,9 +12,13 @@ import (
 // Bridges the new planner output (pkg/decision) to the existing
 // Engine backends (do* methods on Engine).
 //
-// Extracted in P-RF.9. Behaviour-preserving: each action bit on
-// ActionPlan maps 1:1 to an existing Engine.do* method, called in
-// the same order as Engine.OnAlert's bitmask walk.
+// Extracted in P-RF.9. Each action bit on ActionPlan maps 1:1 to an
+// existing Engine.do* method (the backend set reached is identical to
+// Engine.OnAlert's). NOTE: the *order* of the destructive/network
+// actions is NOT identical to OnAlert's bitmask walk — only the
+// evidence-first invariant (snapshot before any process signal) holds
+// in both. See docs/RESPONSE_DUAL_PATH.md and the equivalence proofs in
+// equivalence_test.go.
 //
 // Why a separate type rather than expanding Engine: the existing
 // Engine takes a model.Alert + a RuleID-keyed policy map. The new

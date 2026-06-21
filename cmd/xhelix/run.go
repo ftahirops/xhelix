@@ -158,6 +158,42 @@ func newRunCmd() *cobra.Command {
 	return cmd
 }
 
+// predeclaredAuditKeys are config knobs the daemon knows about up front,
+// so the startup audit reports them as "unwitnessed" (a missing consumer)
+// rather than "unknown" (a typo'd / orphaned field). Kept as a package var
+// so cmd/xhelix's config-audit test can assert the historically-dangerous
+// knobs (the ERRORS.md FileSink/hot.db trio) stay covered.
+var predeclaredAuditKeys = []string{
+	"agent.state_dir", "agent.heartbeat_url", "agent.heartbeat_interval",
+	"agent.strict_config_audit",
+	"storage.hot.path", "storage.hot.retention_hours", "storage.hot.max_size_mb",
+	"storage.warm.enabled", "storage.cold.enabled",
+	"ruleset.bundled", "ruleset.custom_dir", "ruleset.reload_on_change",
+	"alerts.severity_threshold",
+	"response.enabled", "response.soak_days",
+	"netban.enabled", "netban.use_nftables",
+	"remediate.enabled", "remediate.backup_dir",
+	"intel.enabled",
+	"chain.enabled", "chain.dir", "chain.key_path",
+	"logging.level", "logging.format",
+	// P-RF.9b takeover knobs
+	"takeover.active", "takeover.tick_interval", "takeover.min_score",
+	"takeover.bastion_available", "takeover.off_host_mirror",
+	// P-RF.9d protected-services loader
+	"protected_services.enabled", "protected_services.services",
+	// P-RF.9e forensic ingest
+	"forensic_ingest.enabled", "forensic_ingest.dir",
+	"forensic_ingest.scan_interval", "forensic_ingest.poll_interval",
+}
+
+// strictAuditFails reports whether a strict-mode startup should abort:
+// strict enabled AND at least one non-default config knob lacked a
+// registered consumer. Extracted as a pure predicate so the policy is
+// unit-testable without booting the daemon.
+func strictAuditFails(strict bool, findings []configaudit.Finding) bool {
+	return strict && len(findings) > 0
+}
+
 func runDaemon(parent context.Context, cfgPath string) error {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -172,28 +208,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// ERRORS.md (FileSink rotation, hot.db retention, etc.).
 	cfgAudit := configaudit.New()
 	// Pre-declare known keys so they only show up as "unwitnessed"
-	// when no consumer registers, not "unknown".
-	for _, k := range []string{
-		"agent.state_dir", "agent.heartbeat_url", "agent.heartbeat_interval",
-		"storage.hot.path", "storage.hot.retention_hours", "storage.hot.max_size_mb",
-		"storage.warm.enabled", "storage.cold.enabled",
-		"ruleset.bundled", "ruleset.custom_dir", "ruleset.reload_on_change",
-		"alerts.severity_threshold",
-		"response.enabled", "response.soak_days",
-		"netban.enabled", "netban.use_nftables",
-		"remediate.enabled", "remediate.backup_dir",
-		"intel.enabled",
-		"chain.enabled", "chain.dir", "chain.key_path",
-		"logging.level", "logging.format",
-		// P-RF.9b takeover knobs
-		"takeover.active", "takeover.tick_interval", "takeover.min_score",
-		"takeover.bastion_available", "takeover.off_host_mirror",
-		// P-RF.9d protected-services loader
-		"protected_services.enabled", "protected_services.services",
-		// P-RF.9e forensic ingest
-		"forensic_ingest.enabled", "forensic_ingest.dir",
-		"forensic_ingest.scan_interval", "forensic_ingest.poll_interval",
-	} {
+	// when no consumer registers, not "unknown". The list is a package
+	// var (predeclaredAuditKeys) so the config-audit CI test can assert
+	// the historically-dangerous knobs stay covered.
+	for _, k := range predeclaredAuditKeys {
 		cfgAudit.Declare(k)
 	}
 	// Singleton check — refuse to start if another xhelix is already
@@ -3530,11 +3548,15 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// consume. This is the architectural lock against the
 	// "FileSink rotation / hot.db retention" bug class — three
 	// instances logged in ERRORS.md before this lock landed.
+	cfgAudit.Witness("agent.strict_config_audit", "configAudit")
 	if findings := cfgAudit.Audit(&cfg); len(findings) > 0 {
 		for _, f := range findings {
 			log.Warn("config knob declared but no consumer registered",
 				"key", f.Key, "value", f.Value, "issue", f.Issue,
 				"action", "either wire a Witness in code OR remove the field from xhelix.yaml")
+		}
+		if strictAuditFails(cfg.Agent.StrictConfigAudit, findings) {
+			return fmt.Errorf("strict config audit: %d non-default knob(s) have no registered consumer (see warnings above); set agent.strict_config_audit=false to downgrade to warn-only", len(findings))
 		}
 	} else {
 		log.Info("config audit clean — every non-default knob has a registered consumer",

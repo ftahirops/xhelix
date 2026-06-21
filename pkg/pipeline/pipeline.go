@@ -390,35 +390,46 @@ type Pipeline struct {
 //
 // Same order as before P-RF.7b. Any reordering changes behavior
 // and must be diff-tested against the golden corpus.
-func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
-	// Phase TLS-L2: opt-in plaintext capture. Nil-safe; when the
-	// ledger is nil OR the binary isn't allow-listed, Observe drops
-	// the event. Sensors.ebpf emits `payload_b64` only when the
-	// uprobe captured a non-empty buffer.
-	if p.TLSPlaintext != nil && ev.Sensor == "ebpf.ssl" {
-		var payload []byte
-		if b64 := ev.Tags["payload_b64"]; b64 != "" {
-			if decoded, err := base64.StdEncoding.DecodeString(b64); err == nil {
-				payload = decoded
-			}
-		}
-		if len(payload) == 0 {
-			payload = []byte(ev.Tags["payload"])
-		}
-		if len(payload) > 0 {
-			port := parseUint16(ev.Tags["dst_port"])
-			p.TLSPlaintext.Observe(tlsledger.Event{
-				Time:      ev.Time,
-				Binary:    firstNonEmpty(ev.Image, ev.Comm),
-				PID:       ev.PID,
-				Direction: ev.Tags["direction"],
-				PeerSNI:   ev.Tags["sni"],
-				PeerIP:    ev.Tags["dst_ip"],
-				PeerPort:  port,
-				Payload:   payload,
-			})
+// observeTLSPlaintext is the TLS-L2 phase of Handle(): opt-in plaintext
+// capture into the TLS ledger. Nil-safe — a no-op when the ledger is nil
+// or the event isn't an ebpf.ssl payload. The ledger itself drops events
+// whose binary isn't on the operator allow-list. Extracted from Handle()
+// in P-RF.8 (incremental dispatch decomposition); behaviour-preserving,
+// covered by pipeline_phases_test.go.
+func (p *Pipeline) observeTLSPlaintext(ev model.Event) {
+	if p.TLSPlaintext == nil || ev.Sensor != "ebpf.ssl" {
+		return
+	}
+	var payload []byte
+	if b64 := ev.Tags["payload_b64"]; b64 != "" {
+		if decoded, err := base64.StdEncoding.DecodeString(b64); err == nil {
+			payload = decoded
 		}
 	}
+	if len(payload) == 0 {
+		payload = []byte(ev.Tags["payload"])
+	}
+	if len(payload) == 0 {
+		return
+	}
+	port := parseUint16(ev.Tags["dst_port"])
+	p.TLSPlaintext.Observe(tlsledger.Event{
+		Time:      ev.Time,
+		Binary:    firstNonEmpty(ev.Image, ev.Comm),
+		PID:       ev.PID,
+		Direction: ev.Tags["direction"],
+		PeerSNI:   ev.Tags["sni"],
+		PeerIP:    ev.Tags["dst_ip"],
+		PeerPort:  port,
+		Payload:   payload,
+	})
+}
+
+func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
+	// Phase TLS-L2: opt-in plaintext capture. Extracted to a named,
+	// unit-tested method as the first step of the P-RF.8 incremental
+	// Handle() decomposition (see docs/PIPELINE_HANDLE_DECOMPOSITION.md).
+	p.observeTLSPlaintext(ev)
 
 	if p.EgressLedger != nil && ev.Sensor == "ebpf.net" {
 		kind := ev.Tags["kind"]
