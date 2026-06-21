@@ -65,6 +65,20 @@ type Service struct {
 	BinaryPath  string      `json:"binary_path,omitempty"`
 	ServiceType ServiceType `json:"service_type"`
 	UnitName    string      `json:"unit_name,omitempty"`
+
+	// EgressDefaultDeny opts this service into kernel-enforced,
+	// deny-by-default egress (SP-1b.1). Default false — when false, no
+	// egress policy is installed and behaviour is unchanged. When true,
+	// the arm path writes systemd IPAddressDeny=any plus an
+	// IPAddressAllow for localhost + link-local + EgressAllowCIDRs.
+	// The operator MUST include every CIDR the service legitimately
+	// needs (DNS resolver, NTP, package mirror, real upstreams) or the
+	// service will be unable to reach them after the next restart.
+	EgressDefaultDeny bool `json:"egress_default_deny,omitempty"`
+	// EgressAllowCIDRs are the operator-declared outbound CIDRs allowed
+	// when EgressDefaultDeny is set. Empty + EgressDefaultDeny=true means
+	// "no external egress at all" (localhost/link-local only).
+	EgressAllowCIDRs []string `json:"egress_allow_cidrs,omitempty"`
 }
 
 // App is the top-level declaration unit.
