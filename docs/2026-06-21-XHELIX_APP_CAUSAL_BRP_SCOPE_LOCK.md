@@ -260,13 +260,16 @@ precondition for safely recording everything else), then the learning system.
 
 | # | Sub-project | Contents | State |
 |---|---|---|---|
-| **SP-1** | **Deterministic protection layer** | red zones, service-role contracts, exec-deny, egress allowlist for stable services, maintenance chains, per-cgroup pre-start egress | partly built; **first to ship** |
+| **SP-1a** | **Deterministic protection layer (core)** | red-zone wiring + per-cgroup application, service-role contracts (nginx/sshd/mysql/redis invariants), exec-deny, maintenance-chain triggers (deploy/migration/cert/pkg) | mostly wiring + completing; **first to ship** |
+| **SP-1b** | **Per-cgroup pre-start egress allowlist** | compile per-app egress allowlist into cgroup-BPF (`egressguard` eBPF backend) + nftables per-cgroup fallback + systemd IPAddressAllow/Deny; DNS/SNI-bound, installed *before* app start | **hardest SP-1 piece; partly missing** (nft is global-deny, eBPF backend scaffold-only) |
 | SP-2 | Attribution & chain spine | App Registry v2, L7 root emitters, Workflow Chain Engine | greenfield core |
 | SP-3 | Semantic adapters | MySQL/PG/Redis table/verb/key visibility | greenfield, per-engine |
 | SP-4 | Recorder + Synthesizer | clean-window record, shape dedup, coverage, contract synthesis | greenfield; the R&D |
 | SP-5 | Compiler completion + mode rollout | full compile + shadow→locked promotion + circuit breaker | extends existing |
 
-**SP-1 is the first implementation target.**
+**SP-1a is the first implementation target.** SP-1b (per-cgroup pre-start
+egress) follows as its own cycle — split out because it is the one genuinely
+hard, partly-missing piece, so the wiring-heavy SP-1a can land independently.
 
 ---
 
@@ -285,5 +288,6 @@ plugins 70–90% · dev workstation 50–70%.
 
 ---
 
-*Scope locked 2026-06-21. Implementation begins with SP-1 (deterministic
-protection layer). Each sub-project gets its own spec → plan → build cycle.*
+*Scope locked 2026-06-21. Implementation begins with SP-1a (deterministic
+protection layer core); SP-1b (per-cgroup pre-start egress) is its own cycle.
+Each sub-project gets its own spec → plan → build cycle.*
