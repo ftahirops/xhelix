@@ -25,6 +25,9 @@ type UnitSource interface {
 // is the default; the real systemd applier is a separate (deferred) slice.
 type Applier interface {
 	Apply(unit string, allowCIDRs []string) error
+	// Commit is called once per RefreshOnce pass after all Apply calls, so
+	// implementations can batch expensive operations (e.g. daemon-reload).
+	Commit() error
 }
 
 // LogApplier logs the would-be allow-set and applies nothing (shadow mode).
@@ -39,6 +42,8 @@ func (l LogApplier) Apply(unit string, allowCIDRs []string) error {
 		"unit", unit, "allow", allowCIDRs)
 	return nil
 }
+
+func (l LogApplier) Commit() error { return nil }
 
 // Refresher periodically recomputes each unit's egress allow-set.
 type Refresher struct {
@@ -82,6 +87,9 @@ func (r *Refresher) RefreshOnce(ctx context.Context, now time.Time) {
 			continue
 		}
 		r.lastSet[u.Name] = key
+	}
+	if err := r.applier.Commit(); err != nil {
+		slog.Default().Warn("egress refresh commit failed", "err", err)
 	}
 }
 

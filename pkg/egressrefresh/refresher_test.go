@@ -39,6 +39,7 @@ func (r *recApplier) Apply(unit string, cidrs []string) error {
 	r.mu.Unlock()
 	return nil
 }
+func (r *recApplier) Commit() error { return nil }
 
 func TestRefreshMergesStaticAndResolved(t *testing.T) {
 	src := fakeSource{units: []Unit{{
@@ -97,3 +98,21 @@ func TestRefreshOnlyAppliesOnChange(t *testing.T) {
 type countApplier struct{ n int }
 
 func (c *countApplier) Apply(string, []string) error { c.n++; return nil }
+func (c *countApplier) Commit() error                { return nil }
+
+type commitCounter struct{ applies, commits int }
+
+func (c *commitCounter) Apply(string, []string) error { c.applies++; return nil }
+func (c *commitCounter) Commit() error                { c.commits++; return nil }
+
+func TestRefreshCommitsOncePerPass(t *testing.T) {
+	src := fakeSource{units: []Unit{
+		{Name: "a", StaticCIDRs: []string{"10.0.0.0/8"}},
+		{Name: "b", StaticCIDRs: []string{"10.0.0.0/8"}},
+	}}
+	cc := &commitCounter{}
+	New(src, fakeResolver{}, cc, time.Hour).RefreshOnce(context.Background(), t0)
+	if cc.applies != 2 || cc.commits != 1 {
+		t.Errorf("applies=%d commits=%d; want 2 applies, 1 commit", cc.applies, cc.commits)
+	}
+}
