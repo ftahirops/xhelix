@@ -92,6 +92,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/posture"
 	"github.com/xhelix/xhelix/pkg/proctree"
 	"github.com/xhelix/xhelix/pkg/remediate"
+	"github.com/xhelix/xhelix/pkg/egressrefresh"
 	"github.com/xhelix/xhelix/pkg/egressresolve"
 	"github.com/xhelix/xhelix/pkg/response"
 	"github.com/xhelix/xhelix/pkg/rulecat"
@@ -3158,6 +3159,21 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			sign:     foundation.ContractSign,
 			resolver: egressresolve.Default(),
 		})
+	}
+
+	// SP-1b.2b.1: shadow-mode egress re-resolver. Periodically recomputes
+	// each opted-in service's FQDN allow-set with a grace window and LOGS
+	// the would-be IPAddressAllow set (applies nothing — the real systemd
+	// applier is a separate, mechanism-verified slice). Inert when no
+	// service declares EgressDefaultDeny + FQDNs.
+	if foundation.AppRegistry != nil {
+		refresher := egressrefresh.New(
+			registryUnitSource{reg: foundation.AppRegistry},
+			egressresolve.Default(),
+			egressrefresh.LogApplier{Log: log},
+			10*time.Minute, // grace window
+		)
+		go refresher.Start(ctx, 5*time.Minute) // refresh interval
 	}
 
 	// Safety layer (contracthealth). The deny-storm breaker alerts but
