@@ -702,12 +702,16 @@ func specsFor(cc *contractcompiler.CompiledContract) []contractarm.ServiceSpec {
 		if cs.AppArmorText != "" {
 			spec.AppArmor = &cs.AppArmor
 		}
-		// SP-1b.1: pre-start egress lockdown, opt-in per service. When the
-		// service didn't declare EgressDefaultDeny, no directive is emitted
-		// and behaviour is unchanged. Armorer writes the drop-in but does
-		// not restart — enforcement applies on the operator's next restart.
+		// SP-1b.1/2a: arm-time egress. SP-1b.2b.2: for EgressLive services the
+		// arm drop-in carries only the FLOOR (localhost/link-local + deny);
+		// the egressrefresh loop owns the dynamic allow-set in its own 51-
+		// drop-in, so it can shrink it (systemd combines IPAddressAllow lists).
 		if cs.EgressDefaultDeny {
-			spec.EgressDirective = contractarm.EgressDirectives(cs.EgressAllowCIDRs)
+			if cs.EgressLive {
+				spec.EgressDirective = contractarm.EgressDirectives(nil)
+			} else {
+				spec.EgressDirective = contractarm.EgressDirectives(cs.EgressAllowCIDRs)
+			}
 		}
 		specs = append(specs, spec)
 	}

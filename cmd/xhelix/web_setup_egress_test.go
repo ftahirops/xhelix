@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
@@ -72,5 +73,20 @@ func TestResolveEgressFQDNsFailsArmOnUnresolvable(t *testing.T) {
 	}
 	if err := resolveEgressFQDNs(context.Background(), fakeEgressResolver{}, cc); err == nil {
 		t.Fatal("expected arm to fail when an FQDN is unresolvable")
+	}
+}
+
+func TestSpecsForLiveServiceGetsFloorOnly(t *testing.T) {
+	cc := &contractcompiler.CompiledContract{App: "shop", Services: []contractcompiler.CompiledService{{
+		Unit: "nginx.service", EgressDefaultDeny: true, EgressLive: true,
+		EgressAllowCIDRs: []string{"10.0.0.0/8"}, // must NOT appear in the arm drop-in
+	}}}
+	specs := specsFor(cc)
+	d := specs[0].EgressDirective
+	if !strings.Contains(d, "IPAddressDeny=any") || !strings.Contains(d, "localhost") {
+		t.Fatalf("live service should still get the floor: %q", d)
+	}
+	if strings.Contains(d, "10.0.0.0/8") {
+		t.Errorf("live service arm drop-in must NOT carry dynamic/static IPs (refresher owns them): %q", d)
 	}
 }
