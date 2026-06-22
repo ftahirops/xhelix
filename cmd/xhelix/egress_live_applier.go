@@ -50,8 +50,13 @@ func (a *liveEgressApplier) Apply(unit string, allowCIDRs []string) error {
 	}
 	content := "# Managed by xhelix egressrefresh (SP-1b.2b.2). Do not edit by hand.\n" +
 		"[Service]\nIPAddressAllow=" + strings.Join(allowCIDRs, " ") + "\n"
-	if err := os.WriteFile(a.dropInPath(unit), []byte(content), 0o644); err != nil {
-		return fmt.Errorf("live egress: write %s: %w", a.dropInPath(unit), err)
+	path := a.dropInPath(unit)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("live egress: write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("live egress: rename %s: %w", tmp, err)
 	}
 	if len(allowCIDRs) > 0 {
 		a.hadNonEmpty[unit] = true

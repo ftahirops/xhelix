@@ -68,14 +68,18 @@ func TestLiveApplierEmptyAfterNonEmptyIsLockdown(t *testing.T) {
 }
 
 func TestLiveApplierForgetRemovesDropIn(t *testing.T) {
-	a, _, dir := newTestApplier(t)
+	a, ran, dir := newTestApplier(t)
 	a.Apply("nginx.service", []string{"1.1.1.1/32"}); a.Commit()
 	p := filepath.Join(dir, "nginx.service.d", "51-xhelix-egress-dynamic.conf")
 	if _, err := os.Stat(p); err != nil {
 		t.Fatal("setup: drop-in missing")
 	}
+	reloadsBefore := len(*ran)
 	a.Forget("nginx.service"); a.Commit()
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Error("Forget should delete the unit's dynamic drop-in")
+	}
+	if len(*ran) <= reloadsBefore || (*ran)[len(*ran)-1] != "daemon-reload" {
+		t.Errorf("Forget+Commit must trigger a daemon-reload; runner calls: %v", *ran)
 	}
 }
