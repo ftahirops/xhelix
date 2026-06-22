@@ -92,4 +92,5 @@ type CompiledService struct {
 	EgressDefaultDeny bool     `json:"egress_default_deny,omitempty"`
 	EgressAllowCIDRs  []string `json:"egress_allow_cidrs,omitempty"`
 	EgressAllowFQDNs  []string `json:"egress_allow_fqdns,omitempty"`
+	EgressLive        bool     `json:"egress_live,omitempty"`
 }

@@ -27,3 +27,14 @@ func TestServiceEgressFQDNsSettable(t *testing.T) {
 		t.Errorf("not settable: %+v", s)
 	}
 }
+
+func TestServiceEgressLiveDefaultsOff(t *testing.T) {
+	var s Service
+	if s.EgressLive {
+		t.Error("EgressLive must default false (opt-in)")
+	}
+	s.EgressLive = true
+	if !s.EgressLive {
+		t.Error("EgressLive not settable")
+	}
+}

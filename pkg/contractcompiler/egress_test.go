@@ -58,3 +58,12 @@ func TestCompileCarriesEgressFQDNs(t *testing.T) {
 		t.Errorf("EgressAllowFQDNs not carried: %v", got)
 	}
 }
+
+func TestCompileCarriesEgressLive(t *testing.T) {
+	app := appregistry.App{Name: "shop", Services: []appregistry.Service{{
+		Name: "nginx", UnitName: "nginx.service", EgressDefaultDeny: true, EgressLive: true,
+	}}}
+	if !Compile(app, redzones.Default()).Services[0].EgressLive {
+		t.Error("EgressLive not carried to CompiledService")
+	}
+}

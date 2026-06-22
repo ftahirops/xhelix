@@ -87,6 +87,14 @@ type Service struct {
 	// If a declared FQDN cannot be resolved at arm time, arming fails
 	// rather than installing a lockdown that would block it.
 	EgressAllowFQDNs []string `json:"egress_allow_fqdns,omitempty"`
+
+	// EgressLive opts this service's egress into LIVE refresh (SP-1b.2b.2):
+	// the egressrefresh loop keeps the systemd IPAddressAllow set current as
+	// FQDN IPs rotate, with a grace window. Requires EgressDefaultDeny. When
+	// false, egress (if any) is the arm-time snapshot (SP-1b.2a). Live
+	// enforcement is additionally gated by the daemon's promotion knob
+	// (default off).
+	EgressLive bool `json:"egress_live,omitempty"`
 }
 
 // App is the top-level declaration unit.
