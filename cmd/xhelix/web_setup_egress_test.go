@@ -82,6 +82,9 @@ func TestSpecsForLiveServiceGetsFloorOnly(t *testing.T) {
 		EgressAllowCIDRs: []string{"10.0.0.0/8"}, // must NOT appear in the arm drop-in
 	}}}
 	specs := specsFor(cc)
+	if len(specs) == 0 {
+		t.Fatal("specsFor returned no specs")
+	}
 	d := specs[0].EgressDirective
 	if !strings.Contains(d, "IPAddressDeny=any") || !strings.Contains(d, "localhost") {
 		t.Fatalf("live service should still get the floor: %q", d)

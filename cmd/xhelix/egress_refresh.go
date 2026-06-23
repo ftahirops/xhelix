@@ -6,8 +6,10 @@ import (
 )
 
 // registryUnitSource adapts the app registry to egressrefresh.UnitSource:
-// it yields one Unit per service that opted into EgressDefaultDeny AND
-// declared FQDNs (services with only static CIDRs need no re-resolution).
+// it yields one Unit per service that opted into EgressDefaultDeny and either
+// declared FQDNs or set EgressLive. Live services are tracked even when they
+// have only static CIDRs (so their 51- drop-in is maintained); non-live
+// static-CIDR-only services need no re-resolution and are skipped.
 type registryUnitSource struct{ reg *appregistry.Registry }
 
 func (s registryUnitSource) Units() []egressrefresh.Unit {

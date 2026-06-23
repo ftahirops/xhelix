@@ -62,8 +62,8 @@ func TestLiveApplierEmptyAfterNonEmptyIsLockdown(t *testing.T) {
 	a.Apply("nginx.service", nil) // now empty -> intentional lockdown allowed
 	a.Commit()
 	b, _ := os.ReadFile(filepath.Join(dir, "nginx.service.d", "51-xhelix-egress-dynamic.conf"))
-	if !strings.Contains(string(b), "IPAddressAllow=\n") && !strings.HasSuffix(strings.TrimRight(string(b), "\n"), "IPAddressAllow=") {
-		t.Errorf("empty set after a non-empty set should write an empty allow (lockdown):\n%s", string(b))
+	if !strings.Contains(string(b), "IPAddressAllow=\n") {
+		t.Errorf("empty set after a non-empty set should write an empty allow line (lockdown):\n%s", string(b))
 	}
 }
 

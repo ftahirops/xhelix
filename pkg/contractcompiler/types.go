@@ -92,5 +92,7 @@ type CompiledService struct {
 	EgressDefaultDeny bool     `json:"egress_default_deny,omitempty"`
 	EgressAllowCIDRs  []string `json:"egress_allow_cidrs,omitempty"`
 	EgressAllowFQDNs  []string `json:"egress_allow_fqdns,omitempty"`
-	EgressLive        bool     `json:"egress_live,omitempty"`
+	// EgressLive mirrors appregistry.Service.EgressLive (SP-1b.2b.2): the
+	// refresher manages this service's egress live rather than at arm time.
+	EgressLive bool `json:"egress_live,omitempty"`
 }
