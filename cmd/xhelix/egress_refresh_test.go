@@ -24,3 +24,13 @@ func TestRegistryUnitSourceFiltersOptedIn(t *testing.T) {
 		t.Errorf("wrong unit mapped: %+v", units[0])
 	}
 }
+
+func TestUnitsFromAppsIncludesLiveStaticOnly(t *testing.T) {
+	apps := []appregistry.App{{Name: "shop", Services: []appregistry.Service{
+		{UnitName: "live.service", EgressDefaultDeny: true, EgressLive: true, EgressAllowCIDRs: []string{"10.0.0.0/8"}},
+	}}}
+	u := unitsFromApps(apps)
+	if len(u) != 1 || u[0].Name != "live.service" {
+		t.Fatalf("a live service (static-only) must be tracked: %+v", u)
+	}
+}

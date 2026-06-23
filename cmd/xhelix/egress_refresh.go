@@ -26,8 +26,11 @@ func unitsFromApps(apps []appregistry.App) []egressrefresh.Unit {
 	var out []egressrefresh.Unit
 	for _, app := range apps {
 		for _, svc := range app.Services {
-			if !svc.EgressDefaultDeny || len(svc.EgressAllowFQDNs) == 0 {
+			if !svc.EgressDefaultDeny {
 				continue
+			}
+			if len(svc.EgressAllowFQDNs) == 0 && !svc.EgressLive {
+				continue // static-CIDR-only non-live services need no refresh
 			}
 			unit := svc.UnitName
 			if unit == "" {

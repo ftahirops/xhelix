@@ -592,6 +592,11 @@ type ChainConfig struct {
 // the most permissive setting and operators promote per-feature.
 type HardeningConfig struct {
 	Egressguard EgressguardConfig `yaml:"egressguard"`
+	// EgressRefreshEnforce promotes the live FQDN egress refresher
+	// (SP-1b.2b.2) from shadow (log-only) to ENFORCE (writes 51- drop-ins
+	// + daemon-reload). Default false. High blast radius — only flip after
+	// reviewing each live service's shadow allow-set.
+	EgressRefreshEnforce bool `yaml:"egress_refresh_enforce,omitempty"`
 	// Seccomp controls the daemon's self-applied seccomp allowlist
 	// (Phase G.2). Default mode = "off" (no filter). Operator promotes
 	// to "audit" (filter installed, denied syscalls logged to

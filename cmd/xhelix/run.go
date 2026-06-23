@@ -3161,16 +3161,23 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		})
 	}
 
-	// SP-1b.2b.1: shadow-mode egress re-resolver. Periodically recomputes
-	// each opted-in service's FQDN allow-set with a grace window and LOGS
-	// the would-be IPAddressAllow set (applies nothing — the real systemd
-	// applier is a separate, mechanism-verified slice). Inert when no
-	// service declares EgressDefaultDeny + FQDNs.
+	// SP-1b.2b: egress re-resolver. Periodically recomputes each opted-in
+	// service's FQDN allow-set with a grace window. SHADOW by default
+	// (LogApplier — logs the would-be IPAddressAllow set, touches nothing);
+	// promoted to ENFORCE (live 51- drop-in + daemon-reload) only when the
+	// operator sets hardening.egress_refresh_enforce. Inert when no service
+	// opts into EgressDefaultDeny + (FQDNs or EgressLive).
 	if foundation.AppRegistry != nil {
+		cfgAudit.Witness("hardening.egress_refresh_enforce", "egressRefresher")
+		var egressApplier egressrefresh.Applier = egressrefresh.LogApplier{Log: log}
+		if cfg.Hardening.EgressRefreshEnforce && foundation.Armorer != nil {
+			egressApplier = newLiveEgressApplier(foundation.Armorer)
+			log.Warn("egress refresh ENFORCE mode — live IPAddressAllow updates are ON")
+		}
 		refresher := egressrefresh.New(
 			registryUnitSource{reg: foundation.AppRegistry},
 			egressresolve.Default(),
-			egressrefresh.LogApplier{Log: log},
+			egressApplier,
 			10*time.Minute, // grace window
 		)
 		go refresher.Start(ctx, 5*time.Minute) // refresh interval
