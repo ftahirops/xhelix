@@ -271,6 +271,35 @@ precondition for safely recording everything else), then the learning system.
 egress) follows as its own cycle — split out because it is the one genuinely
 hard, partly-missing piece, so the wiring-heavy SP-1a can land independently.
 
+### Status — 2026-06-24
+
+**SP-1b: DONE.** SP-1b.1 (static CIDR drop-in) + SP-1b.2a (FQDN-at-arm) +
+SP-1b.2b.1/.2 (shadow→live grace-windowed refresher) all landed + spike +
+live-validated. The eBPF/nftables-per-cgroup path the original SP-1b line item
+named is **not needed** — the spike proved systemd drop-in + `daemon-reload`
+updates a running cgroup's `IPAddressAllow` live (incl. shrink) on this host.
+
+**SP-1a enforcement: effectively COMPLETE** (a re-grounding, 2026-06-24,
+corrected the original "mostly wiring" estimate):
+- *exec-deny* — done (SP-1a.1: red-zone exec floor + service-role classifier →
+  execguard PolicyHook, scoped per service cgroup).
+- *protected-path WRITES* — done via the Tier-2 verify-tier (`pkg/verify`
+  PathClassifier + context domains; the 2026-05-23 FP-storm demotion). Adding
+  a naive hard write-deny is explicitly the wrong move.
+- *protected-path READS* — done via **credbroker** + `ruleset/core/redzones.yaml`
+  CEL rules. The BRP runtime *deliberately* excludes reads (`runtime.go:360`:
+  "reads of protected paths are handled by credbroker, not BRP"). The unused
+  `redzones.ReadZonePrefixes()` Go helper is **dead code**, not a coverage gap
+  — wiring it into BRP would duplicate credbroker.
+
+**SP-1a remaining = operability only:** the `xhelixctl maint` CLI (mint/list/
+revoke maintenance grants) — grants today are creatable only via the web UI /
+Go API. Being built as the SP-1a closing slice (own plan), with grant delivery
+via the existing `sweepMaintenanceChains` tick (operator drops a signed grant
+file; daemon ingests it ≤1 min). **Deferred** (logged, not building now):
+auto-mint triggers (pkg-mgr/deploy → grant; greenfield + privilege surface) and
+AppArmor explicit WriteZone-deny (FP-risky, redundant with the verify-tier).
+
 ---
 
 ## 13. Honest limits (no overstatement)
