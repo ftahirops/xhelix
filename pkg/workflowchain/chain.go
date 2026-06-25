@@ -105,3 +105,28 @@ func fidelity(requestID string) string {
 	}
 	return "coarse"
 }
+
+// Apply writes the stamp onto tags. No-op when tags is nil — the caller owns
+// map initialization (the pipeline always inits ev.Tags before stamping).
+// Never writes app_id: AppIdent is the sole owner of that tag.
+func (r Result) Apply(tags map[string]string) {
+	if tags == nil {
+		return
+	}
+	tags["chain_id"] = r.ChainID
+	tags["root_id"] = r.RootID
+	tags["root_type"] = r.RootType
+	tags["phase"] = r.Phase
+	tags["fidelity"] = r.Fidelity
+	if r.Learnable {
+		tags["learnable"] = "true"
+	} else {
+		tags["learnable"] = "false"
+	}
+	if r.RequestID != "" {
+		tags["request_id"] = r.RequestID
+	}
+	if r.JobID != "" {
+		tags["job_id"] = r.JobID
+	}
+}

@@ -93,3 +93,40 @@ func TestCompute_Learnable_FalseCases(t *testing.T) {
 		}
 	}
 }
+
+func TestResult_Apply_WritesExpectedTags(t *testing.T) {
+	r := Result{
+		ChainID: "deadbeef", RootID: "7", RootType: "web",
+		RequestID: "req-1", Phase: "request", Learnable: true, Fidelity: "precise",
+	}
+	tags := map[string]string{"app_id": "shop"}
+	r.Apply(tags)
+
+	want := map[string]string{
+		"chain_id":   "deadbeef",
+		"root_id":    "7",
+		"root_type":  "web",
+		"request_id": "req-1",
+		"phase":      "request",
+		"learnable":  "true",
+		"fidelity":   "precise",
+		"app_id":     "shop", // untouched
+	}
+	for k, v := range want {
+		if tags[k] != v {
+			t.Errorf("tags[%q] = %q, want %q", k, tags[k], v)
+		}
+	}
+	if _, ok := tags["job_id"]; ok {
+		t.Error("empty job_id must not be written")
+	}
+}
+
+func TestResult_Apply_NilMapIsNoOp(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Apply on nil map must not panic: %v", r)
+		}
+	}()
+	Result{ChainID: "x"}.Apply(nil)
+}
