@@ -68,6 +68,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/egresspolicy"
 	"github.com/xhelix/xhelix/pkg/imagecache"
 	"github.com/xhelix/xhelix/pkg/vhostcorr"
+	"github.com/xhelix/xhelix/pkg/workflowchain"
 	"github.com/xhelix/xhelix/pkg/intel"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/lolbin"
@@ -1437,6 +1438,10 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		}
 	}
 
+	// Workflow-chain stamp (SP-2): label this event with its chain identity
+	// now that app_id (AppIdent, above) is set, before BRP eval consumes it.
+	p.stampWorkflowChain(&ev)
+
 	// Egress observer (P-EGRESS.M1) — classify every outbound connect
 	// and stamp the result on event tags; tally bytes on outbound
 	// sendmsg events. Mode-1 is pure data: no enforcement.
@@ -1900,6 +1905,38 @@ func (p *Pipeline) populateHotGraph(ev model.Event, explicitSource lineage.Linea
 		}
 	}
 	p.HotGraph.Insert(node)
+}
+
+// stampWorkflowChain labels ev with its workflow-chain identity (chain_id,
+// root_id, root_type, phase, learnable, fidelity). Runs after AppIdent has
+// stamped app_id and before BRP eval, so the chain fields ride into the BRP /
+// Recorder consumers. Pure enrichment: no alerts, no enforcement. SP-2.
+func (p *Pipeline) stampWorkflowChain(ev *model.Event) {
+	if ev.Tags == nil {
+		ev.Tags = map[string]string{}
+	}
+	in := workflowchain.Inputs{
+		AppID:            ev.Tags["app_id"],
+		RequestID:        ev.Tags["request_id"],
+		JobID:            ev.Tags["job_id"],
+		RedZone:          ev.Severity >= model.SeverityCritical,
+		RecordWindowOpen: p.RecordWindowOpen,
+	}
+	if p.ProcTree != nil && ev.PID != 0 {
+		if rootID, _ := p.ProcTree.SourceOf(ev.PID); rootID != 0 {
+			in.RootID = rootID
+			if p.Origins != nil {
+				if o, ok := p.Origins.Get(rootID); ok {
+					in.RootType = o.Type
+					switch o.Type {
+					case lineage.RootSSH, lineage.RootSudo, lineage.RootPAM:
+						in.AdminShell = true
+					}
+				}
+			}
+		}
+	}
+	workflowchain.Compute(in).Apply(ev.Tags)
 }
 
 // recordGraphEvent translates a model.Event into a source.GraphEvent
