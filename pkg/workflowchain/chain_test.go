@@ -59,6 +59,19 @@ func TestCompute_ChainID_StableAndRequestSensitive(t *testing.T) {
 	if Compute(withReq2).ChainID == c.ChainID {
 		t.Error("Different request_ids must yield different chain_ids")
 	}
+
+	withJob := base
+	withJob.JobID = "job-1"
+	d := Compute(withJob)
+	if d.ChainID == a.ChainID {
+		t.Error("ChainID must differ when a job_id splits the workflow")
+	}
+
+	withJob2 := base
+	withJob2.JobID = "job-2"
+	if Compute(withJob2).ChainID == d.ChainID {
+		t.Error("Different job_ids must yield different chain_ids")
+	}
 }
 
 func TestCompute_LineageFallback_NoRequestID(t *testing.T) {
@@ -119,6 +132,56 @@ func TestResult_Apply_WritesExpectedTags(t *testing.T) {
 	}
 	if _, ok := tags["job_id"]; ok {
 		t.Error("empty job_id must not be written")
+	}
+}
+
+func TestCompute_PhaseFallback_UnknownRoot(t *testing.T) {
+	// RootUnknown (value 0) exercises the fallback branches in phase().
+	base := Inputs{AppID: "a", RootID: 7, RootType: lineage.RootUnknown, RecordWindowOpen: true}
+
+	// (a) no request/job id → background
+	got := Compute(base)
+	if got.Phase != "background" {
+		t.Errorf("(no req/job) Phase = %q, want \"background\"", got.Phase)
+	}
+
+	// (b) JobID set → job
+	withJob := base
+	withJob.JobID = "j-1"
+	got = Compute(withJob)
+	if got.Phase != "job" {
+		t.Errorf("(job id) Phase = %q, want \"job\"", got.Phase)
+	}
+
+	// (c) RequestID set → request
+	withReq := base
+	withReq.RequestID = "r-1"
+	got = Compute(withReq)
+	if got.Phase != "request" {
+		t.Errorf("(request id) Phase = %q, want \"request\"", got.Phase)
+	}
+}
+
+func TestResult_Apply_JobID(t *testing.T) {
+	// Non-empty JobID must be written; empty RequestID must NOT be written.
+	r := Result{
+		ChainID:   "aabbccdd",
+		RootID:    "7",
+		RootType:  "unknown",
+		RequestID: "", // empty — must not be written
+		JobID:     "job-9",
+		Phase:     "job",
+		Learnable: false,
+		Fidelity:  "coarse",
+	}
+	tags := map[string]string{}
+	r.Apply(tags)
+
+	if tags["job_id"] != "job-9" {
+		t.Errorf("tags[\"job_id\"] = %q, want \"job-9\"", tags["job_id"])
+	}
+	if _, ok := tags["request_id"]; ok {
+		t.Error("empty request_id must not be written to tags")
 	}
 }
 

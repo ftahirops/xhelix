@@ -68,7 +68,6 @@ import (
 	"github.com/xhelix/xhelix/pkg/egresspolicy"
 	"github.com/xhelix/xhelix/pkg/imagecache"
 	"github.com/xhelix/xhelix/pkg/vhostcorr"
-	"github.com/xhelix/xhelix/pkg/workflowchain"
 	"github.com/xhelix/xhelix/pkg/intel"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/lolbin"
@@ -86,6 +85,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/trustzone"
 	"github.com/xhelix/xhelix/pkg/webdrop"
 	"github.com/xhelix/xhelix/pkg/webshellguard"
+	"github.com/xhelix/xhelix/pkg/workflowchain"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/pkg/snicheck"
 	"github.com/xhelix/xhelix/sensors/dnsresolver"
@@ -1929,7 +1929,9 @@ func (p *Pipeline) stampWorkflowChain(ev *model.Event) {
 				if o, ok := p.Origins.Get(rootID); ok {
 					in.RootType = o.Type
 					switch o.Type {
-					case lineage.RootSSH, lineage.RootSudo, lineage.RootPAM:
+					case lineage.RootSSH, lineage.RootSudo, lineage.RootPAM, lineage.RootLocal:
+						// Interactive sessions (SSH, sudo, PAM, local console) are
+						// admin noise that must never become learnable (scope-lock §4).
 						in.AdminShell = true
 					}
 				}
