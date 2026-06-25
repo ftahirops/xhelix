@@ -3568,7 +3568,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}(),
 		foundation.HotGraph,
 		foundation.ProcCache,
-		foundation.Origins)
+		foundation.Origins,
+		cfg.WorkflowChain.RecordWindow)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -3716,6 +3717,7 @@ func dispatch(
 	hotGraph *hotgraph.Graph,
 	procKeys *canonical.ProcKeyCache,
 	origins *lineage.Store,
+	recordWindow bool,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -4118,7 +4120,7 @@ func dispatch(
 		TrustZone:        trustMgr,
 		TLSPlaintext:     tlsPlaintext,
 		Origins:          origins,
-		RecordWindowOpen: false,
+		RecordWindowOpen: recordWindow,
 	}
 	p.Run(ctx, events)
 }

@@ -330,3 +330,10 @@ func TestDetection_FleetMinCohort_EmptyDefaults(t *testing.T) {
 		t.Fatalf("absent fleet_min_cohort must default to 5, got %d", c.Detection.FleetMinCohort)
 	}
 }
+
+func TestConfig_WorkflowChain_DefaultRecordWindowClosed(t *testing.T) {
+	c := Default()
+	if c.WorkflowChain.RecordWindow {
+		t.Error("WorkflowChain.RecordWindow must default to false (no learning until operator opens it)")
+	}
+}

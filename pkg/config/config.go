@@ -129,6 +129,21 @@ type Config struct {
 
 	// Detection — verdict-engine alert gating. Default visibility.
 	Detection DetectionConfig `yaml:"detection"`
+
+	// WorkflowChain configures the SP-2 chain-stamping engine.
+	// Zero value (RecordWindow: false) is the safe default — no events
+	// are marked learnable until the operator explicitly opens a window.
+	WorkflowChain WorkflowChainConfig `yaml:"workflow_chain"`
+}
+
+// WorkflowChainConfig controls the SP-2 workflow chain stamping engine.
+type WorkflowChainConfig struct {
+	// RecordWindow, when true, marks the host as inside a trusted clean
+	// recording window so the chain engine stamps eligible events
+	// learnable. Operator-asserted, not self-certified (scope-lock §11).
+	// Default false — zero value is the safe default; no explicit set in
+	// Default() is needed (the omission is deliberate).
+	RecordWindow bool `yaml:"record_window"`
 }
 
 // DetectionConfig bundles the verdict-engine controls. AlertMode gates
