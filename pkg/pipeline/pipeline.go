@@ -229,6 +229,18 @@ type Pipeline struct {
 	// rule-engine path sees them immediately. T01 / Phase A1.
 	SourceMinter *source.Minter
 
+	// Origins resolves a lineage id to its root Origin (root type, user,
+	// source). Used by the workflow-chain stamp to label every event's
+	// causal root. Nil-safe: when absent the stamp falls back to root type
+	// unknown. SP-2.
+	Origins *lineage.Store
+
+	// RecordWindowOpen is the operator-asserted clean-window flag. The
+	// workflow-chain stamp only marks events learnable while this is true
+	// (scope-lock §11: clean windows are operator-asserted, not
+	// self-certified). Defaults false → nothing is learnable until opened.
+	RecordWindowOpen bool
+
 	// FileTaint tracks per-path writer provenance for file-mediated
 	// causality. FIM write events record (path → writer's CausalSet);
 	// file-read events look up the writer and merge its set into the

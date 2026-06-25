@@ -80,6 +80,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/integrity"
 	"github.com/xhelix/xhelix/pkg/intel"
 	"github.com/xhelix/xhelix/pkg/kintegrity"
+	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/lineagescore"
 	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/lockout"
@@ -3566,7 +3567,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			}
 		}(),
 		foundation.HotGraph,
-		foundation.ProcCache)
+		foundation.ProcCache,
+		foundation.Origins)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -3713,6 +3715,7 @@ func dispatch(
 	appLookup func(pid uint32) string,
 	hotGraph *hotgraph.Graph,
 	procKeys *canonical.ProcKeyCache,
+	origins *lineage.Store,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -4114,6 +4117,8 @@ func dispatch(
 		EgressPolicy:     egressPolicyEng,
 		TrustZone:        trustMgr,
 		TLSPlaintext:     tlsPlaintext,
+		Origins:          origins,
+		RecordWindowOpen: false,
 	}
 	p.Run(ctx, events)
 }
