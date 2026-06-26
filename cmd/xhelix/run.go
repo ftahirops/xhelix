@@ -50,6 +50,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/source"
+	"github.com/xhelix/xhelix/pkg/systemdroot"
 	"github.com/xhelix/xhelix/pkg/verify"
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/daemon/forensicingest"
@@ -4099,6 +4100,7 @@ func dispatch(
 		ProcScrape:       procScrapeSensor,
 		SNICheck:         sniCheck,
 		SourceMinter:     srcMinter,
+		SystemdRoots:     systemdroot.New(),
 		FileTaint:        fileTaint,
 		SourceStore:      srcStore,
 		BRPMatcher:       brpMatcher,

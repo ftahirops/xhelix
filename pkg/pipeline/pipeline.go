@@ -82,6 +82,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/session"
 	"github.com/xhelix/xhelix/pkg/shmguard"
 	"github.com/xhelix/xhelix/pkg/source"
+	"github.com/xhelix/xhelix/pkg/systemdroot"
 	"github.com/xhelix/xhelix/pkg/store"
 	"github.com/xhelix/xhelix/pkg/trustzone"
 	"github.com/xhelix/xhelix/pkg/webdrop"
@@ -230,6 +231,12 @@ type Pipeline struct {
 	// populate the in-memory lineage.Store in lockstep so the hot
 	// rule-engine path sees them immediately. T01 / Phase A1.
 	SourceMinter *source.Minter
+
+	// SystemdRoots mints + caches one RootSystemd lineage anchor per service
+	// unit and attributes it to processes spawning into that unit, so service
+	// workflows get a non-admin causal root (→ learnable). Root Emitters "B".
+	// Nil-safe. SP-RootEmitters.
+	SystemdRoots *systemdroot.Tracker
 
 	// Origins resolves a lineage id to its root Origin (root type, user,
 	// source). Used by the workflow-chain stamp to label every event's
@@ -944,6 +951,14 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			})
 			p.populateHotGraph(ev, explicitSource)
 			p.PkgLifecycle.TagSpawn(ev.PID, ev.ParentPID)
+			// Root Emitters "B": give processes under a systemd service unit a
+			// non-admin RootSystemd lineage root. Runs HERE — after OnSpawn has
+			// graphed ev.PID — so AttributeSource lands on a graphed node (the
+			// general MintFromEvent at the top of Handle runs before OnSpawn,
+			// too early to attribute a spawn's own PID). Mint one anchor per
+			// unit (cached), reuse it for every later spawn in the same unit so
+			// the whole unit subtree inherits the root via proctree.
+			p.attributeSystemdRoot(ctx, ev.PID)
 		case "ebpf.exit":
 			p.ProcTree.OnExit(ev.PID)
 			if p.HotGraph != nil && p.ProcKeys != nil && ev.PID != 0 {
@@ -1961,6 +1976,37 @@ func (p *Pipeline) stampWorkflowChain(ev *model.Event) {
 			"root_type", res.RootType, "admin", in.AdminShell, "redzone", in.RedZone,
 			"record_window", in.RecordWindowOpen, "comm", ev.Comm, "sensor", ev.Sensor)
 	}
+}
+
+// attributeSystemdRoot mints (once per unit, cached) and attributes a
+// RootSystemd lineage anchor to pid when pid runs under a real service unit,
+// so the unit's processes + descendants get a non-admin causal root and their
+// workflows become learnable. Must be called AFTER ProcTree.OnSpawn(pid) so
+// AttributeSource lands on a graphed node. Nil-safe. Root Emitters "B".
+func (p *Pipeline) attributeSystemdRoot(ctx context.Context, pid uint32) {
+	if p.SystemdRoots == nil || p.CGroupClassifier == nil ||
+		p.SourceMinter == nil || p.ProcTree == nil || pid == 0 {
+		return
+	}
+	info := p.CGroupClassifier.Classify(pid)
+	if !systemdroot.IsServiceUnit(info.Unit) {
+		return
+	}
+	id, ok := p.SystemdRoots.Get(info.Unit)
+	if !ok {
+		sev := model.NewEvent("identity.systemd", model.SeverityInfo)
+		sev.PID = pid
+		sev.Tags["service"] = "systemd"
+		sev.Tags["unit_action"] = "start"
+		sev.Tags["unit"] = info.Unit
+		newID, err := p.SourceMinter.MintFromEvent(ctx, sev)
+		if err != nil || newID == 0 {
+			return
+		}
+		id = newID
+		p.SystemdRoots.Put(info.Unit, id)
+	}
+	p.ProcTree.AttributeSource(pid, id)
 }
 
 // recordGraphEvent translates a model.Event into a source.GraphEvent
