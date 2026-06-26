@@ -151,3 +151,44 @@ func TestPAMBridgeReceivesJSON(t *testing.T) {
 		t.Fatal("no PAM event")
 	}
 }
+
+// TestPAMBridge_CarriesPID is the PAM analogue of TestParseSSH_PIDExtraction:
+// a PAM event MUST stamp ev.PID (the pam_exec caller's $PPID = the session
+// leader that execs the job) so the source minter attaches the anchor to that
+// process via proctree and the job's descendants inherit the lineage root.
+// Without it the anchor mints but is never proctree-attributed → workflows
+// stay root_id=0 → not learnable. This was unfixed for the PAM path.
+func TestPAMBridge_CarriesPID(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "pam.sock")
+	b := NewPAMBridge(sock, "host")
+	out := make(chan model.Event, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := b.Start(ctx, out); err != nil {
+		t.Fatal(err)
+	}
+	defer b.Stop(context.Background())
+
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	body, _ := json.Marshal(pamMessage{
+		Type: "session_open", Service: "cron", User: "root", PID: 709983,
+	})
+	c.Write(append(body, '\n'))
+
+	select {
+	case ev := <-out:
+		if ev.PID != 709983 {
+			t.Errorf("ev.PID = %d, want 709983 (PAM PID must be stamped for proctree attribution)", ev.PID)
+		}
+		if ev.Tags["service"] != "cron" {
+			t.Errorf("service = %q", ev.Tags["service"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no PAM event")
+	}
+}

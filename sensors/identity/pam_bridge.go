@@ -130,6 +130,12 @@ type pamMessage struct {
 	User    string `json:"user"`
 	RHost   string `json:"rhost"`
 	TTY     string `json:"tty"`
+	// PID is the pam_exec caller's PID (its $PPID = the session leader that
+	// will exec the job, e.g. the cron child). Carrying it lets the pipeline
+	// attribute the minted anchor to that process via proctree so the job's
+	// descendants inherit the lineage root and their workflows become
+	// learnable. 0 = unknown (anchor still mints, just not proctree-attributed).
+	PID int `json:"pid"`
 }
 
 func (b *PAMBridge) deliver(ctx context.Context, line []byte) {
@@ -139,6 +145,11 @@ func (b *PAMBridge) deliver(ctx context.Context, line []byte) {
 	}
 	ev := model.NewEvent("identity.pam", model.SeverityInfo)
 	ev.Host = b.Host
+	if msg.PID > 0 {
+		// Lets pipeline.go AttributeSource the minted anchor onto this PID so
+		// the session's job processes inherit the lineage root (proctree).
+		ev.PID = uint32(msg.PID)
+	}
 	ev.Tags["pam_type"] = msg.Type
 	ev.Tags["service"] = msg.Service
 	ev.Tags["user"] = msg.User
