@@ -86,6 +86,9 @@ func newSynthListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appID := args[0]
 			propPath := filepath.Join(stateDir, "contract-propose.db")
+			if _, err := os.Stat(propPath); err != nil {
+				return fmt.Errorf("proposal store not found at %s — run 'synth propose' first", propPath)
+			}
 			store, err := contractpropose.Open(propPath)
 			if err != nil {
 				return fmt.Errorf("open proposal store: %w", err)
@@ -113,6 +116,9 @@ func newSynthExportCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appID, id := args[0], args[1]
 			propPath := filepath.Join(stateDir, "contract-propose.db")
+			if _, err := os.Stat(propPath); err != nil {
+				return fmt.Errorf("proposal store not found at %s — run 'synth propose' first", propPath)
+			}
 			store, err := contractpropose.Open(propPath)
 			if err != nil {
 				return fmt.Errorf("open proposal store: %w", err)
