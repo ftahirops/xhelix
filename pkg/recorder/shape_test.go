@@ -60,3 +60,34 @@ func TestEdgeFromEvent_NotAnEdge(t *testing.T) {
 		t.Error("net event with no dst must not be an edge")
 	}
 }
+
+func TestShapeHash_OrderIndependentAndDeduped(t *testing.T) {
+	a := []Edge{{Kind: EdgeExec, Key: "curl"}, {Kind: EdgeEgress, Key: "api.stripe.com:443"}}
+	b := []Edge{{Kind: EdgeEgress, Key: "api.stripe.com:443"}, {Kind: EdgeExec, Key: "curl"}}
+	if ShapeHash(a) != ShapeHash(b) {
+		t.Error("ShapeHash must be order-independent")
+	}
+	// Duplicate edges (different Raw, same canonical Key) collapse.
+	c := []Edge{{Kind: EdgeWrite, Key: "/u/up", Raw: "/u/up/a.jpg"}, {Kind: EdgeWrite, Key: "/u/up", Raw: "/u/up/b.jpg"}}
+	d := []Edge{{Kind: EdgeWrite, Key: "/u/up", Raw: "/u/up/a.jpg"}}
+	if ShapeHash(c) != ShapeHash(d) {
+		t.Error("edges with identical canonical Key must collapse (different Raw irrelevant to shape)")
+	}
+}
+
+func TestShapeHash_DistinctShapesDiffer(t *testing.T) {
+	a := []Edge{{Kind: EdgeExec, Key: "curl"}}
+	b := []Edge{{Kind: EdgeExec, Key: "wget"}}
+	if ShapeHash(a) == ShapeHash(b) {
+		t.Error("different edge-sets must produce different hashes")
+	}
+}
+
+func TestShapeHash_Empty(t *testing.T) {
+	if ShapeHash(nil) == "" {
+		t.Error("empty shape must still produce a stable non-empty hash")
+	}
+	if ShapeHash(nil) != ShapeHash([]Edge{}) {
+		t.Error("nil and empty slice must hash identically")
+	}
+}

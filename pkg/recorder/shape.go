@@ -5,8 +5,11 @@
 package recorder
 
 import (
+	"encoding/binary"
+	"encoding/hex"
+	"hash/fnv"
 	"path"
-	"strings"
+	"sort"
 
 	"github.com/xhelix/xhelix/pkg/model"
 )
@@ -72,4 +75,28 @@ func EdgeFromEvent(e model.Event) (Edge, bool) {
 // building a shape hash. Kept private; Task 2 consumes it.
 func edgeID(e Edge) string { return string(e.Kind) + ":" + e.Key }
 
-var _ = strings.TrimSpace // reserved for path normalization in later tasks
+// ShapeHash is the order-independent, dedup-by-canonical-Key signature of a
+// chain's edge-set. FNV-64a over the sorted unique edge IDs — an identity
+// hash, not security. Same workflow structure → same hash regardless of leaf
+// detail (Raw) or event order.
+func ShapeHash(edges []Edge) string {
+	seen := make(map[string]struct{}, len(edges))
+	ids := make([]string, 0, len(edges))
+	for _, e := range edges {
+		id := edgeID(e)
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	h := fnv.New64a()
+	for _, id := range ids {
+		_, _ = h.Write([]byte(id))
+		_, _ = h.Write([]byte{0}) // separator: avoid "a"+"bc" == "ab"+"c"
+	}
+	var out [8]byte
+	binary.BigEndian.PutUint64(out[:], h.Sum64())
+	return hex.EncodeToString(out[:])
+}
