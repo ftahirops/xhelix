@@ -51,6 +51,7 @@ func main() {
 	root.AddCommand(newSafetyCmd())
 	root.AddCommand(newTLSCmd())
 	root.AddCommand(newRecorderCmd())
+	root.AddCommand(newSynthCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
