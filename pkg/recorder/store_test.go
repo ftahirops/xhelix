@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -60,6 +61,53 @@ func TestStore_ExemplarsCappedAndDistinct(t *testing.T) {
 	}
 	if len(ex) != 3 {
 		t.Fatalf("exemplars must be capped at 3, got %d (%v)", len(ex), ex)
+	}
+}
+
+func TestStore_ExemplarsPerKeyCapAndByKey(t *testing.T) {
+	s := mkStore(t) // ExemplarsPerShape = 3 (from existing mkStore helper)
+	t0 := time.Unix(1_700_000_000, 0)
+	// One shape (a single write edge to a dir), but record many chains whose
+	// write edge lands in TWO different dirs. Per-Key cap means each dir keeps
+	// up to 3 leaves independently — total 6, not 3.
+	dirs := map[string][]string{
+		"/u/a": {"1", "2", "3", "4"}, // 4 leaves → capped to 3
+		"/u/b": {"x", "y"},           // 2 leaves → both kept
+	}
+	i := 0
+	for dir, leaves := range dirs {
+		for _, leaf := range leaves {
+			e := []Edge{{Kind: EdgeWrite, Key: dir, Raw: dir + "/" + leaf}}
+			if err := s.RecordChain(chainFixture("shop", fmt.Sprintf("c%d", i), e, t0)); err != nil {
+				t.Fatal(err)
+			}
+			i++
+		}
+	}
+	sh := ShapeHash([]Edge{{Kind: EdgeWrite, Key: "/u/a"}}) // one write edge; dir differs but per-leaf shape...
+	_ = sh
+	// All these chains share the SAME shape only if Key participates in the hash
+	// the same way; here each chain has exactly one write edge with Key=dir, so
+	// the two dirs produce TWO shapes. Query each shape's by-key map.
+	all, err := s.Shapes("shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	totalKeptLeaves := 0
+	for _, row := range all {
+		byKey, err := s.ExemplarsByKey("shop", row.ShapeHash, EdgeWrite)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, raws := range byKey {
+			if len(raws) > 3 {
+				t.Errorf("per-key cap exceeded: %d raws for a key", len(raws))
+			}
+			totalKeptLeaves += len(raws)
+		}
+	}
+	if totalKeptLeaves != 5 { // 3 (capped from 4) + 2
+		t.Errorf("want 5 kept leaves across keys, got %d", totalKeptLeaves)
 	}
 }
 

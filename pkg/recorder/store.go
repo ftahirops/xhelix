@@ -61,9 +61,12 @@ CREATE TABLE IF NOT EXISTS exemplars (
   app_id     TEXT NOT NULL,
   shape_hash TEXT NOT NULL,
   edge_kind  TEXT NOT NULL,
+  edge_key   TEXT NOT NULL,
   raw        TEXT NOT NULL,
-  PRIMARY KEY (app_id, shape_hash, edge_kind, raw)
+  PRIMARY KEY (app_id, shape_hash, edge_kind, edge_key, raw)
 );
+-- edge_key column added in SP-4 Cycle 2; recorder is default-disabled and not
+-- yet deployed, so there is no production recorder.db to migrate — fresh DB only.
 CREATE INDEX IF NOT EXISTS exemplars_shape ON exemplars(app_id, shape_hash);
 `
 
@@ -134,26 +137,27 @@ func (s *Store) RecordChain(c Chain) error {
 		return fmt.Errorf("recorder upsert shape: %w", err)
 	}
 
-	// Insert exemplars, enforcing the per-shape cap. We pre-count before each
-	// edge insert so the cap is accurate across edges in the same chain call.
+	// Insert exemplars, enforcing the per-(app,shape,edge_kind,edge_key) cap so
+	// each directory / each exec binary / each host gets its own budget and one
+	// prolific key cannot starve the others (SP-4 Cycle 2 path-gen requirement).
 	for _, e := range c.Edges {
 		if e.Raw == "" {
 			continue
 		}
 		var n int
 		if err := s.db.QueryRow(
-			`SELECT COUNT(*) FROM exemplars WHERE app_id=? AND shape_hash=?`,
-			c.AppID, sh,
+			`SELECT COUNT(*) FROM exemplars WHERE app_id=? AND shape_hash=? AND edge_kind=? AND edge_key=?`,
+			c.AppID, sh, string(e.Kind), e.Key,
 		).Scan(&n); err != nil {
 			return fmt.Errorf("recorder count exemplars: %w", err)
 		}
 		if n >= s.exemplarsPerShape {
-			// Cap reached for this shape; skip remaining edges.
-			break
+			// Cap reached for this (shape, kind, key) bucket; skip this edge.
+			continue
 		}
 		if _, err := s.db.Exec(
-			`INSERT OR IGNORE INTO exemplars (app_id, shape_hash, edge_kind, raw) VALUES (?, ?, ?, ?)`,
-			c.AppID, sh, string(e.Kind), e.Raw,
+			`INSERT OR IGNORE INTO exemplars (app_id, shape_hash, edge_kind, edge_key, raw) VALUES (?, ?, ?, ?, ?)`,
+			c.AppID, sh, string(e.Kind), e.Key, e.Raw,
 		); err != nil {
 			return fmt.Errorf("recorder insert exemplar: %w", err)
 		}
@@ -236,6 +240,28 @@ func (s *Store) Exemplars(appID, shapeHash string) ([]string, error) {
 			return nil, fmt.Errorf("recorder exemplars scan: %w", err)
 		}
 		out = append(out, raw)
+	}
+	return out, rows.Err()
+}
+
+// ExemplarsByKey returns the raw samples for one edge kind of a shape, grouped
+// by the (coarsened) edge Key — e.g. for write edges, dir -> leaf paths. This
+// is the path generalizer's input. SP-4 Cycle 2.
+func (s *Store) ExemplarsByKey(appID, shapeHash string, kind EdgeKind) (map[string][]string, error) {
+	rows, err := s.db.Query(
+		`SELECT edge_key, raw FROM exemplars WHERE app_id=? AND shape_hash=? AND edge_kind=? ORDER BY edge_key, raw`,
+		appID, shapeHash, string(kind))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var k, raw string
+		if err := rows.Scan(&k, &raw); err != nil {
+			return nil, err
+		}
+		out[k] = append(out[k], raw)
 	}
 	return out, rows.Err()
 }
