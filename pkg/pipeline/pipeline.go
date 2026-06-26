@@ -1947,7 +1947,20 @@ func (p *Pipeline) stampWorkflowChain(ev *model.Event) {
 			}
 		}
 	}
-	workflowchain.Compute(in).Apply(ev.Tags)
+	res := workflowchain.Compute(in)
+	res.Apply(ev.Tags)
+	// Diagnostic (debug-level): pin why candidate events do/don't become
+	// learnable. Fires only for events with a resolved lineage root OR an
+	// app-scoped spawn/net event — low volume. Enable with log_level: debug
+	// and grep the journal for "learnable-diag". SP-4 recorder bring-up.
+	if p.Log != nil && (in.RootID != 0 ||
+		(in.AppID != "" && (ev.Sensor == "ebpf.spawn" || ev.Sensor == "ebpf.proc" ||
+			ev.Sensor == "net_connect" || ev.Sensor == "ebpf.net"))) {
+		p.Log.Debug("learnable-diag",
+			"learnable", res.Learnable, "app_id", in.AppID, "root_id", uint64(in.RootID),
+			"root_type", res.RootType, "admin", in.AdminShell, "redzone", in.RedZone,
+			"record_window", in.RecordWindowOpen, "comm", ev.Comm, "sensor", ev.Sensor)
+	}
 }
 
 // recordGraphEvent translates a model.Event into a source.GraphEvent
