@@ -92,3 +92,10 @@ func TestStampWorkflowChain_AdminShell_NotLearnable(t *testing.T) {
 		t.Errorf("phase = %q, want \"admin\"", ev.Tags["phase"])
 	}
 }
+
+func TestPipeline_HasRecorderField(t *testing.T) {
+	var p Pipeline
+	if p.Recorder != nil {
+		t.Error("zero Pipeline.Recorder must be nil (recording disabled by default)")
+	}
+}

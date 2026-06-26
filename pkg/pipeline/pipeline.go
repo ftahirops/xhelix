@@ -76,6 +76,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/proctree"
 	"github.com/xhelix/xhelix/pkg/ptraceguard"
 	"github.com/xhelix/xhelix/pkg/revshell"
+	"github.com/xhelix/xhelix/pkg/recorder"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/runtimeallow"
 	"github.com/xhelix/xhelix/pkg/session"
@@ -241,6 +242,11 @@ type Pipeline struct {
 	// (scope-lock §11: clean windows are operator-asserted, not
 	// self-certified). Defaults false → nothing is learnable until opened.
 	RecordWindowOpen bool
+
+	// Recorder persists learnable workflow chains for SP-4 synthesis.
+	// Nil-safe; nil disables recording. Records AFTER the workflow-chain
+	// stamp so events carry chain_id/learnable. SP-4.
+	Recorder *recorder.Recorder
 
 	// FileTaint tracks per-path writer provenance for file-mediated
 	// causality. FIM write events record (path → writer's CausalSet);
@@ -1441,6 +1447,9 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 	// Workflow-chain stamp (SP-2): label this event with its chain identity
 	// now that app_id (AppIdent, above) is set, before BRP eval consumes it.
 	p.stampWorkflowChain(&ev)
+	if p.Recorder != nil {
+		p.Recorder.Observe(ev)
+	}
 
 	// Egress observer (P-EGRESS.M1) — classify every outbound connect
 	// and stamp the result on event tags; tally bytes on outbound

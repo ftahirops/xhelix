@@ -82,6 +82,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/kintegrity"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/lineagescore"
+	"github.com/xhelix/xhelix/pkg/recorder"
 	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/lockout"
 	"github.com/xhelix/xhelix/pkg/memscan"
@@ -3569,7 +3570,8 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.HotGraph,
 		foundation.ProcCache,
 		foundation.Origins,
-		cfg.WorkflowChain.RecordWindow)
+		cfg.WorkflowChain.RecordWindow,
+		nil) // rec: Task 6 replaces with config-driven construction
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to
@@ -3718,6 +3720,7 @@ func dispatch(
 	procKeys *canonical.ProcKeyCache,
 	origins *lineage.Store,
 	recordWindow bool,
+	rec *recorder.Recorder,
 ) {
 	// Runtime allowlist — overlays /etc/xhelix/runtime-allowlist.yaml
 	// on a baked-in default set covering Node/V8, JVM, .NET, Python,
@@ -4121,6 +4124,23 @@ func dispatch(
 		TLSPlaintext:     tlsPlaintext,
 		Origins:          origins,
 		RecordWindowOpen: recordWindow,
+		Recorder:         rec,
+	}
+	if rec != nil {
+		go func() {
+			tk := time.NewTicker(30 * time.Second)
+			defer tk.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case now := <-tk.C:
+					if err := rec.Tick(now); err != nil && log != nil {
+						log.Warn("recorder tick", "err", err)
+					}
+				}
+			}
+		}()
 	}
 	p.Run(ctx, events)
 }
