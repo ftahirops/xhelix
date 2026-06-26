@@ -77,7 +77,7 @@ func NewStore(opts Options) (*Store, error) {
 	if opts.ExemplarsPerShape <= 0 {
 		opts.ExemplarsPerShape = 20
 	}
-	if opts.RetentionDays == 0 {
+	if opts.RetentionDays <= 0 {
 		opts.RetentionDays = 30
 	}
 
@@ -190,6 +190,34 @@ func (s *Store) Shapes(appID string) ([]ShapeRow, error) {
 	return out, rows.Err()
 }
 
+// AllShapes returns every shape row across all apps, ordered by app_id then
+// last_seen descending. Used by the coverage CLI to build cross-app reports.
+func (s *Store) AllShapes() ([]ShapeRow, error) {
+	rows, err := s.db.Query(`
+		SELECT app_id, shape_hash, root_type, phase, count, first_seen, last_seen
+		FROM shapes ORDER BY app_id, last_seen DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("recorder all shapes query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ShapeRow
+	for rows.Next() {
+		var r ShapeRow
+		var firstNS, lastNS int64
+		if err := rows.Scan(
+			&r.AppID, &r.ShapeHash, &r.RootType, &r.Phase,
+			&r.Count, &firstNS, &lastNS,
+		); err != nil {
+			return nil, fmt.Errorf("recorder all shapes scan: %w", err)
+		}
+		r.FirstSeen = time.Unix(0, firstNS).UTC()
+		r.LastSeen = time.Unix(0, lastNS).UTC()
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // Exemplars returns the distinct Raw strings stored for a given
 // (app_id, shape_hash) pair.
 func (s *Store) Exemplars(appID, shapeHash string) ([]string, error) {
@@ -235,7 +263,10 @@ func (s *Store) DropOld(now time.Time) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("recorder drop old shapes: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("recorder drop old rows affected: %w", err)
+	}
 	return n, nil
 }
 

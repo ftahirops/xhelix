@@ -3513,6 +3513,28 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 	}
 
+	// SP-4 Recorder construction (Task 6). When enabled, build the store +
+	// accumulator + recorder; otherwise rec stays nil and the pipeline hook no-ops.
+	var rec *recorder.Recorder
+	if cfg.Recorder.Enabled {
+		cfgAudit.Witness("recorder.enabled", "SP4Recorder")
+		cfgAudit.Witness("recorder.path", "SP4Recorder")
+		cfgAudit.Witness("recorder.exemplars_per_shape", "SP4Recorder")
+		cfgAudit.Witness("recorder.retention_days", "SP4Recorder")
+		cfgAudit.Witness("recorder.idle_flush_seconds", "SP4Recorder")
+		st, err := recorder.NewStore(recorder.Options{
+			Path:              cfg.Recorder.Path,
+			ExemplarsPerShape: cfg.Recorder.ExemplarsPerShape,
+			RetentionDays:     cfg.Recorder.RetentionDays,
+		})
+		if err != nil {
+			log.Error("recorder store open failed — recorder disabled", "err", err)
+		} else {
+			acc := recorder.NewAccumulator(time.Duration(cfg.Recorder.IdleFlushSeconds) * time.Second)
+			rec = recorder.New(acc, st)
+		}
+	}
+
 	// Dispatch loop
 	go dispatch(ctx, log, events, bus, apiSrv, hot, ruleEngine, corrEngine,
 		yaraScanner, intelMgr, mlDetector,
@@ -3571,7 +3593,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		foundation.ProcCache,
 		foundation.Origins,
 		cfg.WorkflowChain.RecordWindow,
-		nil) // rec: Task 6 replaces with config-driven construction
+		rec)
 
 	// Run the config audit at startup completion. Logs warnings for
 	// any non-default config knob that nothing has registered to

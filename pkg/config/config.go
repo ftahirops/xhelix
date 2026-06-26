@@ -134,6 +134,27 @@ type Config struct {
 	// Zero value (RecordWindow: false) is the safe default — no events
 	// are marked learnable until the operator explicitly opens a window.
 	WorkflowChain WorkflowChainConfig `yaml:"workflow_chain"`
+
+	// Recorder configures the SP-4 exemplar recorder. Default disabled.
+	// When enabled, learnable events are accumulated into workflow chains
+	// and stored as shape exemplars for the Cycle-2 synthesizer.
+	Recorder RecorderConfig `yaml:"recorder"`
+}
+
+// RecorderConfig controls the SP-4 exemplar recorder.
+type RecorderConfig struct {
+	// Enabled is the master toggle. Default false — operator opts in.
+	Enabled bool `yaml:"enabled"`
+	// Path is the on-disk SQLite database. Default /var/lib/xhelix/recorder.db.
+	Path string `yaml:"path"`
+	// ExemplarsPerShape caps how many raw-value exemplars are stored per
+	// (app_id, shape_hash). Default 20.
+	ExemplarsPerShape int `yaml:"exemplars_per_shape"`
+	// RetentionDays caps how long shapes are kept. Default 30.
+	RetentionDays int `yaml:"retention_days"`
+	// IdleFlushSeconds is the chain-idle timeout before a workflow chain
+	// is flushed to the store. Default 60.
+	IdleFlushSeconds int `yaml:"idle_flush_seconds"`
 }
 
 // WorkflowChainConfig controls the SP-2 workflow chain stamping engine.
@@ -1036,6 +1057,13 @@ func Default() Config {
 			},
 		},
 		Detection: DetectionConfig{AlertMode: "visibility", FleetMinCohort: 5},
+		Recorder: RecorderConfig{
+			Enabled:           false,
+			Path:              "/var/lib/xhelix/recorder.db",
+			ExemplarsPerShape: 20,
+			RetentionDays:     30,
+			IdleFlushSeconds:  60,
+		},
 	}
 }
 

@@ -50,6 +50,7 @@ func main() {
 	root.AddCommand(newZoneCmd())
 	root.AddCommand(newSafetyCmd())
 	root.AddCommand(newTLSCmd())
+	root.AddCommand(newRecorderCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

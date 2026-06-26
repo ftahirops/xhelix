@@ -337,3 +337,19 @@ func TestConfig_WorkflowChain_DefaultRecordWindowClosed(t *testing.T) {
 		t.Error("WorkflowChain.RecordWindow must default to false (no learning until operator opens it)")
 	}
 }
+
+func TestConfig_Recorder_DefaultDisabled(t *testing.T) {
+	c := Default()
+	if c.Recorder.Enabled {
+		t.Error("recorder must default disabled")
+	}
+	if c.Recorder.ExemplarsPerShape != 20 || c.Recorder.RetentionDays != 30 {
+		t.Errorf("recorder defaults wrong: %+v", c.Recorder)
+	}
+	if c.Recorder.Path != "/var/lib/xhelix/recorder.db" {
+		t.Errorf("recorder path wrong: %q", c.Recorder.Path)
+	}
+	if c.Recorder.IdleFlushSeconds != 60 {
+		t.Errorf("recorder idle flush seconds wrong: %d", c.Recorder.IdleFlushSeconds)
+	}
+}
