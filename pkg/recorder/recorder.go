@@ -26,12 +26,20 @@ func (r *Recorder) Observe(ev model.Event) {
 
 // Tick flushes idle chains into the store and prunes old shapes. Driven by a
 // ticker in run.go.
+//
+// All chains returned by FlushIdle are attempted regardless of store errors:
+// FlushIdle has already removed them from the accumulator, so an early return
+// would silently drop the remaining chains. The first error encountered is
+// returned after all chains have been attempted.
 func (r *Recorder) Tick(now time.Time) error {
+	var firstErr error
 	for _, c := range r.acc.FlushIdle(now) {
-		if err := r.st.RecordChain(c); err != nil {
-			return err
+		if err := r.st.RecordChain(c); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	_, err := r.st.DropOld(now)
-	return err
+	if _, err := r.st.DropOld(now); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }

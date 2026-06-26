@@ -3530,7 +3530,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		if err != nil {
 			log.Error("recorder store open failed — recorder disabled", "err", err)
 		} else {
-			acc := recorder.NewAccumulator(time.Duration(cfg.Recorder.IdleFlushSeconds) * time.Second)
+			idleSec := cfg.Recorder.IdleFlushSeconds
+			if idleSec <= 0 {
+				idleSec = 60
+			}
+			acc := recorder.NewAccumulator(time.Duration(idleSec) * time.Second)
 			rec = recorder.New(acc, st)
 		}
 	}

@@ -94,10 +94,17 @@ func runRecorderShapes(dbPath, appID string, w io.Writer) error {
 	}
 	fmt.Fprintf(w, "Shapes for %s (%d total):\n", appID, len(rows))
 	for _, r := range rows {
-		exs, _ := st.Exemplars(appID, r.ShapeHash)
-		fmt.Fprintf(w, "  %s  count=%-6d exemplars=%-3d phase=%-12s last=%s\n",
-			r.ShapeHash[:8], r.Count, len(exs), r.Phase,
-			r.LastSeen.Format("2006-01-02T15:04:05Z"))
+		exs, exErr := st.Exemplars(appID, r.ShapeHash)
+		hashPrefix := r.ShapeHash[:min(8, len(r.ShapeHash))]
+		if exErr != nil {
+			fmt.Fprintf(w, "  %s  count=%-6d exemplars=(unavailable: %v) phase=%-12s last=%s\n",
+				hashPrefix, r.Count, exErr, r.Phase,
+				r.LastSeen.Format("2006-01-02T15:04:05Z"))
+		} else {
+			fmt.Fprintf(w, "  %s  count=%-6d exemplars=%-3d phase=%-12s last=%s\n",
+				hashPrefix, r.Count, len(exs), r.Phase,
+				r.LastSeen.Format("2006-01-02T15:04:05Z"))
+		}
 	}
 	return nil
 }
