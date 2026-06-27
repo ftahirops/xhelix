@@ -24,6 +24,7 @@
 package appident
 
 import (
+	"container/list"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -165,40 +166,74 @@ type Signals struct {
 	Comm string
 }
 
-// Identifier is goroutine-safe and caches per-lineage identity so
-// repeated calls for the same lineage return the same AppID without
-// re-matching.
+// DefaultCacheCap bounds the per-lineage identity cache. The cache is keyed by
+// CGroupID, which the kernel REUSES after a cgroup is destroyed (session scopes
+// churn constantly), so an unbounded cache both leaks and risks stale labels on
+// id reuse. A bounded LRU caps memory and lets stale entries age out naturally.
+const DefaultCacheCap = 16384
+
+type cacheEntry struct {
+	key uint64
+	val AppID
+}
+
+// Identifier is goroutine-safe and caches per-lineage identity (bounded LRU) so
+// repeated calls for the same lineage return the same AppID without re-matching.
 type Identifier struct {
 	decls []Declaration
 
-	mu    sync.RWMutex
-	cache map[uint64]AppID
+	mu    sync.Mutex // write lock: LRU lookups reorder the list
+	cap   int
+	ll    *list.List               // front = most-recently-used
+	cache map[uint64]*list.Element // CGroupID -> *cacheEntry element
 }
 
-// New constructs an Identifier from a declaration set (may be nil/empty).
-func New(decls []Declaration) *Identifier {
+// New constructs an Identifier from a declaration set (may be nil/empty) with
+// the default cache cap.
+func New(decls []Declaration) *Identifier { return NewWithCap(decls, DefaultCacheCap) }
+
+// NewWithCap is New with an explicit LRU cap (cap <= 0 uses the default).
+func NewWithCap(decls []Declaration, cap int) *Identifier {
+	if cap <= 0 {
+		cap = DefaultCacheCap
+	}
 	return &Identifier{
 		decls: decls,
-		cache: map[uint64]AppID{},
+		cap:   cap,
+		ll:    list.New(),
+		cache: map[uint64]*list.Element{},
 	}
 }
 
-// Identify returns the AppID for the given signals. Results are
-// cached by LineageID; the first call computes, later calls are
-// O(1) map lookups.
+// Identify returns the AppID for the given signals. Results are cached by
+// LineageID in a bounded LRU; a hit is O(1) and marks the entry most-recent.
 func (i *Identifier) Identify(s Signals) AppID {
 	if s.LineageID != 0 {
-		i.mu.RLock()
-		a, ok := i.cache[s.LineageID]
-		i.mu.RUnlock()
-		if ok {
+		i.mu.Lock()
+		if el, ok := i.cache[s.LineageID]; ok {
+			i.ll.MoveToFront(el)
+			a := el.Value.(*cacheEntry).val
+			i.mu.Unlock()
 			return a
 		}
+		i.mu.Unlock()
 	}
 	a := i.compute(s)
 	if s.LineageID != 0 {
 		i.mu.Lock()
-		i.cache[s.LineageID] = a
+		if el, ok := i.cache[s.LineageID]; ok {
+			// Computed concurrently elsewhere; refresh + promote.
+			el.Value.(*cacheEntry).val = a
+			i.ll.MoveToFront(el)
+		} else {
+			i.cache[s.LineageID] = i.ll.PushFront(&cacheEntry{key: s.LineageID, val: a})
+			if i.ll.Len() > i.cap {
+				if back := i.ll.Back(); back != nil {
+					i.ll.Remove(back)
+					delete(i.cache, back.Value.(*cacheEntry).key)
+				}
+			}
+		}
 		i.mu.Unlock()
 	}
 	return a
@@ -207,8 +242,18 @@ func (i *Identifier) Identify(s Signals) AppID {
 // Forget evicts a cache entry — called when a lineage exits.
 func (i *Identifier) Forget(lid uint64) {
 	i.mu.Lock()
-	delete(i.cache, lid)
+	if el, ok := i.cache[lid]; ok {
+		i.ll.Remove(el)
+		delete(i.cache, lid)
+	}
 	i.mu.Unlock()
+}
+
+// cacheLen returns the current cache size (test helper).
+func (i *Identifier) cacheLen() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return len(i.cache)
 }
 
 func (i *Identifier) compute(s Signals) AppID {

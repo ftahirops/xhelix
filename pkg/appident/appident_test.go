@@ -175,3 +175,59 @@ func TestForgetEvictsCache(t *testing.T) {
 		t.Errorf("forget didn't evict; got %+v", a)
 	}
 }
+
+func TestIdentifier_LRUBounded(t *testing.T) {
+	id := NewWithCap(nil, 3)
+	sig := func(lid uint64) Signals { return Signals{LineageID: lid, ExePath: "/usr/bin/app"} }
+	id.Identify(sig(1))
+	id.Identify(sig(2))
+	id.Identify(sig(3))
+	if id.cacheLen() != 3 {
+		t.Fatalf("cacheLen=%d, want 3", id.cacheLen())
+	}
+	id.Identify(sig(4)) // over cap → evict LRU (lineage 1)
+	if id.cacheLen() != 3 {
+		t.Fatalf("cacheLen=%d after over-cap insert, want 3 (bounded)", id.cacheLen())
+	}
+	id.mu.Lock()
+	_, has1 := id.cache[1]
+	_, has4 := id.cache[4]
+	id.mu.Unlock()
+	if has1 {
+		t.Error("lineage 1 (LRU) should have been evicted")
+	}
+	if !has4 {
+		t.Error("lineage 4 (newest) should be present")
+	}
+}
+
+func TestIdentifier_LRUPromotesOnAccess(t *testing.T) {
+	id := NewWithCap(nil, 2)
+	sig := func(lid uint64) Signals { return Signals{LineageID: lid, ExePath: "/usr/bin/app"} }
+	id.Identify(sig(1))
+	id.Identify(sig(2))
+	id.Identify(sig(1)) // promote 1 → 2 becomes LRU
+	id.Identify(sig(3)) // evicts 2, keeps promoted 1
+	id.mu.Lock()
+	_, has1 := id.cache[1]
+	_, has2 := id.cache[2]
+	id.mu.Unlock()
+	if !has1 {
+		t.Error("lineage 1 was promoted on access; should survive eviction")
+	}
+	if has2 {
+		t.Error("lineage 2 was LRU; should be evicted")
+	}
+}
+
+func TestIdentifier_ForgetEvicts(t *testing.T) {
+	id := NewWithCap(nil, 8)
+	id.Identify(Signals{LineageID: 7, ExePath: "/usr/bin/app"})
+	if id.cacheLen() != 1 {
+		t.Fatalf("cacheLen=%d, want 1", id.cacheLen())
+	}
+	id.Forget(7)
+	if id.cacheLen() != 0 {
+		t.Errorf("Forget should evict; cacheLen=%d, want 0", id.cacheLen())
+	}
+}
