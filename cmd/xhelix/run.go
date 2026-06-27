@@ -51,6 +51,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/source"
 	"github.com/xhelix/xhelix/pkg/systemdroot"
+	"github.com/xhelix/xhelix/pkg/webroot"
 	"github.com/xhelix/xhelix/pkg/verify"
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/daemon/forensicingest"
@@ -4101,6 +4102,7 @@ func dispatch(
 		SNICheck:         sniCheck,
 		SourceMinter:     srcMinter,
 		SystemdRoots:     systemdroot.New(),
+		WebRoots:         webroot.New(),
 		FileTaint:        fileTaint,
 		SourceStore:      srcStore,
 		BRPMatcher:       brpMatcher,

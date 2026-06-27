@@ -83,6 +83,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/shmguard"
 	"github.com/xhelix/xhelix/pkg/source"
 	"github.com/xhelix/xhelix/pkg/systemdroot"
+	"github.com/xhelix/xhelix/pkg/webroot"
 	"github.com/xhelix/xhelix/pkg/store"
 	"github.com/xhelix/xhelix/pkg/trustzone"
 	"github.com/xhelix/xhelix/pkg/webdrop"
@@ -237,6 +238,12 @@ type Pipeline struct {
 	// workflows get a non-admin causal root (→ learnable). Root Emitters "B".
 	// Nil-safe. SP-RootEmitters.
 	SystemdRoots *systemdroot.Tracker
+
+	// WebRoots mints + caches one RootWeb lineage anchor per vhost and
+	// attributes it to processes serving an inbound HTTP request (from the
+	// ssl_read http_host signal), so request workflows get a non-admin causal
+	// root (→ learnable). Root Emitters "C". Nil-safe. SP-RootEmitters.
+	WebRoots *webroot.Tracker
 
 	// Origins resolves a lineage id to its root Origin (root type, user,
 	// source). Used by the workflow-chain stamp to label every event's
@@ -1398,6 +1405,13 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			p.VhostCorr.Note(ev.PID, host)
 		}
 	}
+	// Root Emitters "C": an inbound HTTP request (ssl_read carried http_host +
+	// the serving PID) gets a non-admin RootWeb lineage root, attributed to the
+	// serving process so its request workflow becomes learnable. Mint once per
+	// vhost (cached), reuse for every later request to the same vhost. The
+	// worker PID is an existing serving process (already graphed), so
+	// AttributeSource lands inline — no spawn-ordering concern.
+	p.attributeWebRoot(ctx, &ev)
 
 	// App identification (P-EGRESS.M1.app) — derive a sticky AppID
 	// for this lineage and stamp ev.Tags["app_id"]. Nil-safe.
@@ -2007,6 +2021,39 @@ func (p *Pipeline) attributeSystemdRoot(ctx context.Context, pid uint32) {
 		p.SystemdRoots.Put(info.Unit, id)
 	}
 	p.ProcTree.AttributeSource(pid, id)
+}
+
+// attributeWebRoot mints (once per vhost, cached) and attributes a RootWeb
+// lineage anchor to the process serving an inbound HTTP request, so the
+// request's workflow gets a non-admin causal root and becomes learnable. The
+// http_host + serving PID come from the same ssl_read event; the PID is an
+// existing serving worker (already graphed) so AttributeSource lands inline.
+// Nil-safe. Root Emitters "C".
+func (p *Pipeline) attributeWebRoot(ctx context.Context, ev *model.Event) {
+	if p.WebRoots == nil || p.SourceMinter == nil || p.ProcTree == nil || ev.PID == 0 {
+		return
+	}
+	host := ev.Tags["http_host"]
+	if host == "" {
+		return
+	}
+	id, ok := p.WebRoots.Get(host)
+	if !ok {
+		sev := model.NewEvent("identity.web", model.SeverityInfo)
+		sev.PID = ev.PID
+		sev.Tags["service"] = "web"
+		sev.Tags["http_host"] = host
+		if rl := ev.Tags["http_request_line"]; rl != "" {
+			sev.Tags["path"] = rl
+		}
+		newID, err := p.SourceMinter.MintFromEvent(ctx, sev)
+		if err != nil || newID == 0 {
+			return
+		}
+		id = newID
+		p.WebRoots.Put(host, id)
+	}
+	p.ProcTree.AttributeSource(ev.PID, id)
 }
 
 // recordGraphEvent translates a model.Event into a source.GraphEvent

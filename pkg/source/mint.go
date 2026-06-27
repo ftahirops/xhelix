@@ -109,6 +109,12 @@ func (m *Minter) MintFromEvent(ctx context.Context, ev model.Event) (lineage.Lin
 	if c := ev.Tags["cron_entry"]; c != "" {
 		origin.CronEntry = c
 	}
+	// Web (KindWeb): carry the request facets the ssl_read decoder extracted.
+	if h := ev.Tags["http_host"]; h != "" {
+		origin.Path = ev.Tags["path"]
+		origin.Method = ev.Tags["method"]
+		origin.HTTPRequestID = ev.Tags["request_id"]
+	}
 	if kind == KindSudo {
 		origin.EscalatedFromName = ev.Tags["user"]
 	}
@@ -182,6 +188,13 @@ func kindFromEventTags(tags map[string]string) (Kind, bool) {
 		if tags["unit_action"] == "start" {
 			return KindSystemd, true
 		}
+	case "web":
+		// Inbound HTTP request observed for a serving process (the eBPF
+		// ssl_read decoder extracts http_host from TLS plaintext). The host
+		// is the minimal evidence of a real request ingress.
+		if tags["http_host"] != "" {
+			return KindWeb, true
+		}
 	}
 	return KindUnknown, false
 }
@@ -198,6 +211,8 @@ func rootTypeForKind(k Kind) lineage.RootType {
 		return lineage.RootCron
 	case KindSystemd:
 		return lineage.RootSystemd
+	case KindWeb:
+		return lineage.RootWeb
 	}
 	return lineage.RootUnknown
 }

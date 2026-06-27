@@ -42,6 +42,7 @@ const (
 	KindSudo    Kind = 3
 	KindCron    Kind = 4
 	KindSystemd Kind = 5
+	KindWeb     Kind = 6
 )
 
 // String returns a stable short token used in CLI output and logs.
@@ -57,6 +58,8 @@ func (k Kind) String() string {
 		return "cron"
 	case KindSystemd:
 		return "systemd"
+	case KindWeb:
+		return "web"
 	}
 	return "unknown"
 }
@@ -76,6 +79,8 @@ func KindFromRootType(r lineage.RootType) Kind {
 		return KindCron
 	case lineage.RootSystemd:
 		return KindSystemd
+	case lineage.RootWeb:
+		return KindWeb
 	}
 	return KindUnknown
 }

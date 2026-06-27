@@ -251,7 +251,7 @@ func TestKindFromRootType(t *testing.T) {
 		lineage.RootCron:      KindCron,
 		lineage.RootSystemd:   KindSystemd,
 		lineage.RootContainer: KindUnknown,
-		lineage.RootWeb:       KindUnknown,
+		lineage.RootWeb:       KindWeb,
 		lineage.RootLocal:     KindUnknown,
 		lineage.RootKernel:    KindUnknown,
 		lineage.RootUnknown:   KindUnknown,
