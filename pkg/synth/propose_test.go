@@ -21,7 +21,7 @@ func TestPropose_FilesPendingProposalWithProfileJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := Propose(r, store, "shop", 3)
+	p, err := Propose(r, store, "shop", 3, 1) // minSamples=1 → gate off
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,8 +39,27 @@ func TestPropose_FilesPendingProposalWithProfileJSON(t *testing.T) {
 
 func TestPropose_NoShapesReturnsErrNoData(t *testing.T) {
 	store, _ := contractpropose.Open(filepath.Join(t.TempDir(), "p.db"))
-	_, err := Propose(fakeReader{}, store, "ghost", 3)
+	_, err := Propose(fakeReader{}, store, "ghost", 3, 5)
 	if err != ErrNoData {
 		t.Errorf("want ErrNoData for app with no shapes, got %v", err)
+	}
+}
+
+func TestPropose_BelowSampleGateReturnsErrInsufficientSamples(t *testing.T) {
+	// App observed only twice (Count: 2) with a minSamples gate of 5 → no file.
+	r := fakeReader{
+		shapes: []recorder.ShapeRow{{AppID: "thin", ShapeHash: "s1", Count: 2}},
+		byKey: map[string]map[recorder.EdgeKind]map[string][]string{
+			"s1": {recorder.EdgeExec: {"x": {"/usr/bin/x"}}},
+		},
+	}
+	store, _ := contractpropose.Open(filepath.Join(t.TempDir(), "p.db"))
+	if _, err := Propose(r, store, "thin", 3, 5); err != ErrInsufficientSamples {
+		t.Errorf("want ErrInsufficientSamples (count 2 < gate 5), got %v", err)
+	}
+	// At/above the gate it files normally.
+	r.shapes[0].Count = 5
+	if _, err := Propose(r, store, "thin", 3, 5); err != nil {
+		t.Errorf("count 5 == gate 5 should file, got %v", err)
 	}
 }

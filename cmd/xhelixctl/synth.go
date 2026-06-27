@@ -33,7 +33,7 @@ func newSynthCmd() *cobra.Command {
 
 func newSynthProposeCmd() *cobra.Command {
 	var dbPath, stateDir string
-	var globThreshold int
+	var globThreshold, minSamples int
 	cmd := &cobra.Command{
 		Use:   "propose <app>",
 		Short: "Synthesize a candidate profile from recorder data and file it for review",
@@ -59,10 +59,14 @@ func newSynthProposeCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			prop, err := synth.Propose(rec, store, appID, globThreshold)
+			prop, err := synth.Propose(rec, store, appID, globThreshold, minSamples)
 			if err != nil {
 				if errors.Is(err, synth.ErrNoData) {
 					fmt.Fprintf(os.Stderr, "no recorded data for %s — run the recorder first\n", appID)
+					return nil
+				}
+				if errors.Is(err, synth.ErrInsufficientSamples) {
+					fmt.Fprintf(os.Stderr, "%s: too few observations (need >= %d) — wait for the behavior to recur, or lower --min-samples\n", appID, minSamples)
 					return nil
 				}
 				return fmt.Errorf("synth propose: %w", err)
@@ -74,6 +78,7 @@ func newSynthProposeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dbPath, "db", "/var/lib/xhelix/recorder.db", "path to recorder.db")
 	cmd.Flags().StringVar(&stateDir, "state-dir", "/var/lib/xhelix", "xhelix state directory (contains contract-propose.db)")
 	cmd.Flags().IntVar(&globThreshold, "glob-threshold", 3, "minimum path count to trigger glob generalization")
+	cmd.Flags().IntVar(&minSamples, "min-samples", 5, "minimum total observations before an app is worth proposing (<=1 disables the gate)")
 	return cmd
 }
 
