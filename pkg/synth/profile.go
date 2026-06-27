@@ -11,7 +11,7 @@ import (
 // recorder data) and that limit is recorded in ParseWarnings.
 func BuildProfile(o Observed, globThreshold int) brp.Profile {
 	beh := parser.ConfigDerivedBehavior{
-		ExecAllowed:   ExecEnvelope(o),
+		ExecAllowed:   GeneralizeExecPaths(ExecEnvelope(o)),
 		UpstreamHosts: EgressHosts(o),
 		WriteRoots:    GeneralizeWriteRoots(o, globThreshold),
 		ParseWarnings: []string{
