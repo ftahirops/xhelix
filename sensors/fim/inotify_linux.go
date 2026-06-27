@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,78 @@ import (
 
 	"github.com/xhelix/xhelix/pkg/model"
 )
+
+// maxFIMWatches bounds the total inotify watches a single watcher arms, so a
+// recursive watch of a huge tree (e.g. a busy vhost root) can't exhaust the
+// kernel's per-instance watch limit or stall startup. The periodic verifier
+// still covers anything past the cap.
+const maxFIMWatches = 8192
+
+var (
+	inotifyMask = uint32(unix.IN_CREATE | unix.IN_CLOSE_WRITE |
+		unix.IN_DELETE | unix.IN_MOVED_TO | unix.IN_MOVED_FROM |
+		unix.IN_ATTRIB | unix.IN_DELETE_SELF | unix.IN_MOVE_SELF)
+	inotifyDirMask = inotifyMask | unix.IN_ONLYDIR
+)
+
+// addOne arms a single inotify watch. For a dir it also marks "watch every
+// file in this dir" (dirWatchedFor["*"]). Returns true if a watch was added.
+// Bounded by maxFIMWatches. Safe for concurrent use.
+func (w *inotifyWatcher) addOne(target string, dir bool) bool {
+	if target == "" {
+		return false
+	}
+	w.mu.Lock()
+	full := len(w.watches) >= maxFIMWatches
+	w.mu.Unlock()
+	if full {
+		return false
+	}
+	m := inotifyMask
+	if dir {
+		m = inotifyDirMask
+	}
+	wd, err := unix.InotifyAddWatch(w.fd, target, m)
+	if err != nil {
+		// Permission, ENOENT, ENOTDIR — softfail; periodic verifier covers it.
+		return false
+	}
+	w.mu.Lock()
+	w.watches[wd] = target
+	if dir {
+		if w.dirWatchedFor[target] == nil {
+			w.dirWatchedFor[target] = map[string]bool{}
+		}
+		w.dirWatchedFor[target]["*"] = true
+	}
+	w.mu.Unlock()
+	return true
+}
+
+// armDirTree recursively watches root and every subdirectory under it. inotify
+// is NOT recursive, so each directory needs its own watch — without this a
+// webshell dropped into e.g. wp-content/uploads/ never produces an event.
+// Also called dynamically from handle() when a new subdir is created (so later
+// drops into freshly-made dirs are still caught). Bounded by maxFIMWatches.
+func (w *inotifyWatcher) armDirTree(root string) int {
+	n := 0
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		w.mu.Lock()
+		full := len(w.watches) >= maxFIMWatches
+		w.mu.Unlock()
+		if full {
+			return filepath.SkipAll
+		}
+		if w.addOne(p, true) {
+			n++
+		}
+		return nil
+	})
+	return n
+}
 
 // inotifyWatcher provides real-time file-change detection on top of
 // the periodic FIM baseline-hasher. Inotify gives us sub-second
@@ -130,13 +203,11 @@ func newInotify(patterns []string, out chan<- model.Event, host string) (*inotif
 				continue
 			}
 			if st.IsDir() {
-				add(m, true)
-				w.mu.Lock()
-				if w.dirWatchedFor[m] == nil {
-					w.dirWatchedFor[m] = map[string]bool{}
-				}
-				w.dirWatchedFor[m]["*"] = true
-				w.mu.Unlock()
+				// Recurse: watch this dir AND every subdir, so creates
+				// anywhere under it (e.g. wp-content/uploads/shell.php) fire.
+				added := w.armDirTree(m)
+				got = append(got, m)
+				_ = added
 			} else {
 				add(m, false)
 			}
@@ -214,6 +285,14 @@ func (w *inotifyWatcher) handle(wd int, mask uint32, name string) {
 		}
 	} else {
 		fullPath = watched
+	}
+
+	// A new directory appeared under a watched tree: inotify isn't recursive,
+	// so arm it (and any children, for mkdir -p) right away to catch later
+	// drops into it (e.g. an attacker mkdir'ing wp-content/uploads then
+	// dropping a shell). Done before emitting so the race window is minimal.
+	if (mask&unix.IN_CREATE != 0 || mask&unix.IN_MOVED_TO != 0) && mask&unix.IN_ISDIR != 0 {
+		w.armDirTree(fullPath)
 	}
 
 	reason := decodeMask(mask)
