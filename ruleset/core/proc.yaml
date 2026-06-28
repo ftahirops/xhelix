@@ -222,7 +222,9 @@ severity: critical
 mitre: [T1070.004, T1620]
 match: |
   event.sensor == "procmem" &&
-  event.tags["kind"] == "deleted_exe"
+  event.tags["kind"] == "deleted_exe" &&
+  event.tags["pkg_install_window"] != "true" &&
+  event.tags["baseline_known"] != "true"
 tags: [post_exploitation, dropper, fileless]
 remediation: |
   Classic dropper pattern: the binary was unlinked while the
