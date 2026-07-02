@@ -23,29 +23,30 @@ type EventKind uint32
 // sensors/ebpf/progs/all.bpf.c. Drift between the two ends
 // silently corrupts event decoding — the verifier won't catch it.
 const (
-	KindProcSpawn    EventKind = 1
-	KindProcExit     EventKind = 2
-	KindProcCred     EventKind = 3
-	KindFileOpen     EventKind = 4
-	KindNetConnect   EventKind = 5
-	KindNetBind      EventKind = 6
-	KindModLoad      EventKind = 7
-	KindBPFSyscall   EventKind = 8
-	KindPtrace       EventKind = 9
-	KindMount        EventKind = 10
-	KindMprotectRWX  EventKind = 11
+	KindProcSpawn   EventKind = 1
+	KindProcExit    EventKind = 2
+	KindProcCred    EventKind = 3
+	KindFileOpen    EventKind = 4
+	KindNetConnect  EventKind = 5
+	KindNetBind     EventKind = 6
+	KindModLoad     EventKind = 7
+	KindBPFSyscall  EventKind = 8
+	KindPtrace      EventKind = 9
+	KindMount       EventKind = 10
+	KindMprotectRWX EventKind = 11
 	// reserved for future expansion (must stay aligned with C)
-	KindCanaryFail   EventKind = 12
-	KindInodePerm    EventKind = 13
-	KindSetxattr     EventKind = 14
-	KindNetICMP      EventKind = 15
-	KindNetRawSock   EventKind = 16
-	KindCapSet       EventKind = 17
-	KindPivotRoot    EventKind = 18
-	KindUnshare      EventKind = 19
-	KindSSLRead      EventKind = 20
-	KindNetBytes     EventKind = 22
-	KindProcScrape   EventKind = 23
+	KindCanaryFail EventKind = 12
+	KindInodePerm  EventKind = 13
+	KindSetxattr   EventKind = 14
+	KindNetICMP    EventKind = 15
+	KindNetRawSock EventKind = 16
+	KindCapSet     EventKind = 17
+	KindPivotRoot  EventKind = 18
+	KindUnshare    EventKind = 19
+	KindSSLRead    EventKind = 20
+	KindNetBytes   EventKind = 22
+	KindProcScrape EventKind = 23
+	KindDBQuery    EventKind = 24
 )
 
 // String returns a stable, lowercase token for the kind.
@@ -95,6 +96,8 @@ func (k EventKind) String() string {
 		return "net_bytes"
 	case KindProcScrape:
 		return "proc_scrape"
+	case KindDBQuery:
+		return "db_query"
 	}
 	return "unknown"
 }

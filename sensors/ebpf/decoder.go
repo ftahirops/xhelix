@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xhelix/xhelix/pkg/dbsemantic"
 	"github.com/xhelix/xhelix/pkg/model"
 )
 
@@ -144,6 +145,8 @@ func Decode(raw []byte) (model.Event, error) {
 		decodeUnshareEvent(payload, &ev)
 	case KindSSLRead:
 		decodeSSLReadEvent(payload, &ev)
+	case KindDBQuery:
+		decodeDBQueryEvent(payload, &ev)
 	case KindBPFSyscall:
 		decodeBPFSyscall(payload, &ev)
 	case KindPtrace:
@@ -368,6 +371,41 @@ func decodeNetBytesEvent(b []byte, ev *model.Event) {
 	if quicConfirmed {
 		ev.Tags["quic_confirmed"] = "1"
 	}
+}
+
+// decodeDBQueryEvent parses an XH_EV_DB_QUERY payload:
+// dport(2) | dlen(2) | data[XH_DB_BUF_MAX]. It runs the coarse DB semantic
+// parser (pkg/dbsemantic) over the captured leading bytes and stamps the
+// resulting (engine, verb, object) — the SP-3 fidelity lift. fidelity=coarse
+// by construction (leading packet, single object).
+func decodeDBQueryEvent(b []byte, ev *model.Event) {
+	if len(b) < 4 {
+		return
+	}
+	dport := binary.LittleEndian.Uint16(b[0:2])
+	dlen := binary.LittleEndian.Uint16(b[2:4])
+	ev.Tags["dst_port"] = fmt.Sprintf("%d", dport)
+	data := b[4:]
+	if int(dlen) < len(data) {
+		data = data[:dlen]
+	}
+	engine := dbsemantic.EngineForPort(fmt.Sprintf("%d", dport))
+	if engine == "" {
+		return
+	}
+	res, ok := dbsemantic.Parse(engine, data)
+	if !ok {
+		// Handshake / binary / prepared-statement traffic — record the engine
+		// contact but no verb (honest: not every packet is a classifiable query).
+		ev.Tags["db_engine"] = engine
+		return
+	}
+	ev.Tags["db_engine"] = res.Engine
+	ev.Tags["db_verb"] = res.Verb
+	if res.Object != "" {
+		ev.Tags["db_object"] = res.Object
+	}
+	ev.Tags["fidelity"] = "coarse"
 }
 
 // decodeSSLReadEvent parses an XH_EV_SSL_READ payload:

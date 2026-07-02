@@ -41,6 +41,7 @@ enum xh_event_kind {
     XH_EV_SSL_READ       = 20,
     XH_EV_NET_BYTES      = 22,
     XH_EV_PROC_SCRAPE    = 23,
+    XH_EV_DB_QUERY       = 24,
 };
 
 struct xh_event_hdr {
@@ -94,6 +95,18 @@ struct xh_net_bytes_evt {
     __u32 bytes;
     __u8  dir;
     __u8  _pad[3];
+};
+
+/* xh_dbquery_evt — the leading bytes of an outbound write to a backing-store
+   port (3306/5432/6379), for the SP-3 coarse DB semantic adapter. Userspace
+   (pkg/dbsemantic) parses the verb + object. Coarse by construction: first
+   packet, single object. */
+#define XH_DB_BUF_MAX 192
+struct xh_dbquery_evt {
+    struct xh_event_hdr hdr;
+    __u16 dport;
+    __u16 dlen;
+    __u8  data[XH_DB_BUF_MAX];
 };
 
 struct xh_ptrace_evt {
@@ -836,11 +849,46 @@ static __always_inline void xh_emit_net_bytes(struct sock *sk,
     bpf_ringbuf_submit(e, 0);
 }
 
+/* xh_maybe_capture_db — capture the leading bytes of an outbound write to a
+   backing-store port so userspace can derive a coarse (verb, object). Uses the
+   ITER_UBUF single-buffer case (msg_iter.__ubuf_iovec.iov_base) — the common
+   path for a mysqlnd/redis client write() on kernel ≥6.0. Multi-segment
+   (ITER_IOVEC) writes are skipped (base resolves NULL) rather than mis-read. */
+static __always_inline void xh_maybe_capture_db(struct sock *sk,
+                                                struct msghdr *msg, __u32 size) {
+    if (xh_is_self() || !sk || !msg) return;
+    if (size < 5) return; // smaller than any real query packet
+    __u16 family = 0;
+    BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
+    if (family != 2 && family != 10) return;
+    __u16 dport = 0;
+    BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
+    dport = bpf_ntohs(dport);
+    if (dport != 3306 && dport != 5432 && dport != 6379) return;
+
+    void *base = (void *)BPF_CORE_READ(msg, msg_iter.__ubuf_iovec.iov_base);
+    if (!base) return;
+
+    __u32 cap = size;
+    if (cap > XH_DB_BUF_MAX) cap = XH_DB_BUF_MAX;
+
+    struct xh_dbquery_evt *e = bpf_ringbuf_reserve(&xh_events, sizeof(*e), 0);
+    if (!e) return;
+    xh_fill_hdr(&e->hdr, XH_EV_DB_QUERY);
+    e->dport = dport;
+    e->dlen = (__u16)cap;
+    __builtin_memset(e->data, 0, sizeof(e->data));
+    bpf_probe_read_user(e->data, cap, base);
+    bpf_ringbuf_submit(e, 0);
+}
+
 SEC("kprobe/tcp_sendmsg")
 int kprobe_tcp_sendmsg(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+    struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
     __u32 size = (__u32)PT_REGS_PARM3(ctx);
     xh_emit_net_bytes(sk, size, 0 /* out */, 0);
+    xh_maybe_capture_db(sk, msg, size);
     return 0;
 }
 
