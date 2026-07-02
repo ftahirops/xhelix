@@ -60,6 +60,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/destclass"
 	"github.com/xhelix/xhelix/pkg/diskwarden"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
+	"github.com/xhelix/xhelix/pkg/edgeobserve"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/egressledger"
 	"github.com/xhelix/xhelix/pkg/egressmon"
@@ -4190,6 +4191,13 @@ func dispatch(
 		return map[string]any{"open": recWindow.Open(), "control": recWindow.Path()}, nil
 	})
 
+	// Observed inter-app topology (Pillar 2). edge.observed returns the learned
+	// (from_app → to_app) network edges for operator review / promotion.
+	edgeObserver := edgeobserve.New()
+	apiSrv.RegisterHandler("edge.observed", func(_ context.Context, _ json.RawMessage) (any, error) {
+		return edgeObserver.Snapshot(), nil
+	})
+
 	// brp.reload — hot-reload the signed-profile library so a promoted profile
 	// goes live without a daemon restart. Reads the same dirs as startup.
 	if brpMatcher != nil {
@@ -4250,6 +4258,7 @@ func dispatch(
 		IntegrityTester:  integrityTester,
 		VerifyEngine:     verifyEngine,
 		BRPEdges:         brpEdges,
+		EdgeObserver:     edgeObserver,
 		AssetResolver:    assetResolver,
 		SecretTaint:      secretTaint,
 		EgressGuard:      egressGuard,

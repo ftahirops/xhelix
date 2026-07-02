@@ -50,6 +50,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/cronclassify"
 	"github.com/xhelix/xhelix/pkg/destclass"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
+	"github.com/xhelix/xhelix/pkg/edgeobserve"
 	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/egressledger"
 	"github.com/xhelix/xhelix/pkg/egressmon"
@@ -320,6 +321,11 @@ type Pipeline struct {
 	// set, the verifier's CrossApp domain reads from this for stronger
 	// cross-app trust evidence. Nil-safe.
 	BRPEdges *brp.EdgeSet
+
+	// EdgeObserver accumulates the observed inter-app topology (from_app →
+	// to_app network edges) so operators can review the learned graph and
+	// promote it to signed BRP edges. Nil-safe; observe-only. Pillar 2.
+	EdgeObserver *edgeobserve.Observer
 
 	// AssetResolver classifies paths, sockets, and hosts into stable
 	// asset classes (pkg/assetclass). When set, every event with a
@@ -2147,6 +2153,17 @@ func (p *Pipeline) scoreCrossAppEdge(ev *model.Event) {
 	ev.Tags["cross_app_edge"] = actor + "→" + target
 	ev.Tags["cross_app_score"] = fmt.Sprintf("%.1f", score)
 	ev.Tags["cross_app_reason"] = reason
+	// Accumulate the observed edge for operator review / promotion to a signed
+	// BRP edge (Pillar 2 topology learning).
+	if p.EdgeObserver != nil {
+		dest := ev.Tags["dst_socket"]
+		if dest == "" {
+			if ip, port := ev.Tags["dst_ip"], ev.Tags["dst_port"]; ip != "" && port != "" {
+				dest = ip + ":" + port
+			}
+		}
+		p.EdgeObserver.Observe(ev.Time, actor, target, "net_connect", dest, score, reason)
+	}
 }
 
 // destPortService maps a well-known destination port to the target SERVICE

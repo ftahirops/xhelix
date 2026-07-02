@@ -145,6 +145,74 @@ attenuates score for signed edges.
 	}
 	cmd.AddCommand(newBRPEdgeListCmd())
 	cmd.AddCommand(newBRPEdgeSignCmd())
+	cmd.AddCommand(newBRPEdgeObservedCmd())
+	return cmd
+}
+
+// newBRPEdgeObservedCmd lists the inter-app topology xhelix has LEARNED at
+// runtime (the observed from_app→to_app network edges), so an operator can
+// review it and promote real edges to signed BRP edges. With --propose it
+// prints ready-to-run `brp edge sign` commands for each observed edge.
+func newBRPEdgeObservedCmd() *cobra.Command {
+	var sock string
+	var propose bool
+	var signer, key string
+	cmd := &cobra.Command{
+		Use:   "observed",
+		Short: "Show the learned inter-app topology (observed from_app→to_app edges)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			var edges []struct {
+				FromApp string   `json:"from_app"`
+				ToApp   string   `json:"to_app"`
+				Action  string   `json:"action"`
+				Dests   []string `json:"dests"`
+				Count   uint64   `json:"count"`
+				Score   float64  `json:"score"`
+				Reason  string   `json:"reason"`
+			}
+			if err := c.Call("edge.observed", nil, &edges); err != nil {
+				return fmt.Errorf("edge.observed: %w", err)
+			}
+			w := os.Stdout
+			if len(edges) == 0 {
+				fmt.Fprintln(w, "(no inter-app edges observed yet — run some traffic)")
+				return nil
+			}
+			if !propose {
+				fmt.Fprintf(w, "%-14s %-14s %-12s %8s  %-6s %s\n", "FROM", "TO", "ACTION", "COUNT", "SCORE", "REASON")
+				for _, e := range edges {
+					fmt.Fprintf(w, "%-14s %-14s %-12s %8d  %-6.1f %s\n",
+						e.FromApp, e.ToApp, e.Action, e.Count, e.Score, e.Reason)
+				}
+				return nil
+			}
+			// --propose: emit a sign command per edge (operator reviews then runs).
+			for _, e := range edges {
+				fmt.Fprintf(w, "xhelixctl brp edge sign --from %s --to %s --action %s",
+					e.FromApp, e.ToApp, e.Action)
+				for _, d := range e.Dests {
+					fmt.Fprintf(w, " --dest %s", d)
+				}
+				if signer != "" {
+					fmt.Fprintf(w, " --signer %s", signer)
+				}
+				if key != "" {
+					fmt.Fprintf(w, " --key %s", key)
+				}
+				fmt.Fprintln(w)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", "/run/xhelix/xhelix.sock", "daemon socket")
+	cmd.Flags().BoolVar(&propose, "propose", false, "emit ready-to-run `brp edge sign` commands")
+	cmd.Flags().StringVar(&signer, "signer", "", "signer name to embed in --propose commands")
+	cmd.Flags().StringVar(&key, "key", "", "key path to embed in --propose commands")
 	return cmd
 }
 
