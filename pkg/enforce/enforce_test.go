@@ -103,3 +103,38 @@ func TestQuarantineLifecycle(t *testing.T) {
 		t.Errorf("expected errInvalidPID for pid 1, got %v", err)
 	}
 }
+
+// TestQuarantineRefusesRecycledPID verifies that if a stopped pid's process
+// start time changes (pid reuse) between Stop and Kill/Resume, the signal is
+// refused rather than delivered to an unrelated process.
+func TestQuarantineRefusesRecycledPID(t *testing.T) {
+	var calls atomic.Uint64
+	send := func(pid int, sig os.Signal) error {
+		calls.Add(1)
+		return nil
+	}
+	q := NewQuarantine(send)
+
+	// Stop our own live pid so a real start time is captured from /proc.
+	self := uint32(os.Getpid())
+	r, err := q.Stop(self, "self", "", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.StartTicksOK {
+		t.Skip("could not read /proc start time on this platform; guard is a no-op")
+	}
+
+	// Simulate pid reuse: the live process now has a different start time.
+	r.StartTicks++
+
+	if err := q.Kill(self); err != errPIDRecycled {
+		t.Errorf("expected errPIDRecycled, got %v", err)
+	}
+	if err := q.Resume(self); err != errPIDRecycled {
+		t.Errorf("Resume: expected errPIDRecycled, got %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("expected only the Stop signal to be delivered, got %d calls", calls.Load())
+	}
+}

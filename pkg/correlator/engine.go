@@ -25,6 +25,24 @@ import (
 // IncidentFn is invoked when a correlation completes.
 type IncidentFn func(model.Alert)
 
+const (
+	// maxSessions caps the total number of in-flight sessions. A rule that
+	// omits `window` (and per-step `within`) creates sessions expire() would
+	// otherwise never reclaim; this is the hard ceiling that prevents an
+	// unbounded map from OOMing the daemon on a busy host.
+	maxSessions = 50000
+
+	// maxSessionEvents caps evidence retained per session. A threshold-style
+	// step-0 match bumps an existing session on every hit (see tryOpen); without
+	// this bound a single high-frequency group's Events slice grows forever.
+	maxSessionEvents = 512
+
+	// defaultSessionTTL is the backstop age after which a window-less session is
+	// reclaimed. Windowed rules keep their own (shorter) expiry; this only
+	// bounds sessions that would otherwise live forever.
+	defaultSessionTTL = time.Hour
+)
+
 // Engine evaluates a set of correlation rules against an event stream.
 type Engine struct {
 	mu       sync.RWMutex
@@ -32,6 +50,11 @@ type Engine struct {
 	sessions map[sessionKey]*Session
 	emit     IncidentFn
 	env      *cel.Env
+
+	// sessionsDropped counts new sessions refused because the map was at
+	// maxSessions. Non-zero means a rule is leaking sessions (missing window)
+	// or the host is under a correlation flood.
+	sessionsDropped uint64
 }
 
 type sessionKey struct {
@@ -166,7 +189,9 @@ func (e *Engine) advanceSessions(c *compiledRule, ev model.Event, now time.Time)
 				continue
 			}
 		}
-		s.Events = append(s.Events, ev)
+		if len(s.Events) < maxSessionEvents {
+			s.Events = append(s.Events, ev)
+		}
 		s.LastFired = now
 		s.StepIndex++
 		if s.StepIndex >= len(c.Rule.Steps) {
@@ -194,7 +219,9 @@ func (e *Engine) tryOpen(c *compiledRule, ev model.Event, now time.Time) {
 		// Step 0 is a counted threshold — bump the count instead of
 		// re-creating the session. v0.2 implements simple sequence
 		// rules; threshold rules layer in next.
-		existing.Events = append(existing.Events, ev)
+		if len(existing.Events) < maxSessionEvents {
+			existing.Events = append(existing.Events, ev)
+		}
 		existing.LastFired = now
 		return
 	}
@@ -209,6 +236,13 @@ func (e *Engine) tryOpen(c *compiledRule, ev model.Event, now time.Time) {
 	if len(c.Rule.Steps) == 1 {
 		// Single-step rule fires immediately.
 		e.fire(c, s, now)
+		return
+	}
+	if len(e.sessions) >= maxSessions {
+		// At the ceiling: drop this new session rather than grow unbounded.
+		// expire() reclaims stale sessions each Ingest, so this is only hit
+		// under a genuine flood (or a misconfigured window-less rule).
+		e.sessionsDropped++
 		return
 	}
 	e.sessions[k] = s
@@ -238,7 +272,15 @@ func (e *Engine) expire(now time.Time) {
 			delete(e.sessions, k)
 			continue
 		}
-		if s.Rule.Rule.Window > 0 && now.Sub(s.StartedAt) > s.Rule.Rule.Window {
+		if s.Rule.Rule.Window > 0 {
+			if now.Sub(s.StartedAt) > s.Rule.Rule.Window {
+				delete(e.sessions, k)
+			}
+			continue
+		}
+		// Window-less rule: reclaim after the backstop TTL so a rule that
+		// omits `window` cannot leak sessions forever.
+		if now.Sub(s.StartedAt) > defaultSessionTTL {
 			delete(e.sessions, k)
 		}
 	}

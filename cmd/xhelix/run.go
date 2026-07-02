@@ -24,114 +24,115 @@ import (
 	"github.com/xhelix/xhelix/pkg/activity"
 	"github.com/xhelix/xhelix/pkg/alert"
 	"github.com/xhelix/xhelix/pkg/alertdedupe"
+	"github.com/xhelix/xhelix/pkg/appident"
+	"github.com/xhelix/xhelix/pkg/appregistry"
+	"github.com/xhelix/xhelix/pkg/assetclass"
+	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/baseline"
+	"github.com/xhelix/xhelix/pkg/baselinegate"
 	"github.com/xhelix/xhelix/pkg/beacon"
+	"github.com/xhelix/xhelix/pkg/bpflsm"
 	"github.com/xhelix/xhelix/pkg/brandcheck"
+	"github.com/xhelix/xhelix/pkg/brp"
+	brpphase "github.com/xhelix/xhelix/pkg/brp/phase"
+	"github.com/xhelix/xhelix/pkg/brp/writerattr"
+	"github.com/xhelix/xhelix/pkg/burstdet"
+	"github.com/xhelix/xhelix/pkg/canonical"
 	"github.com/xhelix/xhelix/pkg/catalog"
+	"github.com/xhelix/xhelix/pkg/causalengine"
+	"github.com/xhelix/xhelix/pkg/cdndetect"
 	"github.com/xhelix/xhelix/pkg/cgroupclass"
 	"github.com/xhelix/xhelix/pkg/chain"
 	"github.com/xhelix/xhelix/pkg/coldstore"
 	"github.com/xhelix/xhelix/pkg/config"
 	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/connstate"
-	"github.com/xhelix/xhelix/pkg/snicheck"
-	"github.com/xhelix/xhelix/pkg/assetclass"
-	"github.com/xhelix/xhelix/pkg/brp"
-	brpphase "github.com/xhelix/xhelix/pkg/brp/phase"
-	"github.com/xhelix/xhelix/pkg/brp/writerattr"
-	"github.com/xhelix/xhelix/pkg/egressguard"
-	"github.com/xhelix/xhelix/pkg/egressledger"
-	"github.com/xhelix/xhelix/pkg/tlsledger"
-	"github.com/xhelix/xhelix/pkg/egresspolicy"
-	"github.com/xhelix/xhelix/pkg/incidentgraph"
-	"github.com/xhelix/xhelix/pkg/pcap"
-	"github.com/xhelix/xhelix/pkg/pkglifecycle"
-	"github.com/xhelix/xhelix/pkg/pkgmgr"
-	"github.com/xhelix/xhelix/pkg/secrettaint"
-	"github.com/xhelix/xhelix/pkg/sshbrute"
-	"github.com/xhelix/xhelix/pkg/source"
-	"github.com/xhelix/xhelix/pkg/systemdroot"
-	"github.com/xhelix/xhelix/pkg/webroot"
-	"github.com/xhelix/xhelix/pkg/verify"
-	"github.com/xhelix/xhelix/pkg/correlator"
-	"github.com/xhelix/xhelix/pkg/daemon/forensicingest"
-	"github.com/xhelix/xhelix/pkg/daemon/wire"
-	"github.com/xhelix/xhelix/pkg/forensicapi"
-	"github.com/xhelix/xhelix/pkg/protectedsvc"
-	"github.com/xhelix/xhelix/pkg/protectsvcapi"
-	"github.com/xhelix/xhelix/pkg/appident"
-	"github.com/xhelix/xhelix/pkg/appregistry"
-	"github.com/xhelix/xhelix/pkg/canonical"
-	"github.com/xhelix/xhelix/pkg/causalengine"
+	"github.com/xhelix/xhelix/pkg/containment"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
+	"github.com/xhelix/xhelix/pkg/correlator"
+	"github.com/xhelix/xhelix/pkg/credbroker"
+	"github.com/xhelix/xhelix/pkg/daemon/forensicingest"
+	"github.com/xhelix/xhelix/pkg/daemon/wire"
 	"github.com/xhelix/xhelix/pkg/destclass"
-	"github.com/xhelix/xhelix/pkg/hotgraph"
 	"github.com/xhelix/xhelix/pkg/diskwarden"
 	"github.com/xhelix/xhelix/pkg/dnsexfil"
+	"github.com/xhelix/xhelix/pkg/egressguard"
+	"github.com/xhelix/xhelix/pkg/egressledger"
 	"github.com/xhelix/xhelix/pkg/egressmon"
-	"github.com/xhelix/xhelix/pkg/vhostcorr"
+	"github.com/xhelix/xhelix/pkg/egresspolicy"
+	"github.com/xhelix/xhelix/pkg/egressrefresh"
+	"github.com/xhelix/xhelix/pkg/egressresolve"
+	"github.com/xhelix/xhelix/pkg/endpointscore"
 	"github.com/xhelix/xhelix/pkg/enforce"
 	"github.com/xhelix/xhelix/pkg/execguard"
-	"github.com/xhelix/xhelix/pkg/redzones"
+	"github.com/xhelix/xhelix/pkg/firerate"
 	"github.com/xhelix/xhelix/pkg/fleetrarity"
+	"github.com/xhelix/xhelix/pkg/flowstats"
 	"github.com/xhelix/xhelix/pkg/forensic"
+	"github.com/xhelix/xhelix/pkg/forensicapi"
 	"github.com/xhelix/xhelix/pkg/geoip"
+	"github.com/xhelix/xhelix/pkg/hotgraph"
 	"github.com/xhelix/xhelix/pkg/idlehint"
 	"github.com/xhelix/xhelix/pkg/imagecache"
+	"github.com/xhelix/xhelix/pkg/incidentgraph"
 	"github.com/xhelix/xhelix/pkg/integrity"
 	"github.com/xhelix/xhelix/pkg/intel"
 	"github.com/xhelix/xhelix/pkg/kintegrity"
+	"github.com/xhelix/xhelix/pkg/landlock"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/lineagescore"
-	"github.com/xhelix/xhelix/pkg/recorder"
 	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/lockout"
+	"github.com/xhelix/xhelix/pkg/longwindow"
+	"github.com/xhelix/xhelix/pkg/memhardening"
 	"github.com/xhelix/xhelix/pkg/memscan"
 	"github.com/xhelix/xhelix/pkg/ml"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/netban"
-	"github.com/xhelix/xhelix/pkg/safetynet"
+	"github.com/xhelix/xhelix/pkg/pcap"
 	"github.com/xhelix/xhelix/pkg/pipeline"
+	"github.com/xhelix/xhelix/pkg/pkglifecycle"
+	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/posture"
+	posturehost "github.com/xhelix/xhelix/pkg/posture/host"
 	"github.com/xhelix/xhelix/pkg/proctree"
+	"github.com/xhelix/xhelix/pkg/protectedsvc"
+	"github.com/xhelix/xhelix/pkg/protectsvcapi"
+	"github.com/xhelix/xhelix/pkg/recorder"
+	"github.com/xhelix/xhelix/pkg/recordwindow"
+	"github.com/xhelix/xhelix/pkg/redzones"
 	"github.com/xhelix/xhelix/pkg/remediate"
-	"github.com/xhelix/xhelix/pkg/egressrefresh"
-	"github.com/xhelix/xhelix/pkg/egressresolve"
 	"github.com/xhelix/xhelix/pkg/response"
 	"github.com/xhelix/xhelix/pkg/rulecat"
-	"github.com/xhelix/xhelix/pkg/servicerole"
 	"github.com/xhelix/xhelix/pkg/rules"
-	"github.com/xhelix/xhelix/pkg/autobaseline"
-	"github.com/xhelix/xhelix/pkg/baselinegate"
-	"github.com/xhelix/xhelix/pkg/burstdet"
-	"github.com/xhelix/xhelix/pkg/credbroker"
 	"github.com/xhelix/xhelix/pkg/runtimeallow"
-	"github.com/xhelix/xhelix/pkg/vendorcatalog"
-	"github.com/xhelix/xhelix/pkg/vhostdiscovery"
+	"github.com/xhelix/xhelix/pkg/safetynet"
 	"github.com/xhelix/xhelix/pkg/sbom"
-	"github.com/xhelix/xhelix/pkg/bpflsm"
-	"github.com/xhelix/xhelix/pkg/landlock"
-	"github.com/xhelix/xhelix/pkg/cdndetect"
-	"github.com/xhelix/xhelix/pkg/containment"
-	"github.com/xhelix/xhelix/pkg/endpointscore"
-	"github.com/xhelix/xhelix/pkg/firerate"
-	"github.com/xhelix/xhelix/pkg/flowstats"
-	"github.com/xhelix/xhelix/pkg/longwindow"
-	"github.com/xhelix/xhelix/pkg/memhardening"
-	posturehost "github.com/xhelix/xhelix/pkg/posture/host"
+	"github.com/xhelix/xhelix/pkg/secrettaint"
 	"github.com/xhelix/xhelix/pkg/selfprotect"
 	"github.com/xhelix/xhelix/pkg/selfseccomp"
+	"github.com/xhelix/xhelix/pkg/servicerole"
 	"github.com/xhelix/xhelix/pkg/session"
 	"github.com/xhelix/xhelix/pkg/shmguard"
+	"github.com/xhelix/xhelix/pkg/snicheck"
+	"github.com/xhelix/xhelix/pkg/source"
+	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/store"
 	storehistory "github.com/xhelix/xhelix/pkg/store/history"
 	"github.com/xhelix/xhelix/pkg/suppression"
+	"github.com/xhelix/xhelix/pkg/systemdroot"
 	"github.com/xhelix/xhelix/pkg/tamperguard"
 	"github.com/xhelix/xhelix/pkg/threatintel"
+	"github.com/xhelix/xhelix/pkg/tlsledger"
 	"github.com/xhelix/xhelix/pkg/trustzone"
+	"github.com/xhelix/xhelix/pkg/vendorcatalog"
 	"github.com/xhelix/xhelix/pkg/verdictcount"
+	"github.com/xhelix/xhelix/pkg/verify"
 	"github.com/xhelix/xhelix/pkg/version"
+	"github.com/xhelix/xhelix/pkg/vhostcorr"
+	"github.com/xhelix/xhelix/pkg/vhostdiscovery"
+	"github.com/xhelix/xhelix/pkg/webroot"
 	"github.com/xhelix/xhelix/pkg/yara"
 	"github.com/xhelix/xhelix/sensors"
 	"github.com/xhelix/xhelix/sensors/decoy"
@@ -142,11 +143,11 @@ import (
 	"github.com/xhelix/xhelix/sensors/heartbeat"
 	"github.com/xhelix/xhelix/sensors/identity"
 	"github.com/xhelix/xhelix/sensors/lsmaudit"
-	"github.com/xhelix/xhelix/sensors/memory"
 	memdiffsensor "github.com/xhelix/xhelix/sensors/memdiff"
+	"github.com/xhelix/xhelix/sensors/memory"
+	netidssensor "github.com/xhelix/xhelix/sensors/netids"
 	procmemsensor "github.com/xhelix/xhelix/sensors/procmem"
 	procscrapesensor "github.com/xhelix/xhelix/sensors/procscrape"
-	netidssensor "github.com/xhelix/xhelix/sensors/netids"
 	"github.com/xhelix/xhelix/ui/web"
 )
 
@@ -391,6 +392,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 	}
 	defer hot.Close()
+	// Enable the async write-behind path so per-event persistence never blocks
+	// the pipeline dispatch goroutine on a SQLite stall (which would back-
+	// pressure sensors into event drops). Close (deferred above) drains the
+	// queue on shutdown.
+	hot.StartWriter(parent, 0)
 	cfgAudit.Witness("storage.hot.path", "OpenHot")
 
 	// Alert sinks
@@ -661,7 +667,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				}
 				return webhookSink.Send(c, a)
 			},
-			Logger:      log,
+			Logger:       log,
 			MonitorMode:  cfg.Response.MonitorMode,
 			EnforceRules: cfg.Response.EnforceRules,
 		})
@@ -2210,22 +2216,22 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			})
 		}
 		return map[string]any{
-			"enabled":          true,
-			"found":            true,
-			"lineage":          req.Lineage,
-			"app_id":           s.AppID,
-			"app_kind":         s.AppKind,
-			"total_connects":   s.TotalConnects,
-			"total_bytes_out":  s.TotalBytesOut,
-			"by_class":         byClass,
+			"enabled":            true,
+			"found":              true,
+			"lineage":            req.Lineage,
+			"app_id":             s.AppID,
+			"app_kind":           s.AppKind,
+			"total_connects":     s.TotalConnects,
+			"total_bytes_out":    s.TotalBytesOut,
+			"by_class":           byClass,
 			"bytes_out_by_class": bytesByClass,
-			"top_dests":        dests,
-			"unique_dests":     s.UniqueDests,
-			"unique_unknown":   s.UniqueUnknown,
-			"first_unknown_at": s.FirstUnknownAt.Unix(),
-			"first_intel_bad":  s.FirstIntelBadAt.Unix(),
-			"last_connect":     s.LastConnect.Unix(),
-			"recent_sample":    sample,
+			"top_dests":          dests,
+			"unique_dests":       s.UniqueDests,
+			"unique_unknown":     s.UniqueUnknown,
+			"first_unknown_at":   s.FirstUnknownAt.Unix(),
+			"first_intel_bad":    s.FirstIntelBadAt.Unix(),
+			"last_connect":       s.LastConnect.Unix(),
+			"recent_sample":      sample,
 		}, nil
 	})
 	apiSrv.RegisterHandler("tui.dest_detail", func(_ context.Context, raw json.RawMessage) (any, error) {
@@ -2306,9 +2312,9 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			Host, Method, Path string
 		}
 		type val struct {
-			Count   int
-			LastTs  int64
-			PIDs    map[uint32]struct{}
+			Count  int
+			LastTs int64
+			PIDs   map[uint32]struct{}
 		}
 		agg := map[key]*val{}
 		for _, e := range evs {
@@ -2348,12 +2354,12 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 		// Materialise + sort by count desc.
 		type row struct {
-			Host    string `json:"host"`
-			Method  string `json:"method"`
-			Path    string `json:"path"`
-			Count   int    `json:"count"`
-			Pids    int    `json:"pids"`
-			LastTs  int64  `json:"last_ts"`
+			Host   string `json:"host"`
+			Method string `json:"method"`
+			Path   string `json:"path"`
+			Count  int    `json:"count"`
+			Pids   int    `json:"pids"`
+			LastTs int64  `json:"last_ts"`
 		}
 		rows := make([]row, 0, len(agg))
 		for k, v := range agg {
@@ -2554,18 +2560,18 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				})
 			}
 			out = append(out, map[string]any{
-				"lineage":           uint64(s.LineageID),
-				"app_id":            s.AppID,
-				"app_kind":          s.AppKind,
-				"total_connects":    s.TotalConnects,
-				"total_bytes_out":   s.TotalBytesOut,
-				"by_class":          byClass,
-				"unique_dests":      s.UniqueDests,
-				"unique_unknown":    s.UniqueUnknown,
-				"last_connect":      s.LastConnect,
-				"first_unknown_at":  s.FirstUnknownAt,
-				"first_intel_bad":   s.FirstIntelBadAt,
-				"recent_sample":     sample,
+				"lineage":          uint64(s.LineageID),
+				"app_id":           s.AppID,
+				"app_kind":         s.AppKind,
+				"total_connects":   s.TotalConnects,
+				"total_bytes_out":  s.TotalBytesOut,
+				"by_class":         byClass,
+				"unique_dests":     s.UniqueDests,
+				"unique_unknown":   s.UniqueUnknown,
+				"last_connect":     s.LastConnect,
+				"first_unknown_at": s.FirstUnknownAt,
+				"first_intel_bad":  s.FirstIntelBadAt,
+				"recent_sample":    sample,
 			})
 		}
 		return map[string]any{"enabled": true, "lineages": out}, nil
@@ -2600,10 +2606,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		// this: kernel hook will receive plaintext via a separate
 		// trusted FD channel, not via LocalAPI JSON.
 		var req struct {
-			SealedPath string                       `json:"sealed_path"`
-			PID        uint32                       `json:"pid"`
-			Lineage    []credbroker.LineageNode     `json:"lineage"`
-			Reason     string                       `json:"reason"`
+			SealedPath string                   `json:"sealed_path"`
+			PID        uint32                   `json:"pid"`
+			Lineage    []credbroker.LineageNode `json:"lineage"`
+			Reason     string                   `json:"reason"`
 		}
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, err
@@ -3011,15 +3017,15 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// Falls back to legacy unprotected mode if not enabled, to keep
 	// upgrades from older configs working.
 	webServer = web.NewServer(web.Config{
-		Addr:        webBindAddr(cfg),
-		Log:         log,
-		Store:       hot,
-		Bus:         bus,
-		Sensors:     activeSensors,
-		Rules:       ruleEngine,
-		Quarantine:  quarantine,
-		Soak:        soak,
-		PanicSwitch: panicSwitch,
+		Addr:          webBindAddr(cfg),
+		Log:           log,
+		Store:         hot,
+		Bus:           bus,
+		Sensors:       activeSensors,
+		Rules:         ruleEngine,
+		Quarantine:    quarantine,
+		Soak:          soak,
+		PanicSwitch:   panicSwitch,
 		IncidentStore: foundation.IncidentStore,
 		SourceStore:   foundation.SourceStore,
 	})
@@ -3375,7 +3381,12 @@ func runDaemon(parent context.Context, cfgPath string) error {
 								DstIP:  a.Event.Tags["dst_ip"],
 								SrcIP:  a.Event.Tags["src_ip"],
 								PID:    a.Event.PID,
-								Binary: func() string { if a.Event.Image != "" { return a.Event.Image }; return a.Event.Comm }(),
+								Binary: func() string {
+									if a.Event.Image != "" {
+										return a.Event.Image
+									}
+									return a.Event.Comm
+								}(),
 							})
 						}
 						return out
@@ -3680,7 +3691,6 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	return nil
 }
 
-
 // dispatch is the thin event-loop wrapper. The per-event handler
 // logic lives in pkg/pipeline.Pipeline.Handle — this function only
 // owns the select on ctx.Done() and the events channel. Extracted
@@ -3918,8 +3928,8 @@ func dispatch(
 	})
 	apiSrv.RegisterHandler("egress.timeline", func(_ context.Context, params json.RawMessage) (any, error) {
 		var req struct {
-			Start  time.Time              `json:"start"`
-			End    time.Time              `json:"end"`
+			Start  time.Time               `json:"start"`
+			End    time.Time               `json:"end"`
 			Filter egressledger.FlowFilter `json:"filter"`
 		}
 		req.Filter.UID, req.Filter.CGroupID, req.Filter.DestPort = -1, -1, -1
@@ -4067,6 +4077,48 @@ func dispatch(
 		"file_window", fileBurstT.Window, "file_count", fileBurstT.Count,
 		"spawn_window", spawnBurstT.Window, "spawn_count", spawnBurstT.Count)
 
+	// Learning-window switch: file-backed so an operator (or xhelixctl, or the
+	// LocalAPI below) can open/close behavioral learning on a live daemon
+	// without a restart. The config value (workflow_chain.record_window) seeds
+	// the initial state; the control file is the runtime source of truth.
+	recWindow := recordwindow.New(recordwindow.DefaultPath)
+	if recordWindow {
+		if err := recWindow.SetOpen(true); err != nil {
+			log.Warn("record window: could not open from config", "err", err)
+		}
+	}
+	log.Info("learning window", "open", recWindow.Open(), "control", recWindow.Path())
+	// recorder.window — get (no body / {}) or set ({"open":true|false}).
+	apiSrv.RegisterHandler("recorder.window", func(_ context.Context, raw json.RawMessage) (any, error) {
+		var req struct {
+			Open *bool `json:"open"`
+		}
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &req)
+		}
+		if req.Open != nil {
+			if err := recWindow.SetOpen(*req.Open); err != nil {
+				return nil, err
+			}
+			log.Info("learning window toggled via LocalAPI", "open", *req.Open)
+		}
+		return map[string]any{"open": recWindow.Open(), "control": recWindow.Path()}, nil
+	})
+
+	// brp.reload — hot-reload the signed-profile library so a promoted profile
+	// goes live without a daemon restart. Reads the same dirs as startup.
+	if brpMatcher != nil {
+		apiSrv.RegisterHandler("brp.reload", func(_ context.Context, _ json.RawMessage) (any, error) {
+			loaded, rejected, err := brpMatcher.Reload("/usr/share/xhelix/brp", "/etc/xhelix/brp")
+			if err != nil {
+				log.Warn("brp hot-reload I/O error", "err", err)
+			}
+			log.Info("brp profile library hot-reloaded",
+				"loaded", loaded, "rejected", rejected, "size", brpMatcher.Size())
+			return map[string]any{"loaded": loaded, "rejected": rejected, "size": brpMatcher.Size()}, nil
+		})
+	}
+
 	p := &pipeline.Pipeline{
 		Log:              log,
 		HotStore:         hot,
@@ -4122,10 +4174,10 @@ func dispatch(
 		LongWindow:       longWindow,
 		CDNDNS:           cdnDNS,
 		FlowStats:        flowStats,
-		EgressLedger: egressLedger,
-		AppLookup:    appLookup,
-		HotGraph:     hotGraph,
-		ProcKeys:     procKeys,
+		EgressLedger:     egressLedger,
+		AppLookup:        appLookup,
+		HotGraph:         hotGraph,
+		ProcKeys:         procKeys,
 		// DestClassifier drives smart per-class CIDR bucketing in the
 		// ledger (exact IP for raw/unknown/intel_bad; /16 for cdn/cloud).
 		// Wired with intelMgr so threat-intel-matched IPs classify as
@@ -4149,12 +4201,12 @@ func dispatch(
 			dc.SetOrgProvider(geoOrgAdapter{db: orgGeo})
 			return dc
 		}(),
-		EgressPolicy:     egressPolicyEng,
-		TrustZone:        trustMgr,
-		TLSPlaintext:     tlsPlaintext,
-		Origins:          origins,
-		RecordWindowOpen: recordWindow,
-		Recorder:         rec,
+		EgressPolicy: egressPolicyEng,
+		TrustZone:    trustMgr,
+		TLSPlaintext: tlsPlaintext,
+		Origins:      origins,
+		RecordWindow: recWindow,
+		Recorder:     rec,
 	}
 	if rec != nil {
 		go func() {
@@ -4165,6 +4217,9 @@ func dispatch(
 				case <-ctx.Done():
 					return
 				case now := <-tk.C:
+					// Pick up out-of-band learning-window toggles (e.g. an
+					// operator touching/removing the control file directly).
+					recWindow.Refresh()
 					if err := rec.Tick(now); err != nil && log != nil {
 						log.Warn("recorder tick", "err", err)
 					}

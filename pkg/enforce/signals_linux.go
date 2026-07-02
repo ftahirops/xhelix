@@ -15,6 +15,7 @@ var (
 
 	errInvalidPID     = errors.New("enforce: refusing to signal pid 0 or 1")
 	errNotQuarantined = errors.New("enforce: pid is not under quarantine")
+	errPIDRecycled    = errors.New("enforce: refusing to signal recycled pid (start time changed)")
 )
 
 // DefaultSignalFn is a wrapper around syscall.Kill suitable for

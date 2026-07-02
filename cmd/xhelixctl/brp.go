@@ -18,6 +18,7 @@ import (
 
 	"github.com/xhelix/xhelix/pkg/brp"
 	parser "github.com/xhelix/xhelix/pkg/brp/parser"
+	"github.com/xhelix/xhelix/pkg/localapi"
 )
 
 const (
@@ -54,6 +55,37 @@ config files into their derived ProfileKey, and explain runtime decisions.
 	cmd.AddCommand(newBRPGenerateCmd())
 	cmd.AddCommand(newBRPEdgeCmd())
 	cmd.AddCommand(newBRPInvariantsCmd())
+	cmd.AddCommand(newBRPReloadCmd())
+	return cmd
+}
+
+// newBRPReloadCmd hot-reloads the daemon's signed-profile library so a freshly
+// promoted profile goes live without a restart.
+func newBRPReloadCmd() *cobra.Command {
+	var sock string
+	cmd := &cobra.Command{
+		Use:   "reload",
+		Short: "Hot-reload the running daemon's signed-profile library (no restart)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			var resp struct {
+				Loaded   int `json:"loaded"`
+				Rejected int `json:"rejected"`
+				Size     int `json:"size"`
+			}
+			if err := c.Call("brp.reload", nil, &resp); err != nil {
+				return fmt.Errorf("brp.reload: %w", err)
+			}
+			fmt.Fprintf(os.Stdout, "reloaded: %d loaded, %d rejected, %d profiles now live\n",
+				resp.Loaded, resp.Rejected, resp.Size)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", "/run/xhelix/xhelix.sock", "daemon socket")
 	return cmd
 }
 
@@ -145,16 +177,16 @@ func newBRPEdgeListCmd() *cobra.Command {
 
 func newBRPEdgeSignCmd() *cobra.Command {
 	var (
-		fromApp        string
-		toApp          string
-		signer         string
-		keyPath        string
-		outDir         string
-		outPath        string
-		actions        []string
-		destinations   []string
-		note           string
-		force          bool
+		fromApp      string
+		toApp        string
+		signer       string
+		keyPath      string
+		outDir       string
+		outPath      string
+		actions      []string
+		destinations []string
+		note         string
+		force        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "sign",
@@ -241,8 +273,9 @@ func newBRPEdgeSignCmd() *cobra.Command {
 // ─────────────────────────────────────────────────────────────────────
 //
 // Produces two files in <out-dir>:
-//   <signer>.key       — Ed25519 private key (base64, mode 0600)
-//   trusted-keys.d/<signer>.pub  — public key (base64, mode 0644)
+//
+//	<signer>.key       — Ed25519 private key (base64, mode 0600)
+//	trusted-keys.d/<signer>.pub  — public key (base64, mode 0644)
 //
 // The .pub goes into the daemon's trust root automatically (any *.pub
 // under /etc/xhelix/brp/trusted-keys.d/ is loaded at startup). The .key
@@ -321,17 +354,17 @@ key — pick something memorable like "ops-alice" or "site-prod-2026".`,
 // to enforce."
 func newBRPGenerateCmd() *cobra.Command {
 	var (
-		configPath  string
-		appHint     string
-		signer      string
-		keyPath     string
-		outPath     string
-		outDir      string
-		profileID   string
+		configPath   string
+		appHint      string
+		signer       string
+		keyPath      string
+		outPath      string
+		outDir       string
+		profileID    string
 		versionRange string
-		osFamily    string
-		confidence  string
-		force       bool
+		osFamily     string
+		confidence   string
+		force        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "generate",

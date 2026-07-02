@@ -22,21 +22,27 @@ type SignalFn func(pid int, sig os.Signal) error
 type Quarantine struct {
 	send SignalFn
 
-	mu       sync.Mutex
-	records  map[uint32]*QuarantineRecord
+	mu      sync.Mutex
+	records map[uint32]*QuarantineRecord
 }
 
 // QuarantineRecord describes one stopped pid.
 type QuarantineRecord struct {
-	PID         uint32
-	Comm        string
-	Image       string
-	StoppedAt   time.Time
-	ResumedAt   time.Time
-	KilledAt    time.Time
-	RuleID      string
-	SnapshotID  string // populated by the caller after capture
-	State       string // "stopped" | "resumed" | "killed"
+	PID        uint32
+	Comm       string
+	Image      string
+	StoppedAt  time.Time
+	ResumedAt  time.Time
+	KilledAt   time.Time
+	RuleID     string
+	SnapshotID string // populated by the caller after capture
+	State      string // "stopped" | "resumed" | "killed"
+
+	// StartTicks is the process start time (/proc/<pid>/stat field 22)
+	// captured at Stop. Resume/Kill re-read it and refuse to signal if it
+	// no longer matches — the pid was recycled onto a different process.
+	StartTicks   uint64
+	StartTicksOK bool
 }
 
 // NewQuarantine builds a tracker. send may be nil; in that case
@@ -65,6 +71,7 @@ func (q *Quarantine) Stop(pid uint32, comm, image, ruleID string) (*QuarantineRe
 		RuleID:    ruleID,
 		State:     "stopped",
 	}
+	r.StartTicks, r.StartTicksOK = procStartTicks(pid)
 	if q.send != nil {
 		if err := q.send(int(pid), sigSTOP); err != nil {
 			return nil, err
@@ -81,6 +88,9 @@ func (q *Quarantine) Resume(pid uint32) error {
 	r, ok := q.records[pid]
 	if !ok {
 		return errNotQuarantined
+	}
+	if err := verifyIdentity(r); err != nil {
+		return err
 	}
 	if q.send != nil {
 		if err := q.send(int(pid), sigCONT); err != nil {
@@ -100,6 +110,9 @@ func (q *Quarantine) Kill(pid uint32) error {
 	if !ok {
 		return errNotQuarantined
 	}
+	if err := verifyIdentity(r); err != nil {
+		return err
+	}
 	if q.send != nil {
 		if err := q.send(int(pid), sigKILL); err != nil {
 			return err
@@ -107,6 +120,27 @@ func (q *Quarantine) Kill(pid uint32) error {
 	}
 	r.KilledAt = time.Now().UTC()
 	r.State = "killed"
+	return nil
+}
+
+// verifyIdentity re-reads the process start time and refuses to signal if it
+// no longer matches what was captured at Stop — the pid has been recycled onto
+// a different process and signalling it would hit an unrelated (possibly
+// critical) process. If we could not capture a baseline at Stop, or cannot read
+// the live value now (process already gone), we allow the signal: SIGCONT/SIGKILL
+// to a dead pid is harmless, and failing closed would let a recycled-pid check
+// block legitimate kills whenever /proc is briefly unreadable.
+func verifyIdentity(r *QuarantineRecord) error {
+	if !r.StartTicksOK {
+		return nil
+	}
+	live, ok := procStartTicks(r.PID)
+	if !ok {
+		return nil
+	}
+	if live != r.StartTicks {
+		return errPIDRecycled
+	}
 	return nil
 }
 

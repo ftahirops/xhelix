@@ -3,6 +3,7 @@ package brp
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -33,6 +34,37 @@ func makeMatcher(t *testing.T) (*Matcher, ed25519.PrivateKey) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	m := NewMatcher(map[string]ed25519.PublicKey{"trusted": pub})
 	return m, priv
+}
+
+func TestMatcher_Reload_ReplacesLibrary(t *testing.T) {
+	m, priv := makeMatcher(t)
+	dir := t.TempDir()
+
+	// Write two signed profiles, reload → both live.
+	if err := WriteSigned(filepath.Join(dir, "a.signed.json"),
+		signedNginx(t, priv, "trusted", "1.24.0", "debian12", "fpA")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSigned(filepath.Join(dir, "b.signed.json"),
+		signedNginx(t, priv, "trusted", "1.24.1", "debian12", "fpB")); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := m.Reload(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != 2 || m.Size() != 2 {
+		t.Fatalf("after first reload loaded=%d size=%d, want 2/2", loaded, m.Size())
+	}
+
+	// Remove one profile, reload again → library REPLACED, not accumulated.
+	if err := os.Remove(filepath.Join(dir, "b.signed.json")); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, _ = m.Reload(dir)
+	if loaded != 1 || m.Size() != 1 {
+		t.Errorf("after removal+reload loaded=%d size=%d, want 1/1 (replace, not append)", loaded, m.Size())
+	}
 }
 
 func TestMatcher_NewEmpty(t *testing.T) {

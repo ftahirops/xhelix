@@ -142,6 +142,13 @@ func New(opts Options) (*Store, error) {
 		return nil, fmt.Errorf("coldstore ping: %w", err)
 	}
 
+	// One-time conversion of a legacy auto_vacuum=NONE file to INCREMENTAL so
+	// DropOldDays/DropDaysOverSize's incremental_vacuum reclaims disk in place.
+	// The DSN pragma above only affects freshly-created DBs; a daemon upgraded
+	// in place would otherwise leave dropped-day pages in the file forever
+	// (the 8 GiB file / 5.7 GiB free case in ERRORS.md). Best-effort.
+	convertToIncrementalVacuum(db)
+
 	s := &Store{
 		db:            db,
 		path:          opts.Path,
@@ -379,6 +386,25 @@ func (s *Store) ensureTableForName(day string) (string, error) {
 	return table, nil
 }
 
+// convertToIncrementalVacuum upgrades a legacy auto_vacuum=NONE database to
+// INCREMENTAL (mode 2) via a one-time VACUUM. On a fresh DB the DSN pragma
+// already set this, so the VACUUM is only paid on an in-place upgrade. Best-
+// effort: on error (e.g. insufficient free disk for the rewrite) we return
+// silently — DROP TABLE retention still works, only in-place reclaim waits.
+func convertToIncrementalVacuum(db *sql.DB) {
+	var mode int
+	if err := db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		return
+	}
+	if mode == 2 {
+		return
+	}
+	if _, err := db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+		return
+	}
+	_, _ = db.Exec(`VACUUM`)
+}
+
 // dayKey formats a UTC time as YYYYMMDD.
 func dayKey(t time.Time) string {
 	return t.UTC().Format("20060102")
@@ -386,17 +412,17 @@ func dayKey(t time.Time) string {
 
 // Stats is the snapshot for health.snapshot and operator dashboards.
 type Stats struct {
-	Path             string `json:"path"`
-	QueueSize        int    `json:"queue_size"`
-	QueueCap         int    `json:"queue_cap"`
-	BatchSize        int    `json:"batch_size"`
-	Submitted        uint64 `json:"submitted"`
-	Written          uint64 `json:"written"`
-	Dropped          uint64 `json:"dropped"`
-	Batches          uint64 `json:"batches"`
-	FlushErrs        uint64 `json:"flush_errs"`
-	DayRotations     uint64 `json:"day_rotations"`
-	CurrentTable     string `json:"current_table"`
+	Path         string `json:"path"`
+	QueueSize    int    `json:"queue_size"`
+	QueueCap     int    `json:"queue_cap"`
+	BatchSize    int    `json:"batch_size"`
+	Submitted    uint64 `json:"submitted"`
+	Written      uint64 `json:"written"`
+	Dropped      uint64 `json:"dropped"`
+	Batches      uint64 `json:"batches"`
+	FlushErrs    uint64 `json:"flush_errs"`
+	DayRotations uint64 `json:"day_rotations"`
+	CurrentTable string `json:"current_table"`
 }
 
 // Stats returns a counter snapshot.

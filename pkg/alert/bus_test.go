@@ -45,6 +45,46 @@ func TestBusFanOut(t *testing.T) {
 	}
 }
 
+// blockSink blocks in Send until released, simulating a slow/stalled webhook.
+type blockSink struct {
+	release chan struct{}
+	count   atomic.Uint64
+}
+
+func (b *blockSink) Name() string { return "block" }
+func (b *blockSink) Send(ctx context.Context, a model.Alert) error {
+	<-b.release
+	b.count.Add(1)
+	return nil
+}
+func (b *blockSink) Close() error { return nil }
+
+// TestBusSlowSinkDoesNotStallFastSink verifies the C4 fix: a sink stuck in
+// Send must not block delivery to other sinks or the pump.
+func TestBusSlowSinkDoesNotStallFastSink(t *testing.T) {
+	slow := &blockSink{release: make(chan struct{})}
+	fast := &captureSink{}
+	bus := NewBus([]model.Sink{slow, fast}, 16, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go bus.Run(ctx)
+
+	for i := 0; i < 10; i++ {
+		bus.Send(model.Alert{Event: model.NewEvent("t", model.SeverityInfo)})
+	}
+
+	// The fast sink must receive all 10 even though the slow sink is wedged.
+	deadline := time.Now().Add(2 * time.Second)
+	for fast.count.Load() < 10 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := fast.count.Load(); got != 10 {
+		t.Errorf("fast sink got %d, want 10 while slow sink blocked", got)
+	}
+	close(slow.release) // let the slow worker drain and exit cleanly
+}
+
 func TestBusDropsWhenFull(t *testing.T) {
 	cs := &captureSink{}
 	bus := NewBus([]model.Sink{cs}, 1, nil)

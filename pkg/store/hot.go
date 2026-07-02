@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite"
 
@@ -21,6 +23,24 @@ import (
 type HotStore struct {
 	db   *sql.DB
 	path string
+
+	// Async write-behind path (opt-in via StartWriter). When enabled, the
+	// hot-path caller uses Submit — a non-blocking enqueue — instead of the
+	// synchronous Insert, so a SQLite stall can never block the single pipeline
+	// dispatch goroutine (which would back-pressure sensors into event drops).
+	// The hot store is a recent-events query cache; the cold store and forensic
+	// chain are the durable paths, so dropping under sustained write pressure is
+	// acceptable here. On overflow we drop OLDEST (keep the most recent events,
+	// which is what dashboards and RCA query), mirroring the coldstore queue.
+	writeMu   sync.Mutex
+	writeQ    []model.Event
+	writeCap  int
+	writerOn  atomic.Bool
+	wake      chan struct{} // buffered(1): nudge the writer to drain early
+	writeDone chan struct{}
+	submitted atomic.Uint64
+	written   atomic.Uint64
+	dropped   atomic.Uint64
 }
 
 // OpenHot opens (or creates) the SQLite-backed hot store at path.
@@ -55,6 +75,13 @@ func OpenHot(path string) (*HotStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open hot store: %w", err)
 	}
+	if path != ":memory:" {
+		// One-time conversion of a legacy auto_vacuum=NONE file to
+		// INCREMENTAL, so PruneBySize's incremental_vacuum actually reclaims
+		// disk. The DSN pragma above only affects freshly-created DBs; a
+		// daemon upgraded in place would otherwise never shrink hot.db.
+		convertToIncrementalVacuum(db)
+	}
 	if err := initSchema(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
@@ -62,8 +89,39 @@ func OpenHot(path string) (*HotStore, error) {
 	return &HotStore{db: db, path: path}, nil
 }
 
-// Close releases the underlying database handle.
+// convertToIncrementalVacuum upgrades a legacy auto_vacuum=NONE database to
+// INCREMENTAL (mode 2). auto_vacuum can only be changed by setting the pragma
+// and then running a full VACUUM; on a fresh DB the DSN pragma already did
+// this, so we only pay the (expensive, one-time) VACUUM when the file predates
+// the pragma. Best-effort: on error (e.g. insufficient free disk for the
+// rewrite) we log and continue — retention DROP/DELETE still work, only the
+// in-place page reclaim is unavailable until the conversion succeeds.
+func convertToIncrementalVacuum(db *sql.DB) {
+	var mode int
+	if err := db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		return
+	}
+	if mode == 2 { // already INCREMENTAL
+		return
+	}
+	if _, err := db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+		return
+	}
+	if _, err := db.Exec(`VACUUM`); err != nil {
+		return
+	}
+}
+
+// Close stops the async writer (draining the queue once) and releases the
+// underlying database handle.
 func (h *HotStore) Close() error {
+	if h.writerOn.Load() {
+		h.writerOn.Store(false)
+		h.nudge()
+		if h.writeDone != nil {
+			<-h.writeDone // wait for the writer goroutine to drain and exit
+		}
+	}
 	return h.db.Close()
 }
 
@@ -231,23 +289,51 @@ type PruneStats struct {
 	FileBytes  int64
 }
 
+// schemaMigrations is the ordered list of forward-only schema migrations.
+// Element i moves the database from user_version i to user_version i+1. The
+// current schema version is len(schemaMigrations).
+//
+// RULES: append only. Never edit, delete, or reorder an existing entry — a
+// deployed daemon may already have applied it. A new column/index/table is a
+// new element (e.g. `ALTER TABLE events ADD COLUMN ...`). Existing databases
+// (pre-migration, user_version=0) safely re-run v1 because its DDL uses
+// IF NOT EXISTS; it only stamps the version.
+var schemaMigrations = []string{
+	// v0 -> v1: initial events table + query indexes.
+	`CREATE TABLE IF NOT EXISTS events (
+		id        TEXT PRIMARY KEY,
+		ts        INTEGER NOT NULL,
+		sensor    TEXT NOT NULL,
+		severity  TEXT NOT NULL,
+		host      TEXT,
+		pid       INTEGER,
+		comm      TEXT,
+		image     TEXT,
+		rule      TEXT,
+		tags      TEXT
+	);
+	CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+	CREATE INDEX IF NOT EXISTS events_sensor_ts ON events(sensor, ts);
+	CREATE INDEX IF NOT EXISTS events_pid_ts ON events(pid, ts);`,
+}
+
+// initSchema brings the database up to the current schema version by applying
+// every migration newer than the stored PRAGMA user_version, in order. It is
+// idempotent: a fully-migrated DB does nothing.
 func initSchema(db *sql.DB) error {
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS events (
-			id        TEXT PRIMARY KEY,
-			ts        INTEGER NOT NULL,
-			sensor    TEXT NOT NULL,
-			severity  TEXT NOT NULL,
-			host      TEXT,
-			pid       INTEGER,
-			comm      TEXT,
-			image     TEXT,
-			rule      TEXT,
-			tags      TEXT
-		);
-		CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
-		CREATE INDEX IF NOT EXISTS events_sensor_ts ON events(sensor, ts);
-		CREATE INDEX IF NOT EXISTS events_pid_ts ON events(pid, ts);
-	`)
-	return err
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	for v < len(schemaMigrations) {
+		if _, err := db.Exec(schemaMigrations[v]); err != nil {
+			return fmt.Errorf("apply schema migration v%d->v%d: %w", v, v+1, err)
+		}
+		v++
+		// user_version cannot be parameterized; v is an int we fully control.
+		if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, v)); err != nil {
+			return fmt.Errorf("stamp schema version %d: %w", v, err)
+		}
+	}
+	return nil
 }

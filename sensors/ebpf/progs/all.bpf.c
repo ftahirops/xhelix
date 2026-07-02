@@ -648,8 +648,15 @@ int kp_sys_ptrace(struct pt_regs *ctx) {
     struct xh_ptrace_evt *e = bpf_ringbuf_reserve(&xh_events, sizeof(*e), 0);
     if (!e) return 0;
     xh_fill_hdr(&e->hdr, XH_EV_PTRACE);
-    e->request    = (__u32)PT_REGS_PARM1(ctx);
-    e->target_pid = (__u32)PT_REGS_PARM2(ctx);
+    // __x64_sys_ptrace(const struct pt_regs *regs): same syscall-wrapper
+    // convention as sys_bpf above — the kprobe's PARM1 is a POINTER to the
+    // syscall's pt_regs, not the ptrace `request`. Reading PT_REGS_PARM1/2(ctx)
+    // directly captured the kernel pointer (garbage), so process-injection
+    // detection (PTRACE_ATTACH/POKETEXT/target pid) never fired correctly.
+    // The real args of ptrace(long request, long pid, ...) are regs->di/si.
+    struct pt_regs *sysregs = (struct pt_regs *)PT_REGS_PARM1(ctx);
+    e->request    = (__u32)BPF_CORE_READ(sysregs, di);
+    e->target_pid = (__u32)BPF_CORE_READ(sysregs, si);
     bpf_ringbuf_submit(e, 0);
     return 0;
 }

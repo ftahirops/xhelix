@@ -7,9 +7,9 @@
 // Extracted from cmd/xhelix/run.go's dispatch() function in
 // P-RF.7b. NO behavior changes — same code, same call order, just
 // across a package boundary so:
-//   * Pipeline can be constructed with mock dependencies in tests
-//   * dispatch() in cmd/xhelix is now ~30 lines (channel plumbing)
-//   * Future refactors (P-RF.8/9) can break Handle apart into
+//   - Pipeline can be constructed with mock dependencies in tests
+//   - dispatch() in cmd/xhelix is now ~30 lines (channel plumbing)
+//   - Future refactors (P-RF.8/9) can break Handle apart into
 //     smaller methods without touching the daemon entrypoint
 //
 // See REFACTOR_ROADMAP.md §2 for the design intent.
@@ -25,33 +25,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xhelix/xhelix/pkg/appident"
+	"github.com/xhelix/xhelix/pkg/assetclass"
 	"github.com/xhelix/xhelix/pkg/autobaseline"
 	"github.com/xhelix/xhelix/pkg/baseline"
 	"github.com/xhelix/xhelix/pkg/beacon"
-	"github.com/xhelix/xhelix/pkg/assetclass"
+	"github.com/xhelix/xhelix/pkg/brandcheck"
 	"github.com/xhelix/xhelix/pkg/brp"
 	brpphase "github.com/xhelix/xhelix/pkg/brp/phase"
 	"github.com/xhelix/xhelix/pkg/brp/writerattr"
-	"github.com/xhelix/xhelix/pkg/canonical"
-	"github.com/xhelix/xhelix/pkg/egressguard"
-	"github.com/xhelix/xhelix/pkg/hotgraph"
-	"github.com/xhelix/xhelix/pkg/incidentgraph"
-	"github.com/xhelix/xhelix/pkg/cdndetect"
-	"github.com/xhelix/xhelix/pkg/flowstats"
-	"github.com/xhelix/xhelix/pkg/l7proto"
-	"github.com/xhelix/xhelix/pkg/longwindow"
-	"github.com/xhelix/xhelix/pkg/pkglifecycle"
-	"github.com/xhelix/xhelix/pkg/pkgmgr"
-	"github.com/xhelix/xhelix/pkg/sshbrute"
-	"github.com/xhelix/xhelix/pkg/secrettaint"
-	"github.com/xhelix/xhelix/pkg/servicerole"
-	"github.com/xhelix/xhelix/pkg/integrity"
-	"github.com/xhelix/xhelix/pkg/verify"
 	"github.com/xhelix/xhelix/pkg/burstdet"
-	"github.com/xhelix/xhelix/pkg/cronclassify"
-	"github.com/xhelix/xhelix/pkg/brandcheck"
+	"github.com/xhelix/xhelix/pkg/canonical"
 	"github.com/xhelix/xhelix/pkg/capwatch"
 	"github.com/xhelix/xhelix/pkg/catalog"
+	"github.com/xhelix/xhelix/pkg/cdndetect"
 	"github.com/xhelix/xhelix/pkg/cgroupclass"
 	"github.com/xhelix/xhelix/pkg/chain"
 	"github.com/xhelix/xhelix/pkg/cloudmeta"
@@ -59,41 +46,55 @@ import (
 	"github.com/xhelix/xhelix/pkg/connstate"
 	"github.com/xhelix/xhelix/pkg/contescape"
 	"github.com/xhelix/xhelix/pkg/correlator"
-	"github.com/xhelix/xhelix/pkg/appident"
-	"github.com/xhelix/xhelix/pkg/dnsexfil"
+	"github.com/xhelix/xhelix/pkg/cronclassify"
 	"github.com/xhelix/xhelix/pkg/destclass"
+	"github.com/xhelix/xhelix/pkg/dnsexfil"
+	"github.com/xhelix/xhelix/pkg/egressguard"
 	"github.com/xhelix/xhelix/pkg/egressledger"
-	"github.com/xhelix/xhelix/pkg/tlsledger"
 	"github.com/xhelix/xhelix/pkg/egressmon"
 	"github.com/xhelix/xhelix/pkg/egresspolicy"
+	"github.com/xhelix/xhelix/pkg/flowstats"
+	"github.com/xhelix/xhelix/pkg/hotgraph"
 	"github.com/xhelix/xhelix/pkg/imagecache"
-	"github.com/xhelix/xhelix/pkg/vhostcorr"
+	"github.com/xhelix/xhelix/pkg/incidentgraph"
+	"github.com/xhelix/xhelix/pkg/integrity"
 	"github.com/xhelix/xhelix/pkg/intel"
+	"github.com/xhelix/xhelix/pkg/l7proto"
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/lolbin"
+	"github.com/xhelix/xhelix/pkg/longwindow"
 	"github.com/xhelix/xhelix/pkg/ml"
 	"github.com/xhelix/xhelix/pkg/model"
+	"github.com/xhelix/xhelix/pkg/pkglifecycle"
+	"github.com/xhelix/xhelix/pkg/pkgmgr"
 	"github.com/xhelix/xhelix/pkg/proctree"
 	"github.com/xhelix/xhelix/pkg/ptraceguard"
-	"github.com/xhelix/xhelix/pkg/revshell"
 	"github.com/xhelix/xhelix/pkg/recorder"
+	"github.com/xhelix/xhelix/pkg/recordwindow"
+	"github.com/xhelix/xhelix/pkg/revshell"
 	"github.com/xhelix/xhelix/pkg/rules"
 	"github.com/xhelix/xhelix/pkg/runtimeallow"
+	"github.com/xhelix/xhelix/pkg/secrettaint"
+	"github.com/xhelix/xhelix/pkg/servicerole"
 	"github.com/xhelix/xhelix/pkg/session"
 	"github.com/xhelix/xhelix/pkg/shmguard"
+	"github.com/xhelix/xhelix/pkg/snicheck"
 	"github.com/xhelix/xhelix/pkg/source"
-	"github.com/xhelix/xhelix/pkg/systemdroot"
-	"github.com/xhelix/xhelix/pkg/webroot"
+	"github.com/xhelix/xhelix/pkg/sshbrute"
 	"github.com/xhelix/xhelix/pkg/store"
+	"github.com/xhelix/xhelix/pkg/systemdroot"
+	"github.com/xhelix/xhelix/pkg/tlsledger"
 	"github.com/xhelix/xhelix/pkg/trustzone"
+	"github.com/xhelix/xhelix/pkg/verify"
+	"github.com/xhelix/xhelix/pkg/vhostcorr"
 	"github.com/xhelix/xhelix/pkg/webdrop"
+	"github.com/xhelix/xhelix/pkg/webroot"
 	"github.com/xhelix/xhelix/pkg/webshellguard"
 	"github.com/xhelix/xhelix/pkg/workflowchain"
 	"github.com/xhelix/xhelix/pkg/yara"
-	"github.com/xhelix/xhelix/pkg/snicheck"
 	"github.com/xhelix/xhelix/sensors/dnsresolver"
-	"github.com/xhelix/xhelix/sensors/procscrape"
 	"github.com/xhelix/xhelix/sensors/netids"
+	"github.com/xhelix/xhelix/sensors/procscrape"
 )
 
 // Pipeline holds every per-event dependency in one place. nil
@@ -101,21 +102,21 @@ import (
 // The daemon constructs a single Pipeline and passes it to the
 // dispatch goroutine.
 type Pipeline struct {
-	Log              *slog.Logger
-	HotStore         *store.HotStore
-	Rules            *rules.Engine
-	Correlator       *correlator.Engine
-	YaraScanner      *yara.Scanner
-	IntelMgr         *intel.Manager
-	MLDetector       *ml.AnomalyDetector
-	ProcTree         *proctree.Graph
+	Log         *slog.Logger
+	HotStore    *store.HotStore
+	Rules       *rules.Engine
+	Correlator  *correlator.Engine
+	YaraScanner *yara.Scanner
+	IntelMgr    *intel.Manager
+	MLDetector  *ml.AnomalyDetector
+	ProcTree    *proctree.Graph
 	// HotGraph is the PID-reuse-safe causal process DAG (P6). Populated
 	// here on proc spawn/exit so its Ancestors/Descendants/ByLineage/
 	// ByOriginIP/ByCgroup queries (already exposed via LocalAPI) return
 	// live data. ProcKeys resolves a PID to its canonical (PID,StartTicks)
 	// key. Both nil-safe — population is skipped when unset.
-	HotGraph *hotgraph.Graph
-	ProcKeys *canonical.ProcKeyCache
+	HotGraph         *hotgraph.Graph
+	ProcKeys         *canonical.ProcKeyCache
 	ForensicsChain   *chain.Chain
 	ImageCache       *imagecache.Cache
 	SessionTracker   *session.Tracker
@@ -251,11 +252,13 @@ type Pipeline struct {
 	// unknown. SP-2.
 	Origins *lineage.Store
 
-	// RecordWindowOpen is the operator-asserted clean-window flag. The
-	// workflow-chain stamp only marks events learnable while this is true
+	// RecordWindow is the operator-asserted clean-window switch. The
+	// workflow-chain stamp only marks events learnable while it is open
 	// (scope-lock §11: clean windows are operator-asserted, not
-	// self-certified). Defaults false → nothing is learnable until opened.
-	RecordWindowOpen bool
+	// self-certified). Nil or closed → nothing is learnable. It is
+	// runtime-toggleable (file-backed) so an operator can open/close learning
+	// on a live daemon without a restart.
+	RecordWindow *recordwindow.Flag
 
 	// Recorder persists learnable workflow chains for SP-4 synthesis.
 	// Nil-safe; nil disables recording. Records AFTER the workflow-chain
@@ -393,17 +396,18 @@ type Pipeline struct {
 
 // Handle processes one event end-to-end. The full per-event chain:
 //
-//  1a. Image-hash enrichment on spawn events (exe_sha256 tag).
-//  1. Durable persistence (cold store) — non-blocking, drops on
-//     overflow.
-//  2. Session tracker ingest — identity events open/close sessions.
-//  3. Per-binary baseline counter increment.
-//  4. LOTL scoring on exec events (P-B.7).
-//  5. Proc-tree update (spawn/exit/touch).
-//  6. cgroup classification + event tagging.
-//  7. Conn-state updates on net events.
-//  8. Hot-store insert.
-//  9. Evidence chain.Add (signed batch).
+//	1a. Image-hash enrichment on spawn events (exe_sha256 tag).
+//	1. Durable persistence (cold store) — non-blocking, drops on
+//	   overflow.
+//	2. Session tracker ingest — identity events open/close sessions.
+//	3. Per-binary baseline counter increment.
+//	4. LOTL scoring on exec events (P-B.7).
+//	5. Proc-tree update (spawn/exit/touch).
+//	6. cgroup classification + event tagging.
+//	7. Conn-state updates on net events.
+//	8. Hot-store insert.
+//	9. Evidence chain.Add (signed batch).
+//
 // 11. Rule engine evaluation.
 // 12. Correlator ingest.
 // 13. YARA scan on exec.
@@ -1069,11 +1073,13 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		p.ProcScrape.Enrich(&ev)
 	}
 
-	// Store
+	// Store. Submit is a non-blocking enqueue onto the hot store's async
+	// write-behind queue (when StartWriter was called at setup): a SQLite
+	// stall can no longer block this single dispatch goroutine and back-
+	// pressure sensors into event drops. If the writer was not started,
+	// Submit falls back to a synchronous Insert.
 	if p.HotStore != nil {
-		if err := p.HotStore.Insert(ctx, ev); err != nil {
-			p.Log.Warn("hot store insert", "err", err)
-		}
+		p.HotStore.Submit(ev)
 	}
 
 	// Chain
@@ -1958,7 +1964,7 @@ func (p *Pipeline) stampWorkflowChain(ev *model.Event) {
 		RequestID:        ev.Tags["request_id"],
 		JobID:            ev.Tags["job_id"],
 		RedZone:          ev.Severity >= model.SeverityCritical,
-		RecordWindowOpen: p.RecordWindowOpen,
+		RecordWindowOpen: p.RecordWindow.Open(),
 	}
 	if p.ProcTree != nil && ev.PID != 0 {
 		if rootID, _ := p.ProcTree.SourceOf(ev.PID); rootID != 0 {
@@ -2577,7 +2583,8 @@ func brpActionFromEvent(ev model.Event) string {
 // Run is the standard event-loop wrapper. Returns when ctx is
 // cancelled or events is closed. The daemon's dispatch goroutine
 // can now be reduced to:
-//   go p.Run(ctx, eventsCh)
+//
+//	go p.Run(ctx, eventsCh)
 func (p *Pipeline) Run(ctx context.Context, events <-chan model.Event) {
 	if p.Log != nil {
 		p.Log.Info("pipeline starting",

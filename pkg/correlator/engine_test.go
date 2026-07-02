@@ -58,6 +58,46 @@ func TestSequenceCorrelationFires(t *testing.T) {
 	}
 }
 
+// TestWindowlessSessionReclaimed verifies that a rule with no `window` does not
+// leak sessions forever — the defaultSessionTTL backstop reclaims them.
+func TestWindowlessSessionReclaimed(t *testing.T) {
+	eng, _ := New(func(model.Alert) {})
+
+	// No Window and no per-step Within: without the backstop this session
+	// would live until process exit.
+	rule := Rule{
+		ID:          "leaky",
+		SeverityRaw: "warn",
+		GroupBy:     []string{"src_ip"},
+		Steps: []Step{
+			{Select: `event.sensor == "a"`},
+			{Select: `event.sensor == "b"`},
+		},
+	}
+	_ = eng.Load([]Rule{rule})
+
+	ctx := context.Background()
+	t0 := time.Now()
+
+	a := model.NewEvent("a", model.SeverityInfo)
+	a.Time = t0
+	a.Tags["src_ip"] = "198.51.100.9"
+	eng.Ingest(ctx, a)
+
+	if len(eng.sessions) != 1 {
+		t.Fatalf("expected 1 open session, got %d", len(eng.sessions))
+	}
+
+	// An unrelated event past the TTL should trigger reclamation.
+	tick := model.NewEvent("z", model.SeverityInfo)
+	tick.Time = t0.Add(defaultSessionTTL + time.Minute)
+	eng.Ingest(ctx, tick)
+
+	if len(eng.sessions) != 0 {
+		t.Errorf("window-less session not reclaimed after TTL; sessions=%d", len(eng.sessions))
+	}
+}
+
 func TestGroupKeyIsDeterministic(t *testing.T) {
 	m := map[string]string{"b": "2", "a": "1", "c": "3"}
 	got := groupKeyString(m)

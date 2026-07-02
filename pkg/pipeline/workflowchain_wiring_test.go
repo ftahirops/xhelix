@@ -1,12 +1,25 @@
 package pipeline
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/xhelix/xhelix/pkg/lineage"
 	"github.com/xhelix/xhelix/pkg/model"
 	"github.com/xhelix/xhelix/pkg/proctree"
+	"github.com/xhelix/xhelix/pkg/recordwindow"
 )
+
+// openWindow returns a learning-window flag in the open state, backed by a
+// throwaway control file so tests don't touch the real runtime path.
+func openWindow(t *testing.T) *recordwindow.Flag {
+	t.Helper()
+	f := recordwindow.New(filepath.Join(t.TempDir(), "record_window"))
+	if err := f.SetOpen(true); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
 
 // Compile-time + zero-value guard: the Pipeline carries the workflowchain
 // wiring fields and a zero Pipeline neither panics nor enables learning.
@@ -15,7 +28,7 @@ func TestPipeline_HasWorkflowChainFields(t *testing.T) {
 	if p.Origins != nil {
 		t.Error("zero Pipeline.Origins must be nil")
 	}
-	if p.RecordWindowOpen {
+	if p.RecordWindow.Open() {
 		t.Error("record window must default closed")
 	}
 }
@@ -27,7 +40,7 @@ func TestStampWorkflowChain_WebRoot_Learnable(t *testing.T) {
 	origins := lineage.NewStore()
 	origins.Put(lineage.Origin{ID: 7, Type: lineage.RootWeb})
 
-	p := &Pipeline{ProcTree: pt, Origins: origins, RecordWindowOpen: true}
+	p := &Pipeline{ProcTree: pt, Origins: origins, RecordWindow: openWindow(t)}
 
 	ev := &model.Event{
 		PID:  42,
@@ -52,7 +65,7 @@ func TestStampWorkflowChain_RecordClosed_NotLearnable(t *testing.T) {
 	origins := lineage.NewStore()
 	origins.Put(lineage.Origin{ID: 7, Type: lineage.RootWeb})
 
-	p := &Pipeline{ProcTree: pt, Origins: origins, RecordWindowOpen: false}
+	p := &Pipeline{ProcTree: pt, Origins: origins} // RecordWindow nil = closed
 	ev := &model.Event{PID: 42, Tags: map[string]string{"app_id": "shop"}}
 	p.stampWorkflowChain(ev)
 
@@ -81,7 +94,7 @@ func TestStampWorkflowChain_AdminShell_NotLearnable(t *testing.T) {
 	origins := lineage.NewStore()
 	origins.Put(lineage.Origin{ID: 3, Type: lineage.RootSSH}) // interactive admin
 
-	p := &Pipeline{ProcTree: pt, Origins: origins, RecordWindowOpen: true}
+	p := &Pipeline{ProcTree: pt, Origins: origins, RecordWindow: openWindow(t)}
 	ev := &model.Event{PID: 9, Tags: map[string]string{"app_id": "shop"}}
 	p.stampWorkflowChain(ev)
 

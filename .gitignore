@@ -9,6 +9,7 @@
 /xhelix-sinkhole
 /xhelix-watchdog
 /xhelix-graph-server
+/xhub
 /dist/
 *.deb
 *.rpm

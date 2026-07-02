@@ -6,6 +6,8 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,7 +16,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/xhelix/xhelix/pkg/brp"
 	"github.com/xhelix/xhelix/pkg/contractpropose"
+	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/synth"
 
 	_ "modernc.org/sqlite"
@@ -28,6 +32,80 @@ func newSynthCmd() *cobra.Command {
 	cmd.AddCommand(newSynthProposeCmd())
 	cmd.AddCommand(newSynthListCmd())
 	cmd.AddCommand(newSynthExportCmd())
+	cmd.AddCommand(newSynthApproveCmd())
+	return cmd
+}
+
+// newSynthApproveCmd is the auto-promote step: it takes a pending proposal,
+// signs its profile with the operator's key file, installs the signed profile
+// into the BRP library directory, marks the proposal approved, and (by default)
+// hot-reloads the running daemon so the profile goes live without a restart.
+//
+// This closes the previously-manual middle of the learn→lock loop
+// (export → hand-sign → copy → restart) into a single command.
+//
+//	xhelixctl synth approve <app> <id> --key /etc/xhelix/brp/ops.key --signer ops-local
+func newSynthApproveCmd() *cobra.Command {
+	var stateDir, keyPath, signer, outDir, sock string
+	var reload, force bool
+	cmd := &cobra.Command{
+		Use:   "approve <app> <id>",
+		Short: "Sign, install, and activate a pending proposal (operator-key-file model)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			appID, id := args[0], args[1]
+			if keyPath == "" {
+				return errors.New("--key is required (operator Ed25519 private key file; make one with 'xhelixctl brp keygen')")
+			}
+			if signer == "" {
+				return errors.New("--signer is required (must match a public key in the daemon's trusted-keys.d)")
+			}
+
+			priv, err := loadPrivateKey(keyPath)
+			if err != nil {
+				return fmt.Errorf("load operator key: %w", err)
+			}
+			propPath := filepath.Join(stateDir, "contract-propose.db")
+			store, err := contractpropose.Open(propPath)
+			if err != nil {
+				return fmt.Errorf("open proposal store: %w", err)
+			}
+			defer store.Close()
+
+			dst, err := promoteProposal(store, appID, id, priv, signer, outDir, force)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "approved %s → signed profile %s\n", id, dst)
+
+			// 5. Hot-reload the running daemon (best-effort).
+			if reload {
+				c, derr := localapi.Dial(sock)
+				if derr != nil {
+					fmt.Fprintf(os.Stderr, "profile installed but daemon not reachable (%v) — it will load on next start, or run 'xhelixctl brp reload'\n", derr)
+					return nil
+				}
+				defer c.Close()
+				var resp struct {
+					Loaded int `json:"loaded"`
+					Size   int `json:"size"`
+				}
+				if err := c.Call("brp.reload", nil, &resp); err != nil {
+					fmt.Fprintf(os.Stderr, "profile installed but hot-reload failed (%v) — run 'xhelixctl brp reload'\n", err)
+					return nil
+				}
+				fmt.Fprintf(os.Stdout, "hot-reloaded: %d profiles now live\n", resp.Size)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&stateDir, "state-dir", "/var/lib/xhelix", "xhelix state directory (contains contract-propose.db)")
+	cmd.Flags().StringVar(&keyPath, "key", "", "operator Ed25519 private key file (base64)")
+	cmd.Flags().StringVar(&signer, "signer", "", "signer name (must match a trusted public key on the daemon)")
+	cmd.Flags().StringVar(&outDir, "out-dir", "/etc/xhelix/brp", "BRP profile library directory to install into")
+	cmd.Flags().StringVar(&sock, "sock", "/run/xhelix/xhelix.sock", "daemon socket (for hot-reload)")
+	cmd.Flags().BoolVar(&reload, "reload", true, "hot-reload the running daemon after install")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing signed profile")
 	return cmd
 }
 
@@ -140,6 +218,47 @@ func newSynthExportCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&stateDir, "state-dir", "/var/lib/xhelix", "xhelix state directory (contains contract-propose.db)")
 	return cmd
+}
+
+// promoteProposal signs a pending proposal's profile with the operator key,
+// installs it into outDir as <profile_id>.signed.json, and marks the proposal
+// approved. Returns the installed path. Extracted from the CLI closure so the
+// sign→install→approve core is unit-testable without a daemon. Reload is the
+// caller's responsibility (it needs a live socket).
+func promoteProposal(store *contractpropose.Store, appID, id string, priv ed25519.PrivateKey, signer, outDir string, force bool) (string, error) {
+	prop, ok := store.Get(appID, id)
+	if !ok {
+		return "", fmt.Errorf("proposal %s not found for app %s", id, appID)
+	}
+	var prof brp.Profile
+	if err := json.Unmarshal(prop.DeclarationJSON, &prof); err != nil {
+		return "", fmt.Errorf("proposal declaration is not a valid profile: %w", err)
+	}
+	if prof.ProfileID == "" {
+		return "", errors.New("proposal profile has no profile_id — cannot name the output file")
+	}
+	signed, err := brp.Sign(prof, signer, priv)
+	if err != nil {
+		return "", fmt.Errorf("sign profile: %w", err)
+	}
+	dst := filepath.Join(outDir, prof.ProfileID+".signed.json")
+	if !force {
+		if _, err := os.Stat(dst); err == nil {
+			return "", fmt.Errorf("%s already exists (pass --force to overwrite)", dst)
+		}
+	}
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
+		return "", fmt.Errorf("create %s: %w", outDir, err)
+	}
+	if err := brp.WriteSigned(dst, signed); err != nil {
+		return "", fmt.Errorf("write signed profile: %w", err)
+	}
+	if prop.Status != contractpropose.StatusApproved {
+		if err := store.Decide(appID, id, contractpropose.StatusApproved, signer); err != nil {
+			return "", fmt.Errorf("mark approved: %w", err)
+		}
+	}
+	return dst, nil
 }
 
 // renderProposalList formats a slice of proposals for terminal display. Pure — tested.

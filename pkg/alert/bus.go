@@ -15,14 +15,15 @@ import (
 // and the drop counter is incremented. Sensors must never block on
 // alert delivery.
 type Bus struct {
-	sinks      []model.Sink
-	queue      chan model.Alert
-	dropped    atomic.Uint64
-	suppressed atomic.Uint64
-	gate       func(model.Alert) bool
-	router     func(model.Alert) (emit bool, synth *model.Alert)
-	wg         sync.WaitGroup
-	log        *slog.Logger
+	sinks       []model.Sink
+	queue       chan model.Alert
+	dropped     atomic.Uint64
+	suppressed  atomic.Uint64
+	sinkDropped atomic.Uint64
+	gate        func(model.Alert) bool
+	router      func(model.Alert) (emit bool, synth *model.Alert)
+	wg          sync.WaitGroup
+	log         *slog.Logger
 }
 
 // NewBus creates a bus with the given sinks and a queue capacity.
@@ -110,24 +111,64 @@ func (b *Bus) Suppressed() uint64 { return b.suppressed.Load() }
 
 // Run pumps the queue into every sink until ctx is cancelled.
 //
-// Sink errors are logged at warn level; the bus does not retry, by
-// design — sinks that need durability layer it themselves.
+// Each sink gets its own worker goroutine and bounded buffer, so a slow
+// sink (e.g. a webhook POST blocking on a 5s timeout) backs up only its
+// own buffer and cannot stall the pump or the other sinks. When a sink's
+// buffer is full its alert is dropped and sinkDropped is incremented —
+// the bus does not block, by design; sinks that need durability layer it
+// themselves.
+//
+// Sink errors are logged at warn level; the bus does not retry.
 func (b *Bus) Run(ctx context.Context) {
 	b.wg.Add(1)
 	defer b.wg.Done()
+
+	// Per-sink buffered queue + worker. Buffer matches the main queue so a
+	// transient sink stall is absorbed rather than immediately lossy.
+	sinkChans := make([]chan model.Alert, len(b.sinks))
+	var workers sync.WaitGroup
+	for i, s := range b.sinks {
+		ch := make(chan model.Alert, cap(b.queue))
+		sinkChans[i] = ch
+		workers.Add(1)
+		go func(s model.Sink, ch chan model.Alert) {
+			defer workers.Done()
+			for a := range ch {
+				if err := s.Send(ctx, a); err != nil {
+					b.log.Warn("sink send failed", "sink", s.Name(), "err", err)
+				}
+			}
+		}(s, ch)
+	}
+
+	drain := func() {
+		for _, ch := range sinkChans {
+			close(ch)
+		}
+		workers.Wait()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			drain()
 			return
 		case a := <-b.queue:
-			for _, s := range b.sinks {
-				if err := s.Send(ctx, a); err != nil {
-					b.log.Warn("sink send failed", "sink", s.Name(), "err", err)
+			for _, ch := range sinkChans {
+				select {
+				case ch <- a:
+				default:
+					b.sinkDropped.Add(1)
 				}
 			}
 		}
 	}
 }
+
+// SinkDropped returns the running count of alerts dropped because a
+// sink's own buffer was full (a slow/stalled sink), distinct from the
+// queue-full Dropped and gate Suppressed counters.
+func (b *Bus) SinkDropped() uint64 { return b.sinkDropped.Load() }
 
 // Wait blocks until Run returns. Useful in tests.
 func (b *Bus) Wait() { b.wg.Wait() }

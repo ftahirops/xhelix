@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/xhelix/xhelix/pkg/localapi"
 	"github.com/xhelix/xhelix/pkg/recorder"
 
 	_ "modernc.org/sqlite"
@@ -25,6 +26,52 @@ func newRecorderCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newRecorderCoverageCmd())
 	cmd.AddCommand(newRecorderShapesCmd())
+	cmd.AddCommand(newRecorderWindowCmd())
+	return cmd
+}
+
+// newRecorderWindowCmd controls the learning window on a running daemon.
+//
+//	xhelixctl recorder window            show current state
+//	xhelixctl recorder window --open     start learning (mark events learnable)
+//	xhelixctl recorder window --close    stop learning
+func newRecorderWindowCmd() *cobra.Command {
+	var sock string
+	var open, close bool
+	cmd := &cobra.Command{
+		Use:   "window",
+		Short: "Open/close the behavioral learning window on the running daemon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if open && close {
+				return fmt.Errorf("--open and --close are mutually exclusive")
+			}
+			c, err := localapi.Dial(sock)
+			if err != nil {
+				return fmt.Errorf("dial daemon: %w", err)
+			}
+			defer c.Close()
+			var req map[string]any
+			if open || close {
+				req = map[string]any{"open": open} // close → open:false
+			}
+			var resp struct {
+				Open    bool   `json:"open"`
+				Control string `json:"control"`
+			}
+			if err := c.Call("recorder.window", req, &resp); err != nil {
+				return fmt.Errorf("recorder.window: %w", err)
+			}
+			state := "CLOSED"
+			if resp.Open {
+				state = "OPEN"
+			}
+			fmt.Fprintf(os.Stdout, "learning window: %s (control: %s)\n", state, resp.Control)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sock, "sock", "/run/xhelix/xhelix.sock", "daemon socket")
+	cmd.Flags().BoolVar(&open, "open", false, "open the learning window (start recording)")
+	cmd.Flags().BoolVar(&close, "close", false, "close the learning window (stop recording)")
 	return cmd
 }
 

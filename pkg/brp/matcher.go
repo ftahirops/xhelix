@@ -121,6 +121,29 @@ func (m *Matcher) LoadDir(dir string) (loaded, rejected int, err error) {
 	return loaded, rejected, nil
 }
 
+// Reload rebuilds the profile library from dirs, replacing the current set
+// atomically, and returns the total loaded/rejected counts. Used for hot-reload
+// after a profile is promoted so a running daemon picks it up without a
+// restart. The trust root is unchanged. Disk I/O happens off the matcher lock;
+// only the final pointer swap is held under the write lock, so concurrent
+// Match calls never block on I/O and always see either the old or the new
+// library, never a partial one.
+func (m *Matcher) Reload(dirs ...string) (loaded, rejected int, err error) {
+	staging := &Matcher{trustedPubKeys: m.trustedPubKeys}
+	for _, dir := range dirs {
+		l, r, e := staging.LoadDir(dir)
+		loaded += l
+		rejected += r
+		if e != nil {
+			err = e // keep the last I/O error; still swap in what loaded
+		}
+	}
+	m.mu.Lock()
+	m.library = staging.library
+	m.mu.Unlock()
+	return loaded, rejected, err
+}
+
 // Size returns the number of profiles currently loaded.
 func (m *Matcher) Size() int {
 	m.mu.RLock()
