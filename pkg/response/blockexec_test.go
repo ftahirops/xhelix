@@ -71,3 +71,22 @@ func TestBlockExec_NoLoaderIsSafeNoop(t *testing.T) {
 		t.Errorf("blockExec stat = %d, want 0 (no loader)", e.stats.blockExec.Load())
 	}
 }
+
+// TestBlockConnect_FiresWithDstIP verifies ActionBlockConnect calls the deny-IP
+// hook with the alert's dst_ip (autonomous inline egress prevention).
+func TestBlockConnect_FiresWithDstIP(t *testing.T) {
+	var got atomic.Value
+	e := New(Config{
+		Policy:       Policy{"outbound_to_known_bad": ActionLog | ActionBlockConnect},
+		BlockConnect: func(ip string) error { got.Store(ip); return nil },
+	})
+	a := model.Alert{RuleID: "outbound_to_known_bad",
+		Event: model.Event{Tags: map[string]string{"dst_ip": "203.0.113.9"}}}
+	e.OnAlert(a)
+	if ip, _ := got.Load().(string); ip != "203.0.113.9" {
+		t.Errorf("deny ip = %q, want 203.0.113.9", ip)
+	}
+	if e.stats.blockConnect.Load() != 1 {
+		t.Errorf("blockConnect stat = %d, want 1", e.stats.blockConnect.Load())
+	}
+}

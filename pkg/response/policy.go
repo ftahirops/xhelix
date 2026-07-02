@@ -42,6 +42,7 @@ const (
 	ActionLockUser                          // disable the offending local account
 	ActionHostQuarantine                    // isolate host from network (last resort)
 	ActionBlockExec                         // add the offending binary path to the BPF-LSM deny map (inline in-kernel prevention of future exec)
+	ActionBlockConnect                      // add the offending dest IP to the BPF-LSM socket-connect deny map (inline egress prevention)
 )
 
 // Policy maps a rule_id to the bitmask of actions to perform when it
@@ -184,7 +185,7 @@ func Default() Policy {
 		// ─── NETWORK ─────────────────────────────────────────────
 		// outbound_to_known_bad: FP-risk low IF threat-intel feed is
 		//   reputable (Spamhaus DROP). NetBan acceptable.
-		"outbound_to_known_bad": ActionLog | ActionWebhook | ActionNetBan,
+		"outbound_to_known_bad": ActionLog | ActionWebhook | ActionNetBan | ActionBlockConnect,
 		// metadata_svc_unexpected: FP-risk low. legit AWS-CLI on the
 		//   host calls IMDS, but only from a small allowlist of pids
 		//   (aws-cli, kubelet). Snapshot — no NetBan because IMDS
@@ -270,6 +271,7 @@ type Engine struct {
 	memPatterns  []memscan.Pattern
 	lockUser     LockUserFn
 	blockExec    BlockExecFn
+	blockConnect BlockConnectFn
 
 	stats struct {
 		alerts         atomic.Uint64
@@ -283,6 +285,7 @@ type Engine struct {
 		lockUser       atomic.Uint64
 		hostQuarantine atomic.Uint64
 		blockExec      atomic.Uint64
+		blockConnect   atomic.Uint64
 		dropped        atomic.Uint64
 	}
 }
@@ -323,6 +326,12 @@ type WebhookFn func(ctx context.Context, alert model.Alert) error
 // ActionBlockExec dispatch is a no-op in that case.
 type BlockExecFn func(path string) error
 
+// BlockConnectFn adds an IPv4 destination to the in-kernel BPF-LSM
+// socket-connect deny map so any future connect() to it is refused with
+// -EPERM (inline egress prevention). Implemented by pkg/bpflsm.Loader.DenyIP.
+// Nil when BPF-LSM is off/unavailable — ActionBlockConnect is then a no-op.
+type BlockConnectFn func(ip string) error
+
 // Config bundles dependencies.
 type Config struct {
 	Policy       Policy
@@ -334,6 +343,7 @@ type Config struct {
 	MemPatterns  []memscan.Pattern
 	LockUser     LockUserFn
 	BlockExec    BlockExecFn
+	BlockConnect BlockConnectFn
 	Quarantine   *enforce.Quarantine
 	PanicSwitch  *enforce.PanicSwitch
 	Webhook      WebhookFn
@@ -377,6 +387,7 @@ func New(cfg Config) *Engine {
 		memPatterns:  cfg.MemPatterns,
 		lockUser:     cfg.LockUser,
 		blockExec:    cfg.BlockExec,
+		blockConnect: cfg.BlockConnect,
 		stopCh:       make(chan struct{}),
 	}
 	e.hostAllowIPs = cfg.HostAllowIPs
@@ -494,6 +505,9 @@ func (e *Engine) OnAlert(a model.Alert) {
 	if mask&ActionBlockExec != 0 {
 		e.doBlockExec(a)
 	}
+	if mask&ActionBlockConnect != 0 {
+		e.doBlockConnect(a)
+	}
 	if mask&ActionQuarantine != 0 {
 		e.doQuarantine(a)
 	}
@@ -529,6 +543,31 @@ func (e *Engine) doBlockExec(a model.Alert) {
 	e.stats.blockExec.Add(1)
 	e.log.Info("response: exec blocked in-kernel (BPF-LSM)",
 		"path", a.Event.Image, "rule", a.RuleID)
+}
+
+// doBlockConnect adds the offending destination IP to the BPF-LSM
+// socket-connect deny map so any future connect() to it is refused in-kernel.
+// The inline-prevention complement to NetBan (which drops packets post-facto):
+// this refuses the syscall before the packet leaves. No-op (counted) when
+// BPF-LSM is unavailable or the alert carries no dst_ip.
+func (e *Engine) doBlockConnect(a model.Alert) {
+	if e.blockConnect == nil {
+		e.stats.dropped.Add(1)
+		return
+	}
+	ip := a.Event.Tags["dst_ip"]
+	if ip == "" {
+		e.stats.dropped.Add(1)
+		return
+	}
+	if err := e.blockConnect(ip); err != nil {
+		e.log.Warn("block-connect failed", "ip", ip, "err", err)
+		e.stats.dropped.Add(1)
+		return
+	}
+	e.stats.blockConnect.Add(1)
+	e.log.Info("response: egress blocked in-kernel (BPF-LSM)",
+		"ip", ip, "rule", a.RuleID)
 }
 
 func (e *Engine) doQuarantine(a model.Alert) {

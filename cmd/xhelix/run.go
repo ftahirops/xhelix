@@ -704,6 +704,14 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				}
 				return bpflsmLoader.DenyPath
 			}(),
+			// Inline egress prevention: outbound_to_known_bad (threat-intel
+			// match) adds the dest IP to the socket-connect deny map.
+			BlockConnect: func() response.BlockConnectFn {
+				if bpflsmLoader == nil {
+					return nil
+				}
+				return bpflsmLoader.DenyIP
+			}(),
 			Quarantine:  quarantine,
 			PanicSwitch: panicSwitch,
 			Webhook: func(c context.Context, a model.Alert) error {
