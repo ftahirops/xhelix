@@ -335,7 +335,7 @@ type ForensicIngestConfig struct {
 // and xhelixctl protect list returns nothing — correct posture
 // when no services are configured.
 type ProtectedServicesConfig struct {
-	Enabled  bool                          `yaml:"enabled"`
+	Enabled  bool                            `yaml:"enabled"`
 	Services []protectedsvc.ProtectedService `yaml:"services"`
 }
 
@@ -713,9 +713,13 @@ type BPFLSMConfig struct {
 	// load: program loaded but NOT attached (operator preview)
 	// enforce: attached to security_bprm_check; synchronous deny live
 	Mode string `yaml:"mode"`
-	// DenyPaths is the initial deny-list seeded into the kernel map
-	// on startup. Operator can add/remove at runtime via xhelixctl.
+	// DenyPaths is the initial exact-path deny-list seeded into the kernel
+	// map on startup. Operator can add/remove at runtime via xhelixctl.
 	DenyPaths []string `yaml:"deny_paths"`
+	// DenyPrefixes is the initial path-PREFIX deny-list seeded into the LPM
+	// trie: any execve under one of these directories is refused (e.g.
+	// "/var/www/site/wp-content/uploads/"). One entry covers a whole subtree.
+	DenyPrefixes []string `yaml:"deny_prefixes"`
 	// ObjectPath is where to find the compiled BPF-LSM object.
 	// Default: /usr/lib/xhelix/xhelix-lsm.o
 	ObjectPath string `yaml:"object_path"`
@@ -748,9 +752,10 @@ type LandlockConfig struct {
 // EgressguardConfig controls the per-event egress decision plane.
 //
 // Mode rollout discipline (build spec §0 lock):
-//   observe  — classify only, no logging or kernel push (default)
-//   shadow   — log would-be denies; no kernel push; safe for FP soak
-//   enforce  — push denies to kernel backend; production gate
+//
+//	observe  — classify only, no logging or kernel push (default)
+//	shadow   — log would-be denies; no kernel push; safe for FP soak
+//	enforce  — push denies to kernel backend; production gate
 //
 // Operator promotes observe → shadow → enforce, with a soak between
 // each stage. Auto-rollback on FP budget breach is a Phase E.1 feature.
@@ -834,7 +839,7 @@ type SessionConfig struct {
 
 // UIConfig is the web dashboard's protection layer.
 type UIConfig struct {
-	Enabled          bool     `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
 	// NoAuth disables bearer-token + CSRF checks. IP allowlist still
 	// applies. Use ONLY when the network/SSH layer is the boundary.
 	NoAuth           bool     `yaml:"no_auth"`

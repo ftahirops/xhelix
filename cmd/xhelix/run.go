@@ -347,7 +347,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				log.Error("bpflsm: install failed; continuing without BPF-LSM",
 					"mode", mode.String(), "err", err)
 			} else if loader != nil {
-				// Seed the deny map with operator-supplied paths.
+				// Seed the deny map with operator-supplied exact paths.
 				for _, p := range cfg.Hardening.BPFLSM.DenyPaths {
 					if err := loader.DenyPath(p); err != nil {
 						log.Warn("bpflsm: seed deny path failed", "path", p, "err", err)
@@ -355,6 +355,16 @@ func runDaemon(parent context.Context, cfgPath string) error {
 						log.Info("bpflsm: deny path seeded", "path", p)
 					}
 				}
+				// Seed the LPM trie with operator-supplied path prefixes
+				// (deny a whole directory subtree with one entry).
+				for _, p := range cfg.Hardening.BPFLSM.DenyPrefixes {
+					if err := loader.DenyPrefix(p); err != nil {
+						log.Warn("bpflsm: seed deny prefix failed", "prefix", p, "err", err)
+					} else {
+						log.Info("bpflsm: deny prefix seeded", "prefix", p)
+					}
+				}
+				cfgAudit.Witness("hardening.bpflsm.deny_prefixes", "bpflsm.seed")
 				// Keep the loader for the daemon lifetime AND expose its
 				// DenyPath to the response engine so runtime verdicts (e.g.
 				// the dropper chain) can add offending binaries to the

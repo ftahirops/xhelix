@@ -61,6 +61,11 @@ func loadAndAttach(progPath string, mode Mode, log *slog.Logger) (*Loader, error
 		updater: makeDenyUpdater(denyMap),
 		remover: makeDenyRemover(denyMap),
 	}
+	// LPM prefix trie is optional — present only in objects built after the
+	// prefix-deny feature. Absence degrades gracefully to exact-match only.
+	if prefixMap := coll.Maps["xh_bpflsm_deny_prefix"]; prefixMap != nil {
+		loader.prefixUpdater = makePrefixUpdater(prefixMap)
+	}
 
 	if mode == ModeLoad {
 		if log != nil {
@@ -108,6 +113,29 @@ func makeDenyUpdater(m *ebpf.Map) func(string) error {
 		val := uint32(1) // 1 = deny
 		if err := m.Update(key, val, ebpf.UpdateAny); err != nil {
 			return fmt.Errorf("bpflsm: map update %q: %w", path, err)
+		}
+		return nil
+	}
+}
+
+// makePrefixUpdater returns a closure that inserts a path prefix into the LPM
+// deny trie. The key layout mirrors the C struct xh_lpm_key: a native-endian
+// u32 prefixlen (in bits) followed by a 256-byte NUL-padded path. prefixlen =
+// len(prefix)*8 so the trie matches any path beginning with `prefix`.
+func makePrefixUpdater(m *ebpf.Map) func(string) error {
+	type lpmKey struct {
+		PrefixLen uint32
+		Data      [256]byte
+	}
+	return func(prefix string) error {
+		if len(prefix) == 0 || len(prefix) >= 256 {
+			return fmt.Errorf("bpflsm: deny prefix length invalid (%d, want 1..255)", len(prefix))
+		}
+		var k lpmKey
+		k.PrefixLen = uint32(len(prefix) * 8)
+		copy(k.Data[:], prefix)
+		if err := m.Update(&k, uint32(1), ebpf.UpdateAny); err != nil {
+			return fmt.Errorf("bpflsm: prefix map update %q: %w", prefix, err)
 		}
 		return nil
 	}

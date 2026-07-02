@@ -47,6 +47,32 @@ struct {
     __type(value, __u32);
 } xh_bpflsm_deny_paths SEC(".maps");
 
+// xh_bpflsm_deny_prefix — LPM trie for PATH-PREFIX denies. Key is
+// {prefixlen_bits, path[256]}; the kernel matches the longest stored prefix
+// that is a prefix of the execve'd path. Lets an operator deny a whole
+// directory (e.g. a container's writable /var/www/.../uploads, or /tmp)
+// with one entry instead of enumerating every binary. BPF_F_NO_PREALLOC is
+// mandatory for LPM_TRIE.
+struct xh_lpm_key {
+    __u32 prefixlen;
+    unsigned char data[XH_LSM_PATH_MAX];
+};
+struct {
+    __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+    __uint(max_entries, 1024);
+    __type(key, struct xh_lpm_key);
+    __type(value, __u32);
+    __uint(map_flags, BPF_F_NO_PREALLOC);
+} xh_bpflsm_deny_prefix SEC(".maps");
+
+// Per-CPU scratch for the LPM lookup key (too big for the BPF stack).
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct xh_lpm_key);
+} xh_bpflsm_lpm_scratch SEC(".maps");
+
 // xh_bpflsm_stats — per-CPU counter of (allowed, denied) for
 // operator metrics via `xhelixctl bpflsm stats`.
 struct xh_bpflsm_stat {
@@ -114,19 +140,34 @@ int BPF_PROG(xh_lsm_bprm_check, struct linux_binprm *bprm, int ret)
         return 0;
     }
 
-    // Exact-prefix match against the deny map. Hash lookup keyed by
-    // the full path is O(1); for prefix matching we use a strategy
-    // of "operator inserts the canonical denied path (e.g.
-    // /tmp/.cache/payload), exact match denies."
-    //
-    // True prefix matching needs an LPM trie; left as a follow-on.
-    // For v1, exact-path matching covers the common dropper case.
+    // 1) Exact-path match against the hash deny map (O(1)).
     __u32 *val = bpf_map_lookup_elem(&xh_bpflsm_deny_paths, path_buf);
     if (val && *val) {
         if (stat) {
             stat->denied++;
         }
         return -1; // -EPERM
+    }
+
+    // 2) Longest-prefix match against the LPM deny trie — denies whole
+    // directory subtrees with one entry (e.g. an upload dir). Build the
+    // lookup key in per-CPU scratch: prefixlen = full path length in bits so
+    // the trie returns the longest stored prefix that matches.
+    struct xh_lpm_key *lk = bpf_map_lookup_elem(&xh_bpflsm_lpm_scratch, &zero);
+    if (lk) {
+        __builtin_memset(lk, 0, sizeof(*lk));
+        long m = bpf_probe_read_kernel_str(lk->data, XH_LSM_PATH_MAX, filename);
+        if (m > 0) {
+            // exclude the NUL terminator from the match length
+            lk->prefixlen = (__u32)(m - 1) * 8;
+            __u32 *pval = bpf_map_lookup_elem(&xh_bpflsm_deny_prefix, lk);
+            if (pval && *pval) {
+                if (stat) {
+                    stat->denied++;
+                }
+                return -1; // -EPERM
+            }
+        }
     }
 
     if (stat) {

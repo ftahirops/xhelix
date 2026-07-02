@@ -94,10 +94,13 @@ type Loader struct {
 	log  *slog.Logger
 	// closer cleans up the cilium/ebpf collection on Close.
 	closer func() error
-	// updater pushes a path into the deny map.
+	// updater pushes a path into the exact-match deny map.
 	updater func(path string) error
-	// remover deletes a path from the deny map.
+	// remover deletes a path from the exact-match deny map.
 	remover func(path string) error
+	// prefixUpdater pushes a path PREFIX into the LPM deny trie (denies the
+	// whole subtree). nil when the object predates the LPM map.
+	prefixUpdater func(prefix string) error
 }
 
 // Mode returns the active mode this loader was constructed with.
@@ -110,6 +113,16 @@ func (l *Loader) DenyPath(path string) error {
 		return fmt.Errorf("bpflsm: loader has no active map updater (mode=%s)", l.mode)
 	}
 	return l.updater(path)
+}
+
+// DenyPrefix adds a path PREFIX to the kernel LPM deny trie: any execve of a
+// path under `prefix` (e.g. "/var/www/site/uploads/") is refused. One entry
+// covers a whole directory subtree — the operator does not enumerate binaries.
+func (l *Loader) DenyPrefix(prefix string) error {
+	if l.prefixUpdater == nil {
+		return fmt.Errorf("bpflsm: loader has no LPM prefix updater (mode=%s; rebuild xhelix-lsm.o)", l.mode)
+	}
+	return l.prefixUpdater(prefix)
 }
 
 // AllowPath removes `path` from the kernel deny map.
