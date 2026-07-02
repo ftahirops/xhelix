@@ -47,6 +47,7 @@ packaging/deb/usr/local/bin/xhelix-verify
 !docs/2026-06-21-XHELIX_APP_CAUSAL_BRP_SCOPE_LOCK.md
 !docs/RESPONSE_DUAL_PATH.md
 !docs/PIPELINE_HANDLE_DECOMPOSITION.md
+!docs/XHELIX_FINAL_ARCHITECTURE_AND_CODE_ANALYSIS.md
 
 # Local state for development
 /var/
