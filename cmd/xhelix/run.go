@@ -364,7 +364,16 @@ func runDaemon(parent context.Context, cfgPath string) error {
 						log.Info("bpflsm: deny prefix seeded", "prefix", p)
 					}
 				}
+				// Seed the socket-connect deny map (inline egress prevention).
+				for _, ip := range cfg.Hardening.BPFLSM.DenyIPs {
+					if err := loader.DenyIP(ip); err != nil {
+						log.Warn("bpflsm: seed deny ip failed", "ip", ip, "err", err)
+					} else {
+						log.Info("bpflsm: deny ip seeded", "ip", ip)
+					}
+				}
 				cfgAudit.Witness("hardening.bpflsm.deny_prefixes", "bpflsm.seed")
+				cfgAudit.Witness("hardening.bpflsm.deny_ips", "bpflsm.seed")
 				// Keep the loader for the daemon lifetime AND expose its
 				// DenyPath to the response engine so runtime verdicts (e.g.
 				// the dropper chain) can add offending binaries to the

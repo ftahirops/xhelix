@@ -720,6 +720,10 @@ type BPFLSMConfig struct {
 	// trie: any execve under one of these directories is refused (e.g.
 	// "/var/www/site/wp-content/uploads/"). One entry covers a whole subtree.
 	DenyPrefixes []string `yaml:"deny_prefixes"`
+	// DenyIPs is the initial IPv4 egress deny-list: any connect() to one of
+	// these addresses is refused in-kernel at the socket_connect LSM hook —
+	// inline C2/exfil prevention. Operator can add at runtime.
+	DenyIPs []string `yaml:"deny_ips"`
 	// ObjectPath is where to find the compiled BPF-LSM object.
 	// Default: /usr/lib/xhelix/xhelix-lsm.o
 	ObjectPath string `yaml:"object_path"`

@@ -101,6 +101,9 @@ type Loader struct {
 	// prefixUpdater pushes a path PREFIX into the LPM deny trie (denies the
 	// whole subtree). nil when the object predates the LPM map.
 	prefixUpdater func(prefix string) error
+	// ipUpdater pushes a denied IPv4 destination into the socket-connect deny
+	// map (inline egress prevention). nil when the object predates the map.
+	ipUpdater func(ip string) error
 }
 
 // Mode returns the active mode this loader was constructed with.
@@ -123,6 +126,16 @@ func (l *Loader) DenyPrefix(prefix string) error {
 		return fmt.Errorf("bpflsm: loader has no LPM prefix updater (mode=%s; rebuild xhelix-lsm.o)", l.mode)
 	}
 	return l.prefixUpdater(prefix)
+}
+
+// DenyIP adds an IPv4 destination to the socket-connect deny map: any
+// connect() to `ip` is refused in-kernel with -EPERM. Inline egress
+// prevention — stops C2/exfil at the syscall, before the packet leaves.
+func (l *Loader) DenyIP(ip string) error {
+	if l.ipUpdater == nil {
+		return fmt.Errorf("bpflsm: loader has no IP deny map (mode=%s; rebuild xhelix-lsm.o)", l.mode)
+	}
+	return l.ipUpdater(ip)
 }
 
 // AllowPath removes `path` from the kernel deny map.

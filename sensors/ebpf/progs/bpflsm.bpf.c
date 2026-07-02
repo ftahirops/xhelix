@@ -33,6 +33,11 @@
 #define XH_LSM_PATH_MAX   256
 #define XH_LSM_MAX_PREFIX 64
 
+// AF_INET is a uapi constant, not present in BTF-generated vmlinux.h.
+#ifndef AF_INET
+#define AF_INET 2
+#endif
+
 // xh_bpflsm_deny_paths — hash map keyed by path prefix (up to 256
 // bytes, NUL-terminated). Value is a u32 flags byte (currently
 // just 1 = "deny", reserved for future per-rule policy).
@@ -172,6 +177,51 @@ int BPF_PROG(xh_lsm_bprm_check, struct linux_binprm *bprm, int ret)
 
     if (stat) {
         stat->allowed++;
+    }
+    return 0;
+}
+
+// xh_bpflsm_deny_ips — hash of denied IPv4 destinations (key = __be32 in
+// network byte order, value = 1). Populated by userspace from egress/netban
+// verdicts. The socket_connect hook below refuses a connect() to any address
+// in this set, giving INLINE egress prevention (stop C2/exfil at the syscall,
+// before the packet leaves) instead of only post-facto nftables/XDP drops.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 65536);
+    __type(key, __u32);
+    __type(value, __u32);
+} xh_bpflsm_deny_ips SEC(".maps");
+
+// security_socket_connect: called before a connect() completes. Return -EPERM
+// to refuse the connection. We only police IPv4 here; other families pass.
+SEC("lsm/socket_connect")
+int BPF_PROG(xh_lsm_socket_connect, struct socket *sock, struct sockaddr *address,
+             int addrlen, int ret)
+{
+    if (ret != 0) {
+        return ret; // an earlier LSM already decided
+    }
+    if (!address) {
+        return 0;
+    }
+    sa_family_t fam = BPF_CORE_READ(address, sa_family);
+    if (fam != AF_INET) {
+        return 0; // v1: IPv4 only
+    }
+    struct sockaddr_in *sin = (struct sockaddr_in *)address;
+    __u32 dip = BPF_CORE_READ(sin, sin_addr.s_addr); // network byte order
+    if (dip == 0) {
+        return 0;
+    }
+    __u32 *val = bpf_map_lookup_elem(&xh_bpflsm_deny_ips, &dip);
+    if (val && *val) {
+        __u32 zero = 0;
+        struct xh_bpflsm_stat *stat = bpf_map_lookup_elem(&xh_bpflsm_stats, &zero);
+        if (stat) {
+            stat->denied++;
+        }
+        return -1; // -EPERM
     }
     return 0;
 }

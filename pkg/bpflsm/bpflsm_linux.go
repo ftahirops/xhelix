@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 
 	"github.com/cilium/ebpf"
@@ -66,6 +67,10 @@ func loadAndAttach(progPath string, mode Mode, log *slog.Logger) (*Loader, error
 	if prefixMap := coll.Maps["xh_bpflsm_deny_prefix"]; prefixMap != nil {
 		loader.prefixUpdater = makePrefixUpdater(prefixMap)
 	}
+	// IPv4 socket-connect deny map (inline egress prevention). Optional.
+	if ipMap := coll.Maps["xh_bpflsm_deny_ips"]; ipMap != nil {
+		loader.ipUpdater = makeIPUpdater(ipMap)
+	}
 
 	if mode == ModeLoad {
 		if log != nil {
@@ -76,27 +81,65 @@ func loadAndAttach(progPath string, mode Mode, log *slog.Logger) (*Loader, error
 		return loader, nil
 	}
 
-	// ModeEnforce — attach to the LSM hook.
+	// ModeEnforce — attach the exec-deny hook.
 	lsmLink, err := link.AttachLSM(link.LSMOptions{Program: prog})
 	if err != nil {
 		coll.Close()
-		return nil, fmt.Errorf("bpflsm: AttachLSM: %w", err)
+		return nil, fmt.Errorf("bpflsm: AttachLSM bprm_check: %w", err)
 	}
-
-	// Wrap closer to release the link too.
 	origCloser := loader.closer
 	loader.closer = func() error {
 		_ = lsmLink.Close()
 		return origCloser()
 	}
 
+	// Attach the socket-connect egress-deny hook too, if present. Optional so
+	// an older object still enforces exec-deny.
+	if sc := coll.Programs["xh_lsm_socket_connect"]; sc != nil {
+		scLink, scErr := link.AttachLSM(link.LSMOptions{Program: sc})
+		if scErr != nil {
+			// Non-fatal: keep exec enforcement; log and continue.
+			if log != nil {
+				log.Warn("bpflsm: socket_connect attach failed; exec-deny still active", "err", scErr)
+			}
+		} else {
+			prevCloser := loader.closer
+			loader.closer = func() error {
+				_ = scLink.Close()
+				return prevCloser()
+			}
+		}
+	}
+
 	if log != nil {
 		log.Info("bpflsm: ENFORCE mode active",
-			"program", "xh_lsm_bprm_check",
-			"hook", "security_bprm_check",
-			"warning", "synchronous execve deny live — verify operator deny map")
+			"programs", "xh_lsm_bprm_check + xh_lsm_socket_connect",
+			"hooks", "security_bprm_check + security_socket_connect",
+			"warning", "synchronous execve + connect deny live — verify operator deny maps")
 	}
 	return loader, nil
+}
+
+// makeIPUpdater returns a closure that adds an IPv4 destination to the
+// socket-connect deny map. The kernel uses sin_addr.s_addr (network byte
+// order) as the u32 hash key, so we pass the 4 address bytes in network order
+// directly — no host-endianness conversion, no ambiguity. Value 1 = deny.
+func makeIPUpdater(m *ebpf.Map) func(string) error {
+	return func(ip string) error {
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			return fmt.Errorf("bpflsm: deny ip %q is not a valid address", ip)
+		}
+		v4 := parsed.To4()
+		if v4 == nil {
+			return fmt.Errorf("bpflsm: deny ip %q is not IPv4 (v6 unsupported)", ip)
+		}
+		key := []byte{v4[0], v4[1], v4[2], v4[3]} // network byte order
+		if err := m.Update(key, uint32(1), ebpf.UpdateAny); err != nil {
+			return fmt.Errorf("bpflsm: ip map update %q: %w", ip, err)
+		}
+		return nil
+	}
 }
 
 // makeDenyUpdater returns a closure that adds path strings to the
