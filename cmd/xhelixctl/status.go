@@ -210,6 +210,20 @@ func daemonHealth() (int, string, string) {
 }
 
 func loadStartedSensors(logPath string) []string {
+	// Prefer the runtime state file the daemon writes at startup — reliable
+	// under systemd (where logs go to journald, not logPath). Fall back to
+	// parsing the log for legacy/foreground deploys.
+	if data, err := os.ReadFile("/run/xhelix/sensors"); err == nil {
+		var out []string
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if s := strings.TrimSpace(line); s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
 	f, err := os.Open(logPath)
 	if err != nil {
 		return nil

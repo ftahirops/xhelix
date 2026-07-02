@@ -3047,12 +3047,21 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	}
 
 	// Start all sensors
+	var startedSensors []string
 	for _, s := range activeSensors {
 		if err := s.Start(ctx, events); err != nil {
 			log.Warn("sensor start failed", "sensor", s.Name(), "err", err)
 		} else {
 			log.Info("sensor started", "sensor", s.Name())
+			startedSensors = append(startedSensors, s.Name())
 		}
+	}
+	// Publish the started-sensor list to a runtime state file so `xhelixctl
+	// status` can report it. Under systemd the daemon logs to journald, not to
+	// /var/log/xhelix/xhelix.out, so the old log-parse left the list blank.
+	if len(startedSensors) > 0 {
+		_ = os.WriteFile(filepath.Join(daemonRunDir, "sensors"),
+			[]byte(strings.Join(startedSensors, "\n")+"\n"), 0o644)
 	}
 
 	// Trust zones — Week 5. Operator-assigned per-subject labels at

@@ -233,3 +233,30 @@ baseline:
     auth_token: ""              # bearer
     tls_insecure_skip_verify: false
     queue_dir: ""               # default = state_dir/hubqueue
+
+# ── Behavioral learning (SP-2/SP-4) ───────────────────────────────────
+# The recorder captures per-app behavioral shapes while the learning
+# window is open; the synthesizer proposes profiles from them. Open the
+# window at runtime with `xhelixctl recorder window --open`.
+recorder:
+  enabled: false              # opt-in; capture behavioral shapes
+  path: /var/lib/xhelix/recorder.db
+  exemplars_per_shape: 20
+  retention_days: 30
+workflow_chain:
+  record_window: false        # runtime source of truth is the control file;
+                              # toggle with `xhelixctl recorder window --open/--close`
+
+# ── Runtime hardening / inline prevention (BPF-LSM) ───────────────────
+# Requires kernel cmdline `lsm=...,bpf`. When mode=enforce, xhelix refuses
+# execve of denied paths/prefixes and connect() to denied IPs in-kernel.
+# The deny maps are also auto-populated by verdicts (dropper -> exec deny,
+# outbound_to_known_bad -> connect deny) when response.enforce_rules opts
+# those rules in.
+hardening:
+  bpflsm:
+    mode: "off"               # off | load (preview) | enforce
+    object_path: ""           # blank = /usr/lib/xhelix/xhelix-lsm.o
+    deny_paths: []            # exact binary paths to refuse execve of
+    deny_prefixes: []         # directory prefixes (whole subtree), e.g. ["/tmp/"]
+    deny_ips: []              # IPv4 egress destinations to refuse connect() to
