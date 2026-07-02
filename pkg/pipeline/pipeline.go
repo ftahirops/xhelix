@@ -735,7 +735,8 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		// keyed by PARENT pid (the spawner is what we want to
 		// flag, not each child).
 		if p.SpawnBurst != nil && ev.Sensor == "ebpf.proc" &&
-			ev.Tags["kind"] == "proc_spawn" && ev.ParentPID != 0 {
+			ev.Tags["kind"] == "proc_spawn" && ev.ParentPID != 0 &&
+			!burstAllowlistedChild(ev.Comm) {
 			if cross, count := p.SpawnBurst.Observe(ev.ParentPID, now); cross {
 				// Warn, not High: a standalone spawn burst has a high
 				// benign base rate on multi-service / control-panel hosts
@@ -2042,6 +2043,25 @@ func (p *Pipeline) attributeSystemdRoot(ctx context.Context, pid uint32) {
 		p.SystemdRoots.Put(info.Unit, id)
 	}
 	p.ProcTree.AttributeSource(pid, id)
+}
+
+// burstAllowlistedChild reports whether a spawned child's comm is a well-known,
+// high-benign-base-rate spawner that should not count toward a parent's
+// process-spawn-burst. On a container host the runtime churns network-policy
+// tools constantly (Docker re-applies iptables rules on every container
+// start/stop/health-check), which otherwise inflates the parent's burst count
+// and — worse — feeds the correlator into critical verdict.incidents. These are
+// firewall/runtime-management binaries, not attacker primitives; a genuine
+// attacker burst manifests through the many OTHER children they spawn.
+// (Live FP source on vps-4, 2026-07-02: Docker → iptables burst → verdict.incident.)
+func burstAllowlistedChild(comm string) bool {
+	switch comm {
+	case "iptables", "ip6tables", "iptables-restore", "iptables-save",
+		"ip6tables-restore", "ip6tables-save", "xtables-nft-mu", "xtables-legacy-mu",
+		"nft", "ipset", "runc", "containerd-shim", "docker-proxy":
+		return true
+	}
+	return false
 }
 
 // attributeContainerRoot mints (once per container id, cached) and attributes
