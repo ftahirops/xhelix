@@ -334,6 +334,9 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	var bpflsmLoader *bpflsm.Loader
 	{
 		mode := bpflsm.ParseMode(cfg.Hardening.BPFLSM.Mode)
+		cfgAudit.Witness("hardening.bpflsm.mode", "bpflsm.Apply")
+		cfgAudit.Witness("hardening.bpflsm.object_path", "bpflsm.Apply")
+		cfgAudit.Witness("hardening.bpflsm.deny_paths", "bpflsm.seed")
 		if mode != bpflsm.ModeOff {
 			progPath := cfg.Hardening.BPFLSM.ObjectPath
 			if progPath == "" {
@@ -1659,8 +1662,12 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	}
 
 	// Heartbeat writer — pairs with the Rust watchdog. Writes
-	// /run/xhelix.heartbeat every 15s.
-	go runHeartbeatWriter(ctx, log, "/run")
+	// <runDir>/xhelix.heartbeat every 15s. Must use daemonRunDir (the systemd
+	// RuntimeDirectory, /run/xhelix — writable under ProtectSystem=strict), NOT
+	// /run itself, which the unit's ProtectSystem=strict makes read-only. The
+	// old hardcoded "/run" produced "/run/xhelix.heartbeat: read-only file
+	// system" on every deploy with a hardened unit (vps-4, 2026-07-02).
+	go runHeartbeatWriter(ctx, log, daemonRunDir)
 
 	// Operator suppression registry — analyst-feedback loop.
 	suppressor := suppression.NewStore()
@@ -2854,6 +2861,10 @@ func runDaemon(parent context.Context, cfgPath string) error {
 		}
 		ebpf := ebpfsensor.New(ebpfCfg)
 		activeSensors = append(activeSensors, ebpf)
+		cfgAudit.Witness("sensors.ebpf.enabled", "ebpfsensor.New")
+		cfgAudit.Witness("sensors.ebpf.ringbuf_size_mb", "ebpfsensor.New")
+		cfgAudit.Witness("sensors.ebpf.deep_capture", "ebpfsensor.New")
+		cfgAudit.Witness("sensors.fim.watch_paths", "ebpfsensor.New")
 		log.Info("ebpf sensor configured")
 	}
 
