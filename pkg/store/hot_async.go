@@ -46,6 +46,19 @@ func (h *HotStore) Submit(e model.Event) {
 		_ = h.Insert(context.Background(), e)
 		return
 	}
+	// Snapshot the Tags map. Submit takes the Event by value, but Event.Tags
+	// is a map — the copy shares the same underlying map, and the pipeline
+	// dispatch goroutine keeps stamping tags onto it after Submit returns while
+	// the writer goroutine json.Marshals it in writeBatch. Without an owned
+	// copy the two race → fatal "concurrent map iteration and map write"
+	// (observed live on vps-4, 2026-07-02). Mirrors coldstore.Submit.
+	if e.Tags != nil {
+		tags := make(map[string]string, len(e.Tags))
+		for k, v := range e.Tags {
+			tags[k] = v
+		}
+		e.Tags = tags
+	}
 	h.submitted.Add(1)
 	h.writeMu.Lock()
 	if len(h.writeQ) >= h.writeCap {

@@ -69,6 +69,45 @@ func TestMint_SSH_Success(t *testing.T) {
 	}
 }
 
+func TestMint_Container_MintsRootContainer(t *testing.T) {
+	m, s := newMinter(t)
+	ctx := context.Background()
+	ev := tagEvent(map[string]string{
+		"service":      "container",
+		"container_id": "3f9a1c2b4d5e",
+	})
+	id, err := m.MintFromEvent(ctx, ev)
+	if err != nil {
+		t.Fatalf("MintFromEvent: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected non-zero id for container ingress")
+	}
+	a, err := s.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get persisted: %v", err)
+	}
+	if a.Kind != KindContainer {
+		t.Errorf("kind=%s want container", a.Kind)
+	}
+	if a.ParentAnchorID != 0 {
+		t.Errorf("root container anchor should have parent=0, got %d", a.ParentAnchorID)
+	}
+}
+
+func TestMint_Container_NoIDDoesNotMint(t *testing.T) {
+	m, _ := newMinter(t)
+	id, err := m.MintFromEvent(context.Background(), tagEvent(map[string]string{
+		"service": "container", // no container_id → not mintable
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 0 {
+		t.Errorf("expected no mint without container_id, got id=%d", id)
+	}
+}
+
 func TestMint_SSH_FailureDoesNotMint(t *testing.T) {
 	m, _ := newMinter(t)
 	id, err := m.MintFromEvent(context.Background(), tagEvent(map[string]string{

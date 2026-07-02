@@ -83,6 +83,32 @@ func TestHotStoreAsyncWriterPersists(t *testing.T) {
 	}
 }
 
+// TestHotStoreSubmitSnapshotsTags verifies Submit copies the Tags map so the
+// caller mutating it after Submit cannot race the writer's json.Marshal
+// (the concurrent-map crash observed live on vps-4). Run with -race.
+func TestHotStoreSubmitSnapshotsTags(t *testing.T) {
+	h, err := OpenHot(filepath.Join(t.TempDir(), "tags.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.StartWriter(ctx, 0)
+
+	e := model.NewEvent("test", model.SeverityInfo)
+	e.Tags["k"] = "original"
+	h.Submit(e)
+	// Caller keeps mutating the same map after Submit — must not affect the
+	// snapshot the writer persists, and must not race under -race.
+	for i := 0; i < 1000; i++ {
+		e.Tags["k"] = "mutated"
+		e.Tags[string(rune('a'+i%26))] = "x"
+	}
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestHotStoreAsyncWriterDropsOldestWhenFull verifies the drop-oldest overflow
 // policy bounds the queue without blocking Submit. White-box: we mark the
 // writer "on" but never launch the drain goroutine, so the queue stays full

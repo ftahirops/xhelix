@@ -36,13 +36,14 @@ import (
 type Kind uint8
 
 const (
-	KindUnknown Kind = 0
-	KindSSH     Kind = 1
-	KindPAM     Kind = 2
-	KindSudo    Kind = 3
-	KindCron    Kind = 4
-	KindSystemd Kind = 5
-	KindWeb     Kind = 6
+	KindUnknown   Kind = 0
+	KindSSH       Kind = 1
+	KindPAM       Kind = 2
+	KindSudo      Kind = 3
+	KindCron      Kind = 4
+	KindSystemd   Kind = 5
+	KindWeb       Kind = 6
+	KindContainer Kind = 7
 )
 
 // String returns a stable short token used in CLI output and logs.
@@ -60,13 +61,15 @@ func (k Kind) String() string {
 		return "systemd"
 	case KindWeb:
 		return "web"
+	case KindContainer:
+		return "container"
 	}
 	return "unknown"
 }
 
 // KindFromRootType maps a lineage.RootType to the source.Kind taxonomy.
-// Unknown / web / container / kernel / local map to KindUnknown so
-// callers can decide whether to skip persistence for those.
+// Kernel / local / unknown map to KindUnknown so callers can decide whether to
+// skip persistence for those.
 func KindFromRootType(r lineage.RootType) Kind {
 	switch r {
 	case lineage.RootSSH:
@@ -81,6 +84,8 @@ func KindFromRootType(r lineage.RootType) Kind {
 		return KindSystemd
 	case lineage.RootWeb:
 		return KindWeb
+	case lineage.RootContainer:
+		return KindContainer
 	}
 	return KindUnknown
 }

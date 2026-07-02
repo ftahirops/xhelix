@@ -41,6 +41,7 @@ const (
 	ActionMemScan                           // YARA-lite scan of process memory
 	ActionLockUser                          // disable the offending local account
 	ActionHostQuarantine                    // isolate host from network (last resort)
+	ActionBlockExec                         // add the offending binary path to the BPF-LSM deny map (inline in-kernel prevention of future exec)
 )
 
 // Policy maps a rule_id to the bitmask of actions to perform when it
@@ -87,10 +88,10 @@ func Default() Policy {
 		// ─── DECOYS (FP-risk: minimal) ───────────────────────────
 		// Decoys are placed by the operator. Their use signals an
 		// attacker who took the bait — by construction.
-		"decoy_file_opened":         ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
-		"decoy_service_connect":     ActionLog | ActionWebhook | ActionNetBan,
-		"decoy_canary_token_used":   ActionLog | ActionWebhook | ActionNetBan,
-		"decoy_dns_resolved":        ActionLog | ActionWebhook | ActionSnapshot,
+		"decoy_file_opened":       ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
+		"decoy_service_connect":   ActionLog | ActionWebhook | ActionNetBan,
+		"decoy_canary_token_used": ActionLog | ActionWebhook | ActionNetBan,
+		"decoy_dns_resolved":      ActionLog | ActionWebhook | ActionSnapshot,
 
 		// ─── MEMORY EXPLOIT PRIMITIVES ───────────────────────────
 		// mem_mprotect_rwx: FP-risk high. V8, HotSpot, .NET, LuaJIT,
@@ -98,89 +99,98 @@ func Default() Policy {
 		//   `event.tags["jit_allowlisted"] != "true"` in the rule
 		//   YAML (consumes pkg/runtimeallow). Action mask is
 		//   log+snapshot+memscan — no quarantine.
-		"mem_mprotect_rwx":          ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
+		"mem_mprotect_rwx": ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
 		// mem_canary_fail: FP-risk low. Stack canaries do legitimately
 		//   fail on real crashes, but the snapshot + memscan are the
 		//   evidence the operator needs; quarantining a crashing
 		//   process accomplishes nothing.
-		"mem_canary_fail":           ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
+		"mem_canary_fail": ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
 		// mem_kernel_anomaly: FP-risk minimal — kernel anomaly is rare
 		//   and operator-actionable, but quarantining a userland pid
 		//   doesn't address a kernel issue.
-		"mem_kernel_anomaly":        ActionLog | ActionWebhook | ActionSnapshot,
+		"mem_kernel_anomaly": ActionLog | ActionWebhook | ActionSnapshot,
 		// mem_lkrg_violation: FP-risk low. LKRG check failures are
 		//   high-signal kernel integrity events. Keep quarantine but
 		//   ONLY for the offending pid — the kernel-level fix is
 		//   manual.
-		"mem_lkrg_violation":        ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
+		"mem_lkrg_violation": ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
 
 		// ─── PROCESS PATTERNS ────────────────────────────────────
 		// shell_with_socket_fd: FP-risk medium. nc, socat, screen,
 		//   tmux can pipe socket → shell legitimately. Quarantine
 		//   GATED — keep action mask but operators must opt in to
 		//   destructive via soak ladder.
-		"shell_with_socket_fd":      ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
+		"shell_with_socket_fd": ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan | ActionQuarantine,
 		// memfd_run_pattern: FP-risk high. Claude Code's runtime,
 		//   node child_process via memfd, Python runpy, Docker
 		//   BuildKit, Buildkite, snapd all use memfd_create+execve.
 		//   Suppressed by jit_allowlisted tag at the pipeline.
 		//   Action mask is log+snapshot+memscan.
-		"memfd_run_pattern":         ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
+		"memfd_run_pattern": ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
 		// web_server_spawns_shell: FP-risk medium. Legitimate
 		//   webhook receivers (CI, ChatOps) spawn shells. Action
 		//   mask retains Quarantine but operators should review the
 		//   rule's parent_image set before flipping enforce.
-		"web_server_spawns_shell":   ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
+		"web_server_spawns_shell": ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
+		// dropped_binary_lifecycle: the canonical dropper chain (fetch →
+		//   write to /tmp|/var/tmp|/dev/shm → exec). The alert's Image is
+		//   that uniquely-malicious dropped path (never a system binary, by
+		//   the rule's path-prefix match), so ActionBlockExec is SAFE here —
+		//   it adds exactly that path to the BPF-LSM deny map for inline
+		//   in-kernel prevention of re-execution, on top of kill+quarantine.
+		//   All destructive bits are stripped in monitor mode unless the
+		//   rule is promoted via response.enforce_rules.
+		"dropped_binary_lifecycle": ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine | ActionKill | ActionBlockExec,
 		// binary_runs_from_tmp: FP-risk medium. pip install, npm
 		//   install, Docker BuildKit, dpkg postinst all execute from
 		//   /tmp. Log only — snapshot retains evidence.
-		"binary_runs_from_tmp":      ActionLog | ActionWebhook | ActionSnapshot,
+		"binary_runs_from_tmp": ActionLog | ActionWebhook | ActionSnapshot,
 		// uid0_no_transition: FP-risk low. systemd-run --uid 0 from
 		//   non-root is legitimate but rare. Quarantine acceptable.
-		"uid0_no_transition":        ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
+		"uid0_no_transition": ActionLog | ActionWebhook | ActionSnapshot | ActionQuarantine,
 		// ptrace_sensitive_target: FP-risk medium-high. gdb, strace,
 		//   perf, eBPF developers, /proc tools all ptrace. We added
 		//   the rule narrow ("sensitive_target" = sshd, polkit,
 		//   gnome-keyring) but the rule needs an allowlist for
 		//   /usr/bin/gdb, /usr/bin/strace as parent. Until then
 		//   DOWNGRADE from Quarantine to Snapshot-only.
-		"ptrace_sensitive_target":   ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
+		"ptrace_sensitive_target": ActionLog | ActionWebhook | ActionSnapshot | ActionMemScan,
 
 		// ─── FILE INTEGRITY ──────────────────────────────────────
 		// tamper_passwd: FP-risk medium. Legitimate `useradd` writes
 		//   /etc/passwd. Remediate would revert that. DOWNGRADE to
 		//   snapshot+webhook — operator inspects, restores manually
 		//   if needed via xhelixctl remediate.
-		"tamper_passwd":             ActionLog | ActionWebhook | ActionSnapshot,
+		"tamper_passwd": ActionLog | ActionWebhook | ActionSnapshot,
 		// tamper_shadow: same reasoning as above for `passwd` cmd.
-		"tamper_shadow":             ActionLog | ActionWebhook | ActionSnapshot,
+		"tamper_shadow": ActionLog | ActionWebhook | ActionSnapshot,
 		// ld_so_preload_modified: FP-risk medium. dpkg/apt installs
 		//   that include shared-object preload (rare but real:
 		//   /etc/ld.so.preload via libsoftokn3, etc.) would be
 		//   remediated. DOWNGRADE — operator confirms before revert.
-		"ld_so_preload_modified":    ActionLog | ActionWebhook | ActionSnapshot,
+		"ld_so_preload_modified": ActionLog | ActionWebhook | ActionSnapshot,
 		// pam_module_drop: FP-risk low. PAM modules being installed
 		//   under /lib/security/ or /usr/lib64/security/ is usually
 		//   a package install (libpam-google-auth, etc.). Snapshot,
 		//   no auto-revert.
-		"pam_module_drop":           ActionLog | ActionWebhook | ActionSnapshot,
+		"pam_module_drop": ActionLog | ActionWebhook | ActionSnapshot,
 		// ssh_key_added_root: FP-risk medium. Ansible/Puppet/Salt
 		//   write to authorized_keys during normal infra runs.
 		//   Remediate would revert legitimate config-mgmt. DOWNGRADE
 		//   to snapshot+webhook.
-		"ssh_key_added_root":        ActionLog | ActionWebhook | ActionSnapshot,
-		"cron_new_unit":             ActionLog | ActionWebhook | ActionSnapshot,
+		"ssh_key_added_root": ActionLog | ActionWebhook | ActionSnapshot,
+		"cron_new_unit":      ActionLog | ActionWebhook | ActionSnapshot,
 
 		// ─── NETWORK ─────────────────────────────────────────────
 		// outbound_to_known_bad: FP-risk low IF threat-intel feed is
 		//   reputable (Spamhaus DROP). NetBan acceptable.
-		"outbound_to_known_bad":     ActionLog | ActionWebhook | ActionNetBan,
+		"outbound_to_known_bad": ActionLog | ActionWebhook | ActionNetBan,
 		// metadata_svc_unexpected: FP-risk low. legit AWS-CLI on the
 		//   host calls IMDS, but only from a small allowlist of pids
 		//   (aws-cli, kubelet). Snapshot — no NetBan because IMDS
 		//   address is link-local and banning is pointless.
-		"metadata_svc_unexpected":   ActionLog | ActionWebhook | ActionSnapshot,
-		"netids.dga":                ActionLog | ActionWebhook,
+		"metadata_svc_unexpected": ActionLog | ActionWebhook | ActionSnapshot,
+		"netids.dga":              ActionLog | ActionWebhook,
 
 		// ─── SELF-DEFENCE ────────────────────────────────────────
 		// bpf_syscall_unexpected: FP-risk HIGH. Cilium, BCC,
@@ -189,29 +199,29 @@ func Default() Policy {
 		//   container start. SIGSTOPping any of these breaks the
 		//   host. DOWNGRADE from Quarantine to Snapshot. Operators
 		//   tighten via a per-host allowlist.
-		"bpf_syscall_unexpected":    ActionLog | ActionWebhook | ActionSnapshot,
+		"bpf_syscall_unexpected": ActionLog | ActionWebhook | ActionSnapshot,
 
 		// ─── AUTH ────────────────────────────────────────────────
 		// ssh_brute_then_success: FP-risk minimal — the cooccur
 		//   logic requires N failures then a success from same src.
 		//   NetBan + LockUser acceptable.
-		"ssh_brute_then_success":    ActionLog | ActionWebhook | ActionNetBan | ActionLockUser,
+		"ssh_brute_then_success": ActionLog | ActionWebhook | ActionNetBan | ActionLockUser,
 
 		// ─── ELITE / CORRELATION ─────────────────────────────────
 		// beacon.periodic_callback: FP-risk medium. legit telemetry
 		//   (datadog, sentry, statsd) emits periodic callbacks.
 		//   DOWNGRADE NetBan to snapshot — operators tune the
 		//   allowlist of expected periodic endpoints.
-		"beacon.periodic_callback":  ActionLog | ActionWebhook | ActionSnapshot,
-		"dnsexfil.tunnel_pattern":   ActionLog | ActionWebhook,
-		"tamper.ptrace":             ActionLog | ActionWebhook,
-		"tamper.binary_mtime":       ActionLog | ActionWebhook,
-		"tamper.binary_inode":       ActionLog | ActionWebhook,
-		"tamper.auditd_dead":        ActionLog | ActionWebhook,
-		"tamper.binary_missing":     ActionLog | ActionWebhook,
-		"tamper.pidfile":            ActionLog | ActionWebhook,
-		"kallsyms_changed":          ActionLog | ActionWebhook,
-		"modules_changed":           ActionLog | ActionWebhook,
+		"beacon.periodic_callback": ActionLog | ActionWebhook | ActionSnapshot,
+		"dnsexfil.tunnel_pattern":  ActionLog | ActionWebhook,
+		"tamper.ptrace":            ActionLog | ActionWebhook,
+		"tamper.binary_mtime":      ActionLog | ActionWebhook,
+		"tamper.binary_inode":      ActionLog | ActionWebhook,
+		"tamper.auditd_dead":       ActionLog | ActionWebhook,
+		"tamper.binary_missing":    ActionLog | ActionWebhook,
+		"tamper.pidfile":           ActionLog | ActionWebhook,
+		"kallsyms_changed":         ActionLog | ActionWebhook,
+		"modules_changed":          ActionLog | ActionWebhook,
 		"syscall_address_drift":    ActionLog | ActionWebhook,
 
 		// v0.0.11 baseline scoring (Phase 2). Detection-mode by
@@ -249,29 +259,31 @@ type Engine struct {
 	running atomic.Bool
 	stopCh  chan struct{}
 
-	netBan        NetBanner
-	hostBanner    HostBanner
-	hostAllowIPs  []string
-	remediator    Remediator
-	quarantine    *enforce.Quarantine
-	panicSwitch   *enforce.PanicSwitch
-	webhook       WebhookFn
-	snapshotter   Snapshotter
-	memPatterns   []memscan.Pattern
-	lockUser      LockUserFn
+	netBan       NetBanner
+	hostBanner   HostBanner
+	hostAllowIPs []string
+	remediator   Remediator
+	quarantine   *enforce.Quarantine
+	panicSwitch  *enforce.PanicSwitch
+	webhook      WebhookFn
+	snapshotter  Snapshotter
+	memPatterns  []memscan.Pattern
+	lockUser     LockUserFn
+	blockExec    BlockExecFn
 
 	stats struct {
-		alerts          atomic.Uint64
-		quarantine      atomic.Uint64
-		kill            atomic.Uint64
-		netban          atomic.Uint64
-		remediate       atomic.Uint64
-		webhook         atomic.Uint64
-		snapshot        atomic.Uint64
-		memscan         atomic.Uint64
-		lockUser        atomic.Uint64
-		hostQuarantine  atomic.Uint64
-		dropped         atomic.Uint64
+		alerts         atomic.Uint64
+		quarantine     atomic.Uint64
+		kill           atomic.Uint64
+		netban         atomic.Uint64
+		remediate      atomic.Uint64
+		webhook        atomic.Uint64
+		snapshot       atomic.Uint64
+		memscan        atomic.Uint64
+		lockUser       atomic.Uint64
+		hostQuarantine atomic.Uint64
+		blockExec      atomic.Uint64
+		dropped        atomic.Uint64
 	}
 }
 
@@ -305,20 +317,27 @@ type LockUserFn func(username string) error
 // WebhookFn fires a single webhook send.
 type WebhookFn func(ctx context.Context, alert model.Alert) error
 
+// BlockExecFn adds a binary path to the in-kernel BPF-LSM deny map so any
+// future execve of that exact path is refused with -EPERM. Implemented by
+// pkg/bpflsm.Loader.DenyPath. Nil when BPF-LSM is off or unavailable — the
+// ActionBlockExec dispatch is a no-op in that case.
+type BlockExecFn func(path string) error
+
 // Config bundles dependencies.
 type Config struct {
-	Policy           Policy
-	NetBanner        NetBanner
-	HostBanner       HostBanner
-	HostAllowIPs     []string
-	Remediator       Remediator
-	Snapshotter      Snapshotter
-	MemPatterns      []memscan.Pattern
-	LockUser         LockUserFn
-	Quarantine       *enforce.Quarantine
-	PanicSwitch      *enforce.PanicSwitch
-	Webhook          WebhookFn
-	Logger           *slog.Logger
+	Policy       Policy
+	NetBanner    NetBanner
+	HostBanner   HostBanner
+	HostAllowIPs []string
+	Remediator   Remediator
+	Snapshotter  Snapshotter
+	MemPatterns  []memscan.Pattern
+	LockUser     LockUserFn
+	BlockExec    BlockExecFn
+	Quarantine   *enforce.Quarantine
+	PanicSwitch  *enforce.PanicSwitch
+	Webhook      WebhookFn
+	Logger       *slog.Logger
 
 	// MonitorMode forces the engine into observe-only mode — every
 	// per-alert action is masked to ActionLog|ActionWebhook before
@@ -344,20 +363,21 @@ func New(cfg Config) *Engine {
 		cfg.Logger = slog.Default()
 	}
 	e := &Engine{
-		policy:      cfg.Policy,
-		log:         cfg.Logger,
+		policy:       cfg.Policy,
+		log:          cfg.Logger,
 		monitorMode:  cfg.MonitorMode,
 		enforceRules: ruleSet(cfg.EnforceRules),
-		netBan:      cfg.NetBanner,
-		hostBanner:  cfg.HostBanner,
-		remediator:  cfg.Remediator,
-		quarantine:  cfg.Quarantine,
-		panicSwitch: cfg.PanicSwitch,
-		webhook:     cfg.Webhook,
-		snapshotter: cfg.Snapshotter,
-		memPatterns: cfg.MemPatterns,
-		lockUser:    cfg.LockUser,
-		stopCh:      make(chan struct{}),
+		netBan:       cfg.NetBanner,
+		hostBanner:   cfg.HostBanner,
+		remediator:   cfg.Remediator,
+		quarantine:   cfg.Quarantine,
+		panicSwitch:  cfg.PanicSwitch,
+		webhook:      cfg.Webhook,
+		snapshotter:  cfg.Snapshotter,
+		memPatterns:  cfg.MemPatterns,
+		lockUser:     cfg.LockUser,
+		blockExec:    cfg.BlockExec,
+		stopCh:       make(chan struct{}),
 	}
 	e.hostAllowIPs = cfg.HostAllowIPs
 	return e
@@ -471,6 +491,9 @@ func (e *Engine) OnAlert(a model.Alert) {
 	if mask&ActionRemediate != 0 {
 		e.doRemediate(a)
 	}
+	if mask&ActionBlockExec != 0 {
+		e.doBlockExec(a)
+	}
 	if mask&ActionQuarantine != 0 {
 		e.doQuarantine(a)
 	}
@@ -486,6 +509,26 @@ func (e *Engine) OnAlert(a model.Alert) {
 	if mask&ActionWebhook != 0 {
 		e.doWebhook(a)
 	}
+}
+
+// doBlockExec adds the offending binary path to the BPF-LSM deny map so any
+// future execve of it is refused in-kernel with -EPERM. This is the inline-
+// prevention complement to doKill/doQuarantine: kill stops the running
+// instance, block-exec stops it from coming back. No-op (counted) when
+// BPF-LSM is unavailable or the event carries no image path.
+func (e *Engine) doBlockExec(a model.Alert) {
+	if e.blockExec == nil || a.Event.Image == "" {
+		e.stats.dropped.Add(1)
+		return
+	}
+	if err := e.blockExec(a.Event.Image); err != nil {
+		e.log.Warn("block-exec failed", "path", a.Event.Image, "err", err)
+		e.stats.dropped.Add(1)
+		return
+	}
+	e.stats.blockExec.Add(1)
+	e.log.Info("response: exec blocked in-kernel (BPF-LSM)",
+		"path", a.Event.Image, "rule", a.RuleID)
 }
 
 func (e *Engine) doQuarantine(a model.Alert) {

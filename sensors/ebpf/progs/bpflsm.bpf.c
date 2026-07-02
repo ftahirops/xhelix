@@ -89,6 +89,14 @@ int BPF_PROG(xh_lsm_bprm_check, struct linux_binprm *bprm, int ret)
         return 0;
     }
 
+    // Zero the whole scratch buffer before reading. The deny map is a HASH
+    // keyed by the full 256-byte buffer, and userspace inserts zero-padded
+    // keys. bpf_probe_read_kernel_str only writes up to the NUL and leaves the
+    // tail as stale bytes from a previous (longer) path on this per-CPU slot,
+    // so without this memset the kernel's key never equals userspace's padded
+    // key and NOTHING is ever denied (verified live on vps-4, 2026-07-02).
+    __builtin_memset(path_buf, 0, XH_LSM_PATH_MAX);
+
     // bprm->filename is a kernel-side string pointer.
     const char *filename = BPF_CORE_READ(bprm, filename);
     if (!filename) {

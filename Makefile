@@ -200,6 +200,13 @@ deb: build rules-lint
 	else \
 	  echo "deb: eBPF progs not built (run 'make ebpf' first to include)"; \
 	fi
+	@if [ -f sensors/ebpf/progs/xhelix-lsm.o ]; then \
+	  mkdir -p packaging/deb/usr/lib/xhelix; \
+	  cp sensors/ebpf/progs/xhelix-lsm.o packaging/deb/usr/lib/xhelix/; \
+	  echo "deb: bundled BPF-LSM prog"; \
+	else \
+	  echo "deb: BPF-LSM prog not built (run 'make ebpf-lsm' first to include)"; \
+	fi
 	mkdir -p $(DIST)
 	dpkg-deb --build packaging/deb $(DIST)/xhelix_$(VERSION)_amd64.deb
 

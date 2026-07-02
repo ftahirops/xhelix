@@ -195,6 +195,14 @@ func kindFromEventTags(tags map[string]string) (Kind, bool) {
 		if tags["http_host"] != "" {
 			return KindWeb, true
 		}
+	case "container":
+		// A process running inside a container payload cgroup. The
+		// container_id is the minimal evidence; it anchors the container's
+		// process tree to a non-admin causal root so containerised app
+		// workflows (e.g. Dockerised WordPress) become learnable/lockable.
+		if tags["container_id"] != "" {
+			return KindContainer, true
+		}
 	}
 	return KindUnknown, false
 }
@@ -213,6 +221,8 @@ func rootTypeForKind(k Kind) lineage.RootType {
 		return lineage.RootSystemd
 	case KindWeb:
 		return lineage.RootWeb
+	case KindContainer:
+		return lineage.RootContainer
 	}
 	return lineage.RootUnknown
 }

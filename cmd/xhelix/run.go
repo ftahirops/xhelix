@@ -47,6 +47,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/config"
 	"github.com/xhelix/xhelix/pkg/configaudit"
 	"github.com/xhelix/xhelix/pkg/connstate"
+	"github.com/xhelix/xhelix/pkg/containerroot"
 	"github.com/xhelix/xhelix/pkg/containment"
 	"github.com/xhelix/xhelix/pkg/contractcompiler"
 	"github.com/xhelix/xhelix/pkg/contracthealth"
@@ -330,6 +331,7 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	// to load if absent and returns an operator-actionable error.
 	// Fail-open: on any load/attach error, log + continue without
 	// BPF-LSM (daemon doesn't crash).
+	var bpflsmLoader *bpflsm.Loader
 	{
 		mode := bpflsm.ParseMode(cfg.Hardening.BPFLSM.Mode)
 		if mode != bpflsm.ModeOff {
@@ -350,10 +352,11 @@ func runDaemon(parent context.Context, cfgPath string) error {
 						log.Info("bpflsm: deny path seeded", "path", p)
 					}
 				}
-				// Loader lives for daemon lifetime; cilium/ebpf
-				// closes the collection when GC'd. Explicit close
-				// path is via the operator CLI in a follow-on.
-				_ = loader
+				// Keep the loader for the daemon lifetime AND expose its
+				// DenyPath to the response engine so runtime verdicts (e.g.
+				// the dropper chain) can add offending binaries to the
+				// in-kernel deny map — inline prevention, not just detection.
+				bpflsmLoader = loader
 			}
 		} else {
 			active, _ := bpflsm.Probe()
@@ -361,6 +364,17 @@ func runDaemon(parent context.Context, cfgPath string) error {
 				"kernel_bpf_lsm_active", active,
 				"hint", "set hardening.bpflsm.mode: load in /etc/xhelix/xhelix.yaml to preview (requires kernel lsm=...,bpf)")
 		}
+	}
+	// Retain the loader for the whole daemon lifetime. cilium/ebpf sets GC
+	// finalizers that close the collection (unloading the LSM program + deny
+	// map from the kernel) once it becomes unreachable. In observe mode the
+	// response engine's BlockExec closure — the only other reference — is never
+	// created, so without this defer the collection was GC'd seconds after load
+	// while the daemon still logged "ENFORCE mode active" (verified dead in
+	// bpftool on vps-4, 2026-07-02). The defer both pins it and closes it
+	// cleanly on shutdown.
+	if bpflsmLoader != nil {
+		defer bpflsmLoader.Close()
 	}
 
 	// Self-protection
@@ -659,8 +673,17 @@ func runDaemon(parent context.Context, cfgPath string) error {
 			Snapshotter:  snapshotterOrNil(snapshotter),
 			MemPatterns:  memPatterns,
 			LockUser:     lockUserFn,
-			Quarantine:   quarantine,
-			PanicSwitch:  panicSwitch,
+			// Inline in-kernel prevention: when BPF-LSM is loaded, verdicts
+			// carrying ActionBlockExec add the offending binary path to the
+			// deny map. nil when BPF-LSM is off → ActionBlockExec no-ops.
+			BlockExec: func() response.BlockExecFn {
+				if bpflsmLoader == nil {
+					return nil
+				}
+				return bpflsmLoader.DenyPath
+			}(),
+			Quarantine:  quarantine,
+			PanicSwitch: panicSwitch,
 			Webhook: func(c context.Context, a model.Alert) error {
 				if webhookSink == nil {
 					return nil
@@ -4155,6 +4178,7 @@ func dispatch(
 		SourceMinter:     srcMinter,
 		SystemdRoots:     systemdroot.New(),
 		WebRoots:         webroot.New(),
+		ContainerRoots:   containerroot.New(),
 		FileTaint:        fileTaint,
 		SourceStore:      srcStore,
 		BRPMatcher:       brpMatcher,

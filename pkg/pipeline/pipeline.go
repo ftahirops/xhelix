@@ -44,6 +44,7 @@ import (
 	"github.com/xhelix/xhelix/pkg/cloudmeta"
 	"github.com/xhelix/xhelix/pkg/coldstore"
 	"github.com/xhelix/xhelix/pkg/connstate"
+	"github.com/xhelix/xhelix/pkg/containerroot"
 	"github.com/xhelix/xhelix/pkg/contescape"
 	"github.com/xhelix/xhelix/pkg/correlator"
 	"github.com/xhelix/xhelix/pkg/cronclassify"
@@ -245,6 +246,14 @@ type Pipeline struct {
 	// ssl_read http_host signal), so request workflows get a non-admin causal
 	// root (→ learnable). Root Emitters "C". Nil-safe. SP-RootEmitters.
 	WebRoots *webroot.Tracker
+
+	// ContainerRoots mints + caches one RootContainer lineage anchor per
+	// container id and attributes it to processes running inside that container
+	// payload cgroup, so containerised app workflows (e.g. Dockerised WordPress
+	// php-fpm) get a non-admin causal root (→ learnable/lockable). The host-
+	// process root emitters (systemd/web) miss these because container
+	// processes are not host units. Nil-safe. Root Emitters "D" (container).
+	ContainerRoots *containerroot.Tracker
 
 	// Origins resolves a lineage id to its root Origin (root type, user,
 	// source). Used by the workflow-chain stamp to label every event's
@@ -970,6 +979,12 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 			// unit (cached), reuse it for every later spawn in the same unit so
 			// the whole unit subtree inherits the root via proctree.
 			p.attributeSystemdRoot(ctx, ev.PID)
+			// Container slice: a process inside a container payload cgroup gets
+			// a RootContainer anchor keyed by container id. Runs after systemd
+			// attribution because a real *.service always wins; only genuinely
+			// containerised processes (no host service unit) fall through to
+			// here. This is what makes Dockerised WordPress learnable/lockable.
+			p.attributeContainerRoot(ctx, ev.PID)
 		case "ebpf.exit":
 			p.ProcTree.OnExit(ev.PID)
 			if p.HotGraph != nil && p.ProcKeys != nil && ev.PID != 0 {
@@ -2025,6 +2040,43 @@ func (p *Pipeline) attributeSystemdRoot(ctx context.Context, pid uint32) {
 		}
 		id = newID
 		p.SystemdRoots.Put(info.Unit, id)
+	}
+	p.ProcTree.AttributeSource(pid, id)
+}
+
+// attributeContainerRoot mints (once per container id, cached) and attributes
+// a RootContainer lineage anchor to pid when pid runs inside a container
+// payload cgroup, so the container's processes + descendants get a non-admin
+// causal root and their workflows become learnable/lockable. Must be called
+// AFTER ProcTree.OnSpawn(pid) so AttributeSource lands on a graphed node, and
+// AFTER attributeSystemdRoot so a real host service unit takes precedence.
+// Nil-safe. Root Emitters "D".
+func (p *Pipeline) attributeContainerRoot(ctx context.Context, pid uint32) {
+	if p.ContainerRoots == nil || p.CGroupClassifier == nil ||
+		p.SourceMinter == nil || p.ProcTree == nil || pid == 0 {
+		return
+	}
+	// Don't overwrite an already-attributed root (e.g. a systemd service that
+	// itself runs in a container, or a prior anchor on this lineage).
+	if existing, _ := p.ProcTree.SourceOf(pid); existing != 0 {
+		return
+	}
+	info := p.CGroupClassifier.Classify(pid)
+	if info.ContainerID == "" {
+		return
+	}
+	id, ok := p.ContainerRoots.Get(info.ContainerID)
+	if !ok {
+		sev := model.NewEvent("identity.container", model.SeverityInfo)
+		sev.PID = pid
+		sev.Tags["service"] = "container"
+		sev.Tags["container_id"] = info.ContainerID
+		newID, err := p.SourceMinter.MintFromEvent(ctx, sev)
+		if err != nil || newID == 0 {
+			return
+		}
+		id = newID
+		p.ContainerRoots.Put(info.ContainerID, id)
 	}
 	p.ProcTree.AttributeSource(pid, id)
 }
