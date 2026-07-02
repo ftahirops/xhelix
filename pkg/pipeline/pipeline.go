@@ -1025,6 +1025,25 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 
 	if p.ConnTable != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_connect" {
 		feedConnstate(p.ConnTable, p.CGroupClassifier, ev)
+		// Resolve the connection's destination to a target SERVICE NAME so the
+		// CrossApp verifier domain can score the (actor_app → target) network
+		// edge — the topology the audit found the scorer was blind to
+		// (dst_app was a dead read). Coarse by design: a service name inferred
+		// from the destination port / unix socket / SNI, matching the scorer's
+		// vocabulary (mysql/redis/postgres/php-fpm/...). Empty when unknown.
+		if _, set := ev.Tags["dst_app"]; !set {
+			if svc := destServiceName(ev.Tags["dst_port"], ev.Tags["dst_socket"], ev.Tags["sni"]); svc != "" {
+				ev.Tags["dst_app"] = svc
+			}
+		}
+		// Cross-app EDGE scoring for network edges, INDEPENDENT of the per-app
+		// BRP DecisionVerify gate (the audit found the CrossApp scorer was
+		// unreachable for net edges — it only ran under DecisionVerify, which
+		// needs a matched per-app profile). Here we score every attributed
+		// (actor_service → target_service) network edge with the same built-in
+		// CrossApp table + signed BRP edges, and stamp the result so the
+		// topology (nginx→php-fpm→mysql) is visible and feeds correlation.
+		p.scoreCrossAppEdge(&ev)
 		// snicheck: queue a deferred SNI check for this outbound
 		// connect. The detector itself filters by port + allowlist.
 		if p.SNICheck != nil {
@@ -2062,6 +2081,113 @@ func burstAllowlistedChild(comm string) bool {
 		return true
 	}
 	return false
+}
+
+// crossAppActorName normalises the actor process's comm/image basename to the
+// service-name vocabulary the CrossApp scorer keys on (nginx / php-fpm / mysql
+// …), stripping common version suffixes (php-fpm7.4 → php-fpm, mariadbd →
+// mariadb). Returns "" when the process isn't a recognised service actor.
+func crossAppActorName(comm, image string) string {
+	name := comm
+	if image != "" {
+		if idx := strings.LastIndex(image, "/"); idx >= 0 {
+			name = image[idx+1:]
+		} else {
+			name = image
+		}
+	}
+	name = strings.ToLower(name)
+	switch {
+	case strings.HasPrefix(name, "php-fpm") || strings.HasPrefix(name, "php_fpm") || name == "php":
+		return "php-fpm"
+	case strings.HasPrefix(name, "nginx"):
+		return "nginx"
+	case strings.HasPrefix(name, "apache") || name == "httpd":
+		return "apache"
+	case strings.HasPrefix(name, "haproxy"):
+		return "haproxy"
+	case name == "mysqld" || strings.HasPrefix(name, "mariadb"):
+		return "mysql"
+	case strings.HasPrefix(name, "postgres"):
+		return "postgres"
+	case strings.HasPrefix(name, "redis"):
+		return "redis"
+	}
+	return ""
+}
+
+// scoreCrossAppEdge scores an attributed (actor → target) network edge using
+// the built-in CrossApp table + any operator-signed BRP edge, and stamps the
+// edge, score and reason onto the event. Runs on every net_connect (not gated
+// on a per-app BRP profile), so the inter-app topology is observable and feeds
+// the verifier/incident correlation. Nil-safe; a no-op when either end is
+// unresolved.
+func (p *Pipeline) scoreCrossAppEdge(ev *model.Event) {
+	actor := crossAppActorName(ev.Comm, ev.Image)
+	target := ev.Tags["dst_app"]
+	if actor == "" || target == "" {
+		return
+	}
+	edgeAllowed := false
+	if p.BRPEdges != nil {
+		dest := ev.Tags["dst_socket"]
+		if dest == "" {
+			if ip, port := ev.Tags["dst_ip"], ev.Tags["dst_port"]; ip != "" && port != "" {
+				dest = ip + ":" + port
+			}
+		}
+		if ok, _ := p.BRPEdges.Allows(actor, target, "net_connect", dest); ok {
+			edgeAllowed = true
+		}
+	}
+	score, reason := verify.CrossApp{}.Score(verify.Input{ActorApp: actor, TargetApp: target, EdgeAllowed: edgeAllowed})
+	if reason == "" {
+		return
+	}
+	ev.Tags["cross_app_edge"] = actor + "→" + target
+	ev.Tags["cross_app_score"] = fmt.Sprintf("%.1f", score)
+	ev.Tags["cross_app_reason"] = reason
+}
+
+// destPortService maps a well-known destination port to the target SERVICE
+// NAME used by the CrossApp verifier domain (pkg/verify/domains.go edges map).
+// These are the canonical backing-service ports; the names deliberately match
+// the scorer's vocabulary so a php-fpm→3306 edge resolves to "mysql", etc.
+var destPortService = map[string]string{
+	"3306": "mysql", "5432": "postgres", "27017": "mongodb",
+	"6379": "redis", "11211": "memcached",
+	"5672": "rabbitmq", "9092": "kafka",
+	"9000": "php-fpm", // standard FastCGI
+}
+
+// destServiceName infers the destination's target service name from the port,
+// a unix socket path, or the SNI. Returns "" when the destination is not a
+// recognised backing service (leaving the cross-app edge unscored rather than
+// guessing). Coarse fidelity by construction — port/socket inference cannot
+// prove the peer's identity, only its likely role.
+func destServiceName(dstPort, dstSocket, sni string) string {
+	if dstSocket != "" {
+		s := strings.ToLower(dstSocket)
+		switch {
+		case strings.Contains(s, "php-fpm") || strings.Contains(s, "php") || strings.Contains(s, "fpm") || strings.Contains(s, "fcgi"):
+			return "php-fpm"
+		case strings.Contains(s, "mysql") || strings.Contains(s, "mariadb"):
+			return "mysql"
+		case strings.Contains(s, "postgres"):
+			return "postgres"
+		case strings.Contains(s, "redis"):
+			return "redis"
+		}
+	}
+	if svc, ok := destPortService[dstPort]; ok {
+		return svc
+	}
+	// FastCGI is commonly published on docker-mapped ports (9100-9199) as well
+	// as 9000; treat that band as php-fpm when nothing more specific matched.
+	if len(dstPort) == 4 && strings.HasPrefix(dstPort, "91") {
+		return "php-fpm"
+	}
+	return ""
 }
 
 // attributeContainerRoot mints (once per container id, cached) and attributes
