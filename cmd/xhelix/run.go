@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -209,6 +211,19 @@ func runDaemon(parent context.Context, cfgPath string) error {
 	}
 
 	log := newLogger(cfg.Logging)
+
+	// Optional pprof debug endpoint for live memory/CPU profiling. Off unless
+	// XHELIX_PPROF is set (e.g. "127.0.0.1:6060"); bind localhost only. Lets an
+	// operator diagnose RSS growth / leaks with `go tool pprof` without a
+	// rebuild. net/http/pprof registers its handlers on http.DefaultServeMux.
+	if addr := os.Getenv("XHELIX_PPROF"); addr != "" {
+		go func() {
+			log.Warn("pprof debug endpoint enabled (localhost only)", "addr", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				log.Warn("pprof endpoint stopped", "err", err)
+			}
+		}()
+	}
 
 	// Config-audit witness — every consumer of a config field calls
 	// cfgAudit.Witness() so we can detect declared-but-not-consumed

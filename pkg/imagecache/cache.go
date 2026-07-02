@@ -39,6 +39,29 @@ type Cache struct {
 	db  *sql.DB
 }
 
+// maxMemEntries bounds the in-memory (path|mtime)→Image accelerator. Without a
+// cap it grew unbounded on hosts that churn binaries (package upgrades, CI, and
+// especially many containers each with their own images) — a real RSS source
+// found live on a 28-container box (2026-07-02). The map is a pure accelerator:
+// evicting an entry only costs a recompute from the db/disk on the next lookup.
+const maxMemEntries = 65536
+
+// putMemLocked inserts an entry, evicting a batch when the cache is full.
+// Caller must hold c.mu for writing.
+func (c *Cache) putMemLocked(key string, img *Image) {
+	if len(c.mem) >= maxMemEntries {
+		// Drop ~1/8 (random map order) to amortize eviction cost.
+		n := maxMemEntries / 8
+		for k := range c.mem {
+			delete(c.mem, k)
+			if n--; n <= 0 {
+				break
+			}
+		}
+	}
+	c.mem[key] = img
+}
+
 // Open opens (or creates) a SQLite-backed image cache.
 //
 // path == ":memory:" works for tests.
@@ -103,7 +126,7 @@ func (c *Cache) Lookup(path string, mtime time.Time) (*Image, bool) {
 	img.Verified = verified != 0
 
 	c.mu.Lock()
-	c.mem[key] = &img
+	c.putMemLocked(key, &img)
 	c.mu.Unlock()
 	return &img, true
 }
@@ -153,7 +176,7 @@ func (c *Cache) Compute(ctx context.Context, path string) (*Image, error) {
 
 	c.mu.Lock()
 	key := path + "|" + img.Mtime.UTC().Format(time.RFC3339Nano)
-	c.mem[key] = img
+	c.putMemLocked(key, img)
 	c.mu.Unlock()
 	return img, nil
 }
