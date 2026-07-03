@@ -171,6 +171,7 @@ func newBRPEdgeObservedCmd() *cobra.Command {
 				ToApp   string   `json:"to_app"`
 				Action  string   `json:"action"`
 				Dests   []string `json:"dests"`
+				Ops     []string `json:"ops"`
 				Count   uint64   `json:"count"`
 				Score   float64  `json:"score"`
 				Reason  string   `json:"reason"`
@@ -188,6 +189,13 @@ func newBRPEdgeObservedCmd() *cobra.Command {
 				for _, e := range edges {
 					fmt.Fprintf(w, "%-14s %-14s %-12s %8d  %-6.1f %s\n",
 						e.FromApp, e.ToApp, e.Action, e.Count, e.Score, e.Reason)
+					if len(e.Ops) > 0 {
+						ops := e.Ops
+						if len(ops) > 8 {
+							ops = ops[:8]
+						}
+						fmt.Fprintf(w, "%-14s   ops: %s\n", "", strings.Join(ops, ", "))
+					}
 				}
 				return nil
 			}

@@ -18,12 +18,14 @@ import (
 const (
 	maxEdges     = 4096
 	maxDestsEdge = 64
+	maxOpsEdge   = 128
 )
 
 // edge is the internal accumulator for one (from_app, to_app, action) triple.
 type edge struct {
 	fromApp, toApp, action string
 	dests                  map[string]struct{}
+	ops                    map[string]struct{} // observed operations, e.g. "SELECT wp_posts"
 	count                  uint64
 	lastScore              float64
 	lastReason             string
@@ -36,6 +38,7 @@ type Edge struct {
 	ToApp     string    `json:"to_app"`
 	Action    string    `json:"action"`
 	Dests     []string  `json:"dests"`
+	Ops       []string  `json:"ops,omitempty"` // observed operations (e.g. SELECT wp_posts)
 	Count     uint64    `json:"count"`
 	Score     float64   `json:"score"`
 	Reason    string    `json:"reason,omitempty"`
@@ -64,17 +67,11 @@ func (o *Observer) Observe(now time.Time, fromApp, toApp, action, dest string, s
 	if fromApp == "" || toApp == "" {
 		return
 	}
-	k := key(fromApp, toApp, action)
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	e, ok := o.edges[k]
-	if !ok {
-		if len(o.edges) >= maxEdges {
-			return
-		}
-		e = &edge{fromApp: fromApp, toApp: toApp, action: action,
-			dests: make(map[string]struct{}), firstSeen: now}
-		o.edges[k] = e
+	e := o.upsertLocked(fromApp, toApp, action, now)
+	if e == nil {
+		return
 	}
 	e.count++
 	e.lastSeen = now
@@ -83,6 +80,42 @@ func (o *Observer) Observe(now time.Time, fromApp, toApp, action, dest string, s
 	if dest != "" && len(e.dests) < maxDestsEdge {
 		e.dests[dest] = struct{}{}
 	}
+}
+
+// ObserveOp records an operation observed on a (from_app, to_app) edge — e.g. a
+// DB verb+object "SELECT wp_posts" — fusing DB semantics (SP-3) onto the
+// cross-app graph so the edge reads at query granularity. Upserts the edge if
+// it hasn't been seen via a plain connect yet.
+func (o *Observer) ObserveOp(now time.Time, fromApp, toApp, action, op string) {
+	if fromApp == "" || toApp == "" || op == "" {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	e := o.upsertLocked(fromApp, toApp, action, now)
+	if e == nil {
+		return
+	}
+	e.lastSeen = now
+	if len(e.ops) < maxOpsEdge {
+		e.ops[op] = struct{}{}
+	}
+}
+
+// upsertLocked returns the edge for (from,to,action), creating it if absent
+// (respecting maxEdges). Caller holds o.mu.
+func (o *Observer) upsertLocked(fromApp, toApp, action string, now time.Time) *edge {
+	k := key(fromApp, toApp, action)
+	e, ok := o.edges[k]
+	if !ok {
+		if len(o.edges) >= maxEdges {
+			return nil
+		}
+		e = &edge{fromApp: fromApp, toApp: toApp, action: action,
+			dests: make(map[string]struct{}), ops: make(map[string]struct{}), firstSeen: now}
+		o.edges[k] = e
+	}
+	return e
 }
 
 // Snapshot returns all observed edges, sorted by from_app then descending count.
@@ -95,8 +128,13 @@ func (o *Observer) Snapshot() []Edge {
 			dests = append(dests, d)
 		}
 		sort.Strings(dests)
+		ops := make([]string, 0, len(e.ops))
+		for op := range e.ops {
+			ops = append(ops, op)
+		}
+		sort.Strings(ops)
 		out = append(out, Edge{
-			FromApp: e.fromApp, ToApp: e.toApp, Action: e.action, Dests: dests,
+			FromApp: e.fromApp, ToApp: e.toApp, Action: e.action, Dests: dests, Ops: ops,
 			Count: e.count, Score: e.lastScore, Reason: e.lastReason,
 			FirstSeen: e.firstSeen, LastSeen: e.lastSeen,
 		})

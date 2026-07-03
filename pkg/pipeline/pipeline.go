@@ -1069,6 +1069,24 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 	if p.ConnTable != nil && ev.Sensor == "ebpf.net" && ev.Tags["kind"] == "net_bytes" {
 		feedConnstateBytes(p.ConnTable, ev)
 	}
+	// Fuse SP-3 DB semantics onto the cross-app graph: a db_query event is an
+	// operation on the (actor_service → db_engine) edge. Recording it at query
+	// granularity makes the edge read "php-fpm → mysql: SELECT wp_posts" rather
+	// than just "php-fpm → mysql".
+	if p.EdgeObserver != nil && ev.Tags["kind"] == "db_query" {
+		if verb := ev.Tags["db_verb"]; verb != "" {
+			actor := crossAppActorName(ev.Comm, ev.Image)
+			target := ev.Tags["db_engine"]
+			if actor != "" && target != "" {
+				op := verb
+				if obj := ev.Tags["db_object"]; obj != "" {
+					op = verb + " " + obj
+				}
+				p.EdgeObserver.ObserveOp(ev.Time, actor, target, "net_connect", op)
+				ev.Tags["cross_app_edge"] = actor + "→" + target
+			}
+		}
+	}
 
 	// EgressLedger second-pass enrichment (dst_port, bytes, cgroup_id)
 	// runs from the top-of-Handle hook above.
