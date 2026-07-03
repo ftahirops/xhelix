@@ -48,6 +48,7 @@ packaging/deb/usr/local/bin/xhelix-verify
 !docs/RESPONSE_DUAL_PATH.md
 !docs/PIPELINE_HANDLE_DECOMPOSITION.md
 !docs/XHELIX_FINAL_ARCHITECTURE_AND_CODE_ANALYSIS.md
+!docs/L7_PER_REQUEST_ROOT_EMITTER_DESIGN.md
 
 # Local state for development
 /var/
