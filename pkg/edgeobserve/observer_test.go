@@ -72,8 +72,9 @@ func TestObserveOpIgnoresUnattributed(t *testing.T) {
 	o.ObserveOp(t0, "", "mysql", "net_connect", "SELECT x")
 	o.ObserveOp(t0, "php-fpm", "", "net_connect", "SELECT x")
 	o.ObserveOp(t0, "php-fpm", "mysql", "net_connect", "") // empty op
+	o.ObserveOp(t0, "redis", "redis", "net_connect", "PING") // self-edge (redis-server's own PING)
 	if len(o.Snapshot()) != 0 {
-		t.Error("unattributed / empty-op edges must be ignored")
+		t.Error("unattributed / empty-op / self edges must be ignored")
 	}
 }
 

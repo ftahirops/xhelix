@@ -90,6 +90,13 @@ func (o *Observer) ObserveOp(now time.Time, fromApp, toApp, action, op string) {
 	if fromApp == "" || toApp == "" || op == "" {
 		return
 	}
+	// Skip self-edges (e.g. redis-server's own health/replication PING to a
+	// redis port resolves actor==target=="redis"). An app querying itself as a
+	// DB engine is intra-service traffic, not a cross-app edge; recording it
+	// would materialize a noise edge the scored connect path never creates.
+	if fromApp == toApp {
+		return
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	e := o.upsertLocked(fromApp, toApp, action, now)
