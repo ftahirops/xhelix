@@ -243,6 +243,95 @@ func TestKind_String(t *testing.T) {
 	}
 }
 
+func TestAnchorHTTPRequestIDRoundTrips(t *testing.T) {
+	s := openMem(t)
+	want := Anchor{ID: 7, Kind: KindWeb, CreatedAt: time.Now().UTC(),
+		Actor: "site-a.com", HTTPRequestID: "f9001-1-0"}
+	if err := s.Put(context.Background(), want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HTTPRequestID != "f9001-1-0" {
+		t.Errorf("HTTPRequestID = %q, want f9001-1-0", got.HTTPRequestID)
+	}
+}
+
+// TestMigrationAddsColumnToOldDB simulates a pre-migration on-disk
+// database: it opens a raw sqlite handle, creates the source_anchors
+// table WITHOUT the http_request_id column, inserts a row directly, then
+// runs initSchema (the same schema-init Open() calls) against that
+// handle and asserts the column now exists, is idempotent to add, and
+// the pre-existing row reads back with HTTPRequestID == "".
+func TestMigrationAddsColumnToOldDB(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	// Pre-migration schema: no http_request_id column.
+	_, err = db.Exec(`
+		CREATE TABLE source_anchors (
+			id           INTEGER PRIMARY KEY,
+			kind         INTEGER NOT NULL,
+			parent_id    INTEGER NOT NULL DEFAULT 0,
+			created_ns   INTEGER NOT NULL,
+			host         TEXT    NOT NULL DEFAULT '',
+			actor        TEXT    NOT NULL DEFAULT '',
+			uid          INTEGER NOT NULL DEFAULT 0,
+			login_uid    INTEGER NOT NULL DEFAULT 0,
+			source_ip    TEXT    NOT NULL DEFAULT '',
+			source_port  INTEGER NOT NULL DEFAULT 0,
+			ssh_key_hash TEXT    NOT NULL DEFAULT '',
+			unit         TEXT    NOT NULL DEFAULT '',
+			detail       TEXT    NOT NULL DEFAULT ''
+		);
+	`)
+	if err != nil {
+		t.Fatalf("create pre-migration schema: %v", err)
+	}
+	_, err = db.Exec(`
+		INSERT INTO source_anchors
+		(id, kind, parent_id, created_ns, host, actor, uid, login_uid,
+		 source_ip, source_port, ssh_key_hash, unit, detail)
+		VALUES (99, 1, 0, 1700000000000000000, 'h', 'alice', 1000, 1000, '', 0, '', '', '')
+	`)
+	if err != nil {
+		t.Fatalf("insert pre-migration row: %v", err)
+	}
+
+	// Re-run schema-init against the pre-migration handle: this is the
+	// additive migration path exercised on daemon restart against an
+	// existing on-disk DB.
+	if err := initSchema(db); err != nil {
+		t.Fatalf("initSchema (migration): %v", err)
+	}
+	// Idempotency: running it again must not error or duplicate the column.
+	if err := initSchema(db); err != nil {
+		t.Fatalf("initSchema (second run): %v", err)
+	}
+
+	ok, err := columnExists(db, "source_anchors", "http_request_id")
+	if err != nil {
+		t.Fatalf("columnExists: %v", err)
+	}
+	if !ok {
+		t.Fatal("http_request_id column missing after migration")
+	}
+
+	var gotHTTPRequestID string
+	err = db.QueryRow(`SELECT http_request_id FROM source_anchors WHERE id = 99`).Scan(&gotHTTPRequestID)
+	if err != nil {
+		t.Fatalf("select migrated row: %v", err)
+	}
+	if gotHTTPRequestID != "" {
+		t.Errorf("pre-migration row HTTPRequestID = %q, want empty string default", gotHTTPRequestID)
+	}
+}
+
 func TestKindFromRootType(t *testing.T) {
 	cases := map[lineage.RootType]Kind{
 		lineage.RootSSH:       KindSSH,

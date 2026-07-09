@@ -67,14 +67,53 @@ func initSchema(db *sql.DB) error {
 			source_port  INTEGER NOT NULL DEFAULT 0,
 			ssh_key_hash TEXT    NOT NULL DEFAULT '',
 			unit         TEXT    NOT NULL DEFAULT '',
-			detail       TEXT    NOT NULL DEFAULT ''
+			detail       TEXT    NOT NULL DEFAULT '',
+			http_request_id TEXT NOT NULL DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_anchors_created ON source_anchors (created_ns);
 		CREATE INDEX IF NOT EXISTS idx_anchors_parent  ON source_anchors (parent_id);
 		CREATE INDEX IF NOT EXISTS idx_anchors_kind    ON source_anchors (kind);
 		CREATE INDEX IF NOT EXISTS idx_anchors_actor   ON source_anchors (actor);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// additive, backward-compatible: add the column only if absent, so
+	// pre-existing on-disk databases from before this field was introduced
+	// migrate in place without a destructive rebuild.
+	exists, err := columnExists(db, "source_anchors", "http_request_id")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := db.Exec(`ALTER TABLE source_anchors ADD COLUMN http_request_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// columnExists reports whether table has a column named col, via
+// PRAGMA table_info. Used to make additive schema migrations idempotent.
+func columnExists(db *sql.DB, table, col string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == col {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Put inserts (or replaces by ID) an Anchor.
@@ -88,13 +127,13 @@ func (s *Store) Put(ctx context.Context, a Anchor) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT OR REPLACE INTO source_anchors
 		(id, kind, parent_id, created_ns, host, actor, uid, login_uid,
-		 source_ip, source_port, ssh_key_hash, unit, detail)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 source_ip, source_port, ssh_key_hash, unit, detail, http_request_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		uint64(a.ID), uint8(a.Kind), uint64(a.ParentAnchorID),
 		a.CreatedAt.UnixNano(),
 		a.Host, a.Actor, a.UID, a.LoginUID,
-		a.SourceIP, a.SourcePort, a.SSHKeyHash, a.Unit, a.Detail,
+		a.SourceIP, a.SourcePort, a.SSHKeyHash, a.Unit, a.Detail, a.HTTPRequestID,
 	)
 	if err != nil {
 		return fmt.Errorf("source.Put: %w", err)
@@ -157,7 +196,7 @@ func (s *Store) SweepOlderThan(ctx context.Context, cutoff time.Time) (int64, er
 }
 
 const selectCols = `SELECT id, kind, parent_id, created_ns, host, actor,
-	uid, login_uid, source_ip, source_port, ssh_key_hash, unit, detail
+	uid, login_uid, source_ip, source_port, ssh_key_hash, unit, detail, http_request_id
 	FROM source_anchors`
 
 // scanner abstracts *sql.Row and *sql.Rows for shared scan logic.
@@ -173,7 +212,7 @@ func scanAnchor(s scanner) (Anchor, error) {
 	err := s.Scan(
 		&idOut, &kind, &parentID, &createdNs,
 		&a.Host, &a.Actor, &uid, &loginUID,
-		&a.SourceIP, &sourcePort, &a.SSHKeyHash, &a.Unit, &a.Detail,
+		&a.SourceIP, &sourcePort, &a.SSHKeyHash, &a.Unit, &a.Detail, &a.HTTPRequestID,
 	)
 	if err != nil {
 		return Anchor{}, err

@@ -109,6 +109,7 @@ type Anchor struct {
 	SSHKeyHash     string
 	Unit           string
 	Detail         string // JSON, may be ""
+	HTTPRequestID  string // populated for KindWeb; correlates to the originating HTTP request
 }
 
 // FromOrigin builds an Anchor from a lineage.Origin. Returns an Anchor
@@ -127,6 +128,7 @@ func FromOrigin(o lineage.Origin, parent lineage.LineageID) Anchor {
 		SourcePort:     o.SourcePort,
 		SSHKeyHash:     o.SSHKeyHash,
 		Unit:           o.SystemdUnit,
+		HTTPRequestID:  o.HTTPRequestID,
 	}
 	if a.Kind == KindCron && o.CronEntry != "" {
 		a.Unit = o.CronEntry
