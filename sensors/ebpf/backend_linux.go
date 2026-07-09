@@ -214,6 +214,8 @@ func (b *linuxBackend) loadELF(parent context.Context, path string) error {
 			lnk, err = link.Kprobe("tcp_sendmsg", prog, nil)
 		case sec == "kprobe/tcp_recvmsg":
 			lnk, err = link.Kprobe("tcp_recvmsg", prog, nil)
+		case sec == "kretprobe/tcp_recvmsg":
+			lnk, err = link.Kretprobe("tcp_recvmsg", prog, nil)
 		case sec == "kprobe/udp_sendmsg":
 			lnk, err = link.Kprobe("udp_sendmsg", prog, nil)
 		case sec == "kprobe/udp_recvmsg":
