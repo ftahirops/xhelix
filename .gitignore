@@ -49,6 +49,7 @@ packaging/deb/usr/local/bin/xhelix-verify
 !docs/PIPELINE_HANDLE_DECOMPOSITION.md
 !docs/XHELIX_FINAL_ARCHITECTURE_AND_CODE_ANALYSIS.md
 !docs/L7_PER_REQUEST_ROOT_EMITTER_DESIGN.md
+!docs/L7_PER_REQUEST_ROOT_EMITTER_PLAN.md
 
 # Local state for development
 /var/
