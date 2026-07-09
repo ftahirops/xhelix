@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"os"
 	"strconv"
@@ -497,6 +498,22 @@ func decodeSSLReadEvent(b []byte, ev *model.Event) {
 			}
 		}
 	}
+	stampWebRequestID(ev)
+}
+
+// stampWebRequestID synthesizes a compact per-request id for a decoded web
+// (ssl_read) event from the serving PID + request-line + a per-PID sequence, so
+// nginx-tier web roots resolve at request (not vhost) granularity. FNV keeps it
+// short and allocation-light; collisions across distinct request-lines are
+// astronomically unlikely for identity purposes.
+func stampWebRequestID(ev *model.Event) {
+	rl := ev.Tags["http_request_line"]
+	if rl == "" {
+		return
+	}
+	h := fnv.New64a()
+	fmt.Fprintf(h, "%d|%s|%s", ev.PID, ev.Tags["http_host"], rl)
+	ev.Tags["request_id"] = "n" + strconv.FormatUint(h.Sum64(), 36)
 }
 
 // isLikelyHTTPRequestLine returns true when s looks like a

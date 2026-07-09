@@ -344,3 +344,22 @@ func TestDecodeFCGIRequestRejectsNonFCGI(t *testing.T) {
 		t.Errorf("unexpected host tag %q", ev.Tags["http_host"])
 	}
 }
+
+func TestSSLReadStampsRequestID(t *testing.T) {
+	ev := model.Event{PID: 4242, Tags: map[string]string{
+		"http_host":         "site-a.com",
+		"http_request_line": "GET /wp-login.php HTTP/1.1",
+	}}
+	stampWebRequestID(&ev) // the new helper
+	if ev.Tags["request_id"] == "" {
+		t.Fatal("request_id not stamped")
+	}
+	// Stable within an event, distinct across request-lines.
+	first := ev.Tags["request_id"]
+	ev.Tags["request_id"] = ""
+	ev.Tags["http_request_line"] = "GET /other HTTP/1.1"
+	stampWebRequestID(&ev)
+	if ev.Tags["request_id"] == first {
+		t.Error("distinct request-lines must yield distinct request_id")
+	}
+}
