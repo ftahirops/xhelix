@@ -42,6 +42,7 @@ enum xh_event_kind {
     XH_EV_NET_BYTES      = 22,
     XH_EV_PROC_SCRAPE    = 23,
     XH_EV_DB_QUERY       = 24,
+    XH_EV_FCGI_REQUEST   = 25,
 };
 
 struct xh_event_hdr {
@@ -107,6 +108,17 @@ struct xh_dbquery_evt {
     __u16 dport;
     __u16 dlen;
     __u8  data[XH_DB_BUF_MAX];
+};
+
+/* xh_fcgi_evt — the leading bytes php-fpm received on a FastCGI connection
+   (nginx→php-fpm on port 9000), for the L7 per-request root emitter. Userspace
+   (pkg/fastcgi) parses the request identity (method/uri/host/script). Coarse by
+   construction: single recv, first iovec (ITER_UBUF) only. */
+#define XH_FCGI_BUF_MAX 256
+struct xh_fcgi_evt {
+    struct xh_event_hdr hdr;
+    __u32 buf_len;          // bytes captured (kernel-side capped at XH_FCGI_BUF_MAX)
+    __u8  buf[XH_FCGI_BUF_MAX];
 };
 
 struct xh_ptrace_evt {
@@ -882,6 +894,83 @@ static __always_inline void xh_maybe_capture_db(struct sock *sk,
     bpf_ringbuf_submit(e, 0);
 }
 
+/* FastCGI recv capture (L7 per-request root emitter).
+   php-fpm listens on tcp/9000; nginx connects and writes the FastCGI
+   BEGIN_REQUEST+PARAMS stream, which php-fpm reads via tcp_recvmsg. The
+   received bytes only exist AFTER the call returns, so we stash the
+   destination user-buffer pointer at entry (keyed by pid_tgid) and read it
+   at return — the same save-at-entry/read-at-return shape as the SSL_read
+   uprobe pair. Gate: local or remote port in the FastCGI set (cheap
+   pre-filter) AND buf[0]==1 (v1 record magic). Coarse ceiling (intended):
+   ITER_UBUF single-segment / first iovec only, same as xh_maybe_capture_db —
+   multi-segment ITER_IOVEC reads resolve base NULL and are skipped. */
+static __always_inline int xh_is_fcgi_port(__u16 p) {
+    return p == 9000 || p == 9001 || p == 9002 || p == 9003;
+}
+
+struct xh_fcgi_ctx {
+    __u64 buf_addr;   // destination user buffer (msg_iter first iovec base)
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, __u64);                 // pid_tgid
+    __type(value, struct xh_fcgi_ctx);
+} xh_fcgi_ctx_map SEC(".maps");
+
+/* xh_stash_fcgi_recv — at tcp_recvmsg entry, if the socket is on a FastCGI
+   port, record the destination buffer pointer for the matching kretprobe. */
+static __always_inline void xh_stash_fcgi_recv(struct sock *sk,
+                                               struct msghdr *msg) {
+    if (xh_is_self() || !sk || !msg) return;
+    __u16 family = 0;
+    BPF_CORE_READ_INTO(&family, sk, __sk_common.skc_family);
+    if (family != 2 && family != 10) return;
+    __u16 dport = 0, sport = 0;
+    BPF_CORE_READ_INTO(&dport, sk, __sk_common.skc_dport);
+    dport = bpf_ntohs(dport);
+    BPF_CORE_READ_INTO(&sport, sk, __sk_common.skc_num); // local port, host order
+    if (!xh_is_fcgi_port(dport) && !xh_is_fcgi_port(sport)) return;
+
+    void *base = (void *)BPF_CORE_READ(msg, msg_iter.__ubuf_iovec.iov_base);
+    if (!base) return; // multi-segment ITER_IOVEC or unknown layout — skip
+
+    __u64 key = bpf_get_current_pid_tgid();
+    struct xh_fcgi_ctx c = { .buf_addr = (__u64)base };
+    bpf_map_update_elem(&xh_fcgi_ctx_map, &key, &c, BPF_ANY);
+}
+
+SEC("kretprobe/tcp_recvmsg")
+int kretprobe_tcp_recvmsg(struct pt_regs *ctx) {
+    __u64 key = bpf_get_current_pid_tgid();
+    struct xh_fcgi_ctx *c = bpf_map_lookup_elem(&xh_fcgi_ctx_map, &key);
+    if (!c) return 0;
+    __u64 base = c->buf_addr;
+    bpf_map_delete_elem(&xh_fcgi_ctx_map, &key);
+
+    int ret = (int)PT_REGS_RC(ctx);
+    if (ret <= 0) return 0;
+
+    __u32 cap = (__u32)ret;
+    if (cap > XH_FCGI_BUF_MAX) cap = XH_FCGI_BUF_MAX;
+
+    /* Magic pre-filter: peek the first byte; a v1 FastCGI record starts with
+       version==1. Reject anything else before reserving a ringbuf slot. */
+    __u8 magic = 0;
+    if (bpf_probe_read_user(&magic, 1, (void *)base) != 0) return 0;
+    if (magic != 1) return 0;
+
+    struct xh_fcgi_evt *e = bpf_ringbuf_reserve(&xh_events, sizeof(*e), 0);
+    if (!e) return 0;
+    xh_fill_hdr(&e->hdr, XH_EV_FCGI_REQUEST);
+    e->buf_len = cap;
+    __builtin_memset(e->buf, 0, sizeof(e->buf));
+    bpf_probe_read_user(e->buf, cap, (void *)base);
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
 SEC("kprobe/tcp_sendmsg")
 int kprobe_tcp_sendmsg(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
@@ -895,8 +984,10 @@ int kprobe_tcp_sendmsg(struct pt_regs *ctx) {
 SEC("kprobe/tcp_recvmsg")
 int kprobe_tcp_recvmsg(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+    struct msghdr *msg = (struct msghdr *)PT_REGS_PARM2(ctx);
     __u32 size = (__u32)PT_REGS_PARM3(ctx);
     xh_emit_net_bytes(sk, size, 1 /* in */, 0);
+    xh_stash_fcgi_recv(sk, msg);
     return 0;
 }
 

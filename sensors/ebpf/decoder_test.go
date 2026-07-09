@@ -142,8 +142,8 @@ func TestDecodeNetConnectWithSrcPort(t *testing.T) {
 func TestDecodeRawSocketAFPacket(t *testing.T) {
 	hdr := buildHdr(KindNetRawSock, 777, 1, 0, "tcpdump")
 	var payload bytes.Buffer
-	binary.Write(&payload, binary.LittleEndian, uint32(17)) // AF_PACKET
-	binary.Write(&payload, binary.LittleEndian, uint32(3))  // SOCK_RAW
+	binary.Write(&payload, binary.LittleEndian, uint32(17))     // AF_PACKET
+	binary.Write(&payload, binary.LittleEndian, uint32(3))      // SOCK_RAW
 	binary.Write(&payload, binary.LittleEndian, uint32(0x0003)) // ETH_P_ALL
 
 	ev, err := Decode(append(hdr, payload.Bytes()...))
@@ -270,5 +270,77 @@ func TestDecodeBPFSyscallProgLoad(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// fcgiRecord builds a v1 FastCGI record: 8-byte header + content.
+func fcgiRecord(typ byte, reqID uint16, content []byte) []byte {
+	h := []byte{1, typ, byte(reqID >> 8), byte(reqID), byte(len(content) >> 8), byte(len(content)), 0, 0}
+	return append(h, content...)
+}
+
+// buildFCGITestPayload constructs an XH_EV_FCGI_REQUEST payload:
+// buf_len(4 LE) | BEGIN_REQUEST(reqID=1) + PARAMS stream (short-form lengths).
+func buildFCGITestPayload(t *testing.T) []byte {
+	t.Helper()
+	begin := fcgiRecord(1 /*BEGIN_REQUEST*/, 1, []byte{0x00, 0x01, 0x01, 0, 0, 0, 0, 0})
+	var params []byte
+	add := func(k, v string) {
+		params = append(params, byte(len(k)), byte(len(v)))
+		params = append(params, []byte(k)...)
+		params = append(params, []byte(v)...)
+	}
+	// Order deterministic (map iteration would not be) so the stream is stable.
+	add("REQUEST_METHOD", "POST")
+	add("REQUEST_URI", "/wp-login.php")
+	add("HTTP_HOST", "site-a.com")
+	add("SCRIPT_FILENAME", "/var/www/site-a/wp-login.php")
+	stream := append(begin, fcgiRecord(4 /*PARAMS*/, 1, params)...)
+
+	buf := make([]byte, 4+len(stream))
+	binary.LittleEndian.PutUint32(buf[:4], uint32(len(stream)))
+	copy(buf[4:], stream)
+	return buf
+}
+
+func TestDecodeFCGIRequest(t *testing.T) {
+	payload := buildFCGITestPayload(t)
+	ev := model.Event{Tags: map[string]string{}}
+	decodeFCGIRequestEvent(&ev, payload)
+	if ev.Tags["kind"] != "fcgi_request" {
+		t.Fatalf("kind = %q", ev.Tags["kind"])
+	}
+	if ev.Tags["http_host"] != "site-a.com" || ev.Tags["http_uri"] != "/wp-login.php" {
+		t.Errorf("host/uri = %q/%q", ev.Tags["http_host"], ev.Tags["http_uri"])
+	}
+	if ev.Tags["http_method"] != "POST" {
+		t.Errorf("method = %q", ev.Tags["http_method"])
+	}
+	if ev.Tags["script_filename"] != "/var/www/site-a/wp-login.php" {
+		t.Errorf("script = %q", ev.Tags["script_filename"])
+	}
+	if ev.Tags["fcgi_request_id"] != "1" {
+		t.Errorf("request_id = %q", ev.Tags["fcgi_request_id"])
+	}
+	if ev.Tags["fidelity"] != "coarse" {
+		t.Error("fcgi_request must be tagged coarse")
+	}
+}
+
+func TestDecodeFCGIRequestRejectsNonFCGI(t *testing.T) {
+	stream := []byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+	buf := make([]byte, 4+len(stream))
+	binary.LittleEndian.PutUint32(buf[:4], uint32(len(stream)))
+	copy(buf[4:], stream)
+	ev := model.Event{Tags: map[string]string{}}
+	decodeFCGIRequestEvent(&ev, buf)
+	if ev.Tags["kind"] != "fcgi_request" {
+		t.Fatalf("kind = %q", ev.Tags["kind"])
+	}
+	if ev.Tags["fidelity"] == "coarse" {
+		t.Error("plain HTTP must not be classified as a FastCGI request")
+	}
+	if ev.Tags["http_host"] != "" {
+		t.Errorf("unexpected host tag %q", ev.Tags["http_host"])
 	}
 }

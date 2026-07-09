@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/xhelix/xhelix/pkg/dbsemantic"
+	"github.com/xhelix/xhelix/pkg/fastcgi"
 	"github.com/xhelix/xhelix/pkg/model"
 )
 
@@ -147,6 +148,8 @@ func Decode(raw []byte) (model.Event, error) {
 		decodeSSLReadEvent(payload, &ev)
 	case KindDBQuery:
 		decodeDBQueryEvent(payload, &ev)
+	case KindFCGIRequest:
+		decodeFCGIRequestEvent(&ev, payload)
 	case KindBPFSyscall:
 		decodeBPFSyscall(payload, &ev)
 	case KindPtrace:
@@ -404,6 +407,45 @@ func decodeDBQueryEvent(b []byte, ev *model.Event) {
 	ev.Tags["db_verb"] = res.Verb
 	if res.Object != "" {
 		ev.Tags["db_object"] = res.Object
+	}
+	ev.Tags["fidelity"] = "coarse"
+}
+
+// decodeFCGIRequestEvent parses an XH_EV_FCGI_REQUEST payload:
+// buf_len(4 LE) | buf[buf_len]. The buf is the leading bytes php-fpm
+// received on a FastCGI connection (nginx→php-fpm). We stamp coarse
+// per-request identity (method/uri/host/script + FastCGI requestId);
+// PID/comm come from the event header (the receiving php-fpm worker).
+// fidelity=coarse by construction: single-recv, first iovec only.
+func decodeFCGIRequestEvent(ev *model.Event, b []byte) {
+	ev.Tags["kind"] = "fcgi_request"
+	if len(b) < 4 {
+		return
+	}
+	blen := int(binary.LittleEndian.Uint32(b[:4]))
+	data := b[4:]
+	if blen < len(data) {
+		data = data[:blen]
+	}
+	if !fastcgi.IsFastCGI(data) {
+		return
+	}
+	r, ok := fastcgi.Parse(data)
+	if !ok {
+		return
+	}
+	ev.Tags["fcgi_request_id"] = fmt.Sprintf("%d", r.RequestID)
+	if r.Host != "" {
+		ev.Tags["http_host"] = r.Host
+	}
+	if r.Method != "" {
+		ev.Tags["http_method"] = r.Method
+	}
+	if r.URI != "" {
+		ev.Tags["http_uri"] = r.URI
+	}
+	if r.Script != "" {
+		ev.Tags["script_filename"] = r.Script
 	}
 	ev.Tags["fidelity"] = "coarse"
 }

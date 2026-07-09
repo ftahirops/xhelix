@@ -35,18 +35,19 @@ const (
 	KindMount       EventKind = 10
 	KindMprotectRWX EventKind = 11
 	// reserved for future expansion (must stay aligned with C)
-	KindCanaryFail EventKind = 12
-	KindInodePerm  EventKind = 13
-	KindSetxattr   EventKind = 14
-	KindNetICMP    EventKind = 15
-	KindNetRawSock EventKind = 16
-	KindCapSet     EventKind = 17
-	KindPivotRoot  EventKind = 18
-	KindUnshare    EventKind = 19
-	KindSSLRead    EventKind = 20
-	KindNetBytes   EventKind = 22
-	KindProcScrape EventKind = 23
-	KindDBQuery    EventKind = 24
+	KindCanaryFail  EventKind = 12
+	KindInodePerm   EventKind = 13
+	KindSetxattr    EventKind = 14
+	KindNetICMP     EventKind = 15
+	KindNetRawSock  EventKind = 16
+	KindCapSet      EventKind = 17
+	KindPivotRoot   EventKind = 18
+	KindUnshare     EventKind = 19
+	KindSSLRead     EventKind = 20
+	KindNetBytes    EventKind = 22
+	KindProcScrape  EventKind = 23
+	KindDBQuery     EventKind = 24
+	KindFCGIRequest EventKind = 25
 )
 
 // String returns a stable, lowercase token for the kind.
@@ -98,6 +99,8 @@ func (k EventKind) String() string {
 		return "proc_scrape"
 	case KindDBQuery:
 		return "db_query"
+	case KindFCGIRequest:
+		return "fcgi_request"
 	}
 	return "unknown"
 }
