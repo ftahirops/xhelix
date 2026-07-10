@@ -1088,6 +1088,13 @@ func (p *Pipeline) Handle(ctx context.Context, ev model.Event) {
 		}
 	}
 
+	// Root Emitters "B" (app tier): a FastCGI request received by a php-fpm
+	// worker mints a per-request web root and attributes the worker's subtree
+	// to it, so the worker's later DB/file events inherit the originating
+	// request as their source root. Join-free — worker PID + request identity
+	// ride the same fcgi_request event. Guarded on kind + non-nil deps inside.
+	p.attributeFcgiRoot(ctx, &ev)
+
 	// EgressLedger second-pass enrichment (dst_port, bytes, cgroup_id)
 	// runs from the top-of-Handle hook above.
 	_ = ev
@@ -2272,6 +2279,12 @@ func (p *Pipeline) attributeWebRoot(ctx context.Context, ev *model.Event) {
 	if p.WebRoots == nil || p.SourceMinter == nil || p.ProcTree == nil || ev.PID == 0 {
 		return
 	}
+	// fcgi_request events are the app tier ("B"): attributeFcgiRoot already
+	// minted a more-specific per-request root for them earlier in Handle.
+	// Yield so the coarse per-vhost root does not clobber that attribution.
+	if ev.Tags["kind"] == "fcgi_request" {
+		return
+	}
 	host := ev.Tags["http_host"]
 	if host == "" {
 		return
@@ -2291,6 +2304,36 @@ func (p *Pipeline) attributeWebRoot(ctx context.Context, ev *model.Event) {
 		}
 		id = newID
 		p.WebRoots.Put(host, id)
+	}
+	p.ProcTree.AttributeSource(ev.PID, id)
+}
+
+// attributeFcgiRoot mints a per-request web root from a FastCGI request
+// received by a php-fpm worker and attributes the worker's subtree to it, so
+// the worker's subsequent DB/file events inherit the originating request as
+// their source root. Join-free: the receiving worker PID and the request
+// identity arrive on the same fcgi_request event (no nginx→php-fpm 4-tuple
+// correlation). When the event carries no request_id, one is synthesized as
+// "f"+pid+"-"+fcgi_request_id+"-"+base36(seq) — the "f" prefix marks the
+// app tier as distinct from the nginx tier's "n" ids. Nil-safe.
+func (p *Pipeline) attributeFcgiRoot(ctx context.Context, ev *model.Event) {
+	if p.SourceMinter == nil || p.WebRoots == nil || p.ProcTree == nil ||
+		ev.Tags["kind"] != "fcgi_request" || ev.PID == 0 {
+		return
+	}
+	host := ev.Tags["http_host"]
+	if host == "" {
+		return
+	}
+	rid := ev.Tags["request_id"]
+	if rid == "" {
+		rid = "f" + strconv.Itoa(int(ev.PID)) + "-" + ev.Tags["fcgi_request_id"] +
+			"-" + strconv.FormatUint(p.WebRoots.NextSeq(host), 36)
+		ev.Tags["request_id"] = rid
+	}
+	id, minted := p.WebRoots.MintRequest(ctx, p.SourceMinter, *ev, rid)
+	if !minted || id == 0 {
+		return
 	}
 	p.ProcTree.AttributeSource(ev.PID, id)
 }

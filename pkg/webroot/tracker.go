@@ -12,21 +12,35 @@
 package webroot
 
 import (
+	"context"
 	"sync"
 
 	"github.com/xhelix/xhelix/pkg/lineage"
+	"github.com/xhelix/xhelix/pkg/model"
 )
+
+// Minter is the subset of source.Minter this package needs to mint a
+// per-request web anchor. Declared here (rather than importing source) to
+// keep the package a pure, dependency-light id cache.
+type Minter interface {
+	MintFromEvent(ctx context.Context, ev model.Event) (lineage.LineageID, error)
+}
 
 // DefaultCap bounds the number of distinct vhost roots cached/minted. Past it,
 // new vhosts are not minted (existing ones still resolve) — prevents anchor
 // blow-up from a churning/spoofed Host header space.
 const DefaultCap = 4096
 
-// Tracker caches one lineage root id per vhost (Host header value).
+// Tracker caches one lineage root id per vhost (Host header value). It also
+// backs the per-request app-tier root path: a per-host monotonic sequence
+// (NextSeq, used to synthesize app-tier request ids) and a mint-once-per-
+// request-id cache (MintRequest). Both are cap-bounded like the vhost map.
 type Tracker struct {
-	mu    sync.Mutex
-	cap   int
-	hosts map[string]lineage.LineageID
+	mu       sync.Mutex
+	cap      int
+	hosts    map[string]lineage.LineageID
+	seqs     map[string]uint64            // per-host monotonic counter (NextSeq)
+	requests map[string]lineage.LineageID // per-request-id minted anchor (MintRequest)
 }
 
 // New returns a Tracker with the default cap.
@@ -37,7 +51,83 @@ func NewWithCap(cap int) *Tracker {
 	if cap <= 0 {
 		cap = DefaultCap
 	}
-	return &Tracker{cap: cap, hosts: map[string]lineage.LineageID{}}
+	return &Tracker{
+		cap:      cap,
+		hosts:    map[string]lineage.LineageID{},
+		seqs:     map[string]uint64{},
+		requests: map[string]lineage.LineageID{},
+	}
+}
+
+// NextSeq returns the next per-host monotonic sequence number, used to
+// synthesize a unique app-tier request id when the FastCGI event carries
+// none. Cap-bounded: once seqs holds cap distinct hosts, an unseen host is
+// not added and NextSeq returns 0 (the pid + fcgi_request_id still keep the
+// synthesized id reasonably distinct). Never returns a decreasing value for
+// a given host within the cap.
+func (t *Tracker) NextSeq(host string) uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.seqs[host]; !ok && len(t.seqs) >= t.cap {
+		return 0
+	}
+	t.seqs[host]++
+	return t.seqs[host]
+}
+
+// MintRequest mints a per-request web (KindWeb) anchor for rid, once. It
+// builds an identity event tagged service=web + http_host + request_id (and
+// carries path/method when present) and calls minter.MintFromEvent, mirroring
+// the per-vhost mint path. Returns (anchorID, true) when it minted, or
+// (existingID|0, false) when rid was already minted, the cap is reached, or
+// the mint was declined. Cap-bounded to prevent anchor blow-up from a churning
+// request-id space.
+func (t *Tracker) MintRequest(ctx context.Context, minter Minter, ev model.Event, rid string) (lineage.LineageID, bool) {
+	if minter == nil || rid == "" {
+		return 0, false
+	}
+	host := ev.Tags["http_host"]
+	if host == "" {
+		return 0, false
+	}
+
+	t.mu.Lock()
+	if id, ok := t.requests[rid]; ok {
+		t.mu.Unlock()
+		return id, false // mint-once: already have an anchor for this request
+	}
+	if len(t.requests) >= t.cap {
+		t.mu.Unlock()
+		return 0, false
+	}
+	t.mu.Unlock()
+
+	// Mint outside the lock (minter may touch SQLite). Dispatch is single-
+	// goroutine so this cannot race, but the recheck below is cheap insurance.
+	sev := model.NewEvent("identity.web", model.SeverityInfo)
+	sev.PID = ev.PID
+	sev.Tags["service"] = "web"
+	sev.Tags["http_host"] = host
+	sev.Tags["request_id"] = rid
+	if uri := ev.Tags["http_uri"]; uri != "" {
+		sev.Tags["path"] = uri
+	}
+	if m := ev.Tags["method"]; m != "" {
+		sev.Tags["method"] = m
+	}
+	id, err := minter.MintFromEvent(ctx, sev)
+	if err != nil || id == 0 {
+		return 0, false
+	}
+
+	t.mu.Lock()
+	if existing, ok := t.requests[rid]; ok {
+		t.mu.Unlock()
+		return existing, false
+	}
+	t.requests[rid] = id
+	t.mu.Unlock()
+	return id, true
 }
 
 // Get returns the cached root id for a vhost and whether one exists.
