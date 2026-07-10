@@ -44,8 +44,15 @@ persistence change:
 
 - **A — nginx-tier** (`ssl_read`): synthesize a `request_id` where the HTTP
   request-line is already decoded (`sensors/ebpf/decoder.go:416`
-  `decodeSSLReadEvent`), upgrading the existing per-vhost web root to
-  **per-request**. Covers static / non-PHP requests that never reach php-fpm.
+  `decodeSSLReadEvent`). Covers static / non-PHP requests that never reach
+  php-fpm.
+  **AS BUILT (honest scope):** A ships as `request_id`-**stamping only** — the
+  synthesized `n…` id rides on the `ssl_read` event (and so feeds that event's
+  workflow-chain phase gate), but the nginx web-root *anchor* still mints at
+  **per-vhost** granularity (`attributeWebRoot` → `WebRoots.Get/Put(host)`; the
+  anchor's `HTTPRequestID` stays `""`). Upgrading the nginx anchor itself to
+  per-request was descoped during implementation; **B is the authoritative
+  per-request root.** Do not cite A as a per-request nginx-root emitter.
 - **B — app-tier** (php-fpm `tcp_recvmsg`): a new eBPF FastCGI-recv capture
   parses `FCGI_BEGIN_REQUEST` + `FCGI_PARAMS` as the worker receives them,
   yielding request identity + serving worker PID atomically, then
@@ -109,8 +116,10 @@ because the app-tier root (B) is the one that attributes DB/file work.
   (`pipeline.go:2271`, called from `:1479`): on an `fcgi_request` event, mint a
   per-request `RootWeb` anchor carrying `HTTPRequestID` and
   `AttributeSource(worker_pid, anchor_id)`.
-- A-tier: `attributeWebRoot` upgraded from per-vhost to per-request via the
-  synthesized `request_id`.
+- A-tier (AS BUILT): `attributeWebRoot` still mints **per-vhost**; A only
+  stamps the synthesized `request_id` on the `ssl_read` event. The planned
+  per-request upgrade of the nginx anchor was descoped — see the "AS BUILT"
+  note under Architecture. B is the authoritative per-request root.
 
 ### C5. Persistence
 - Add `HTTPRequestID string` to the `source.Anchor` struct (`anchor.go`) and
