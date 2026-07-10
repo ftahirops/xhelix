@@ -82,3 +82,64 @@ func TestAttributeFcgiRoot_MintsPerRequestAppRoot(t *testing.T) {
 		t.Errorf("anchor HTTPRequestID = %q, want synthesized rid %q", a.HTTPRequestID, rid)
 	}
 }
+
+// TestAttributeWebRoot_NonFcgiStillMintsPerVhostRoot is the regression test
+// for the fcgi_request yield-guard added to attributeWebRoot (so the more
+// specific per-request app-tier root from attributeFcgiRoot is not clobbered
+// by the coarse per-vhost root): a non-fcgi web event (e.g. the ssl_read-style
+// event that carries http_host + the serving PID directly, with no
+// kind=="fcgi_request" tag) must still mint + attribute the coarse per-vhost
+// RootWeb anchor exactly as before Task 4.
+func TestAttributeWebRoot_NonFcgiStillMintsPerVhostRoot(t *testing.T) {
+	ctx := context.Background()
+
+	pt := proctree.New(0)
+	srcStore, err := source.Open(":memory:")
+	if err != nil {
+		t.Fatalf("source.Open: %v", err)
+	}
+	defer srcStore.Close()
+
+	minter := source.NewMinter(srcStore, lineage.NewMinter(), lineage.NewStore(), "test-host")
+	p := &Pipeline{
+		ProcTree:     pt,
+		SourceMinter: minter,
+		WebRoots:     webroot.New(),
+	}
+
+	const workerPID uint32 = 9002
+	pt.OnSpawn(proctree.Node{PID: workerPID, PPID: 1, Comm: "nginx"})
+
+	ev := model.NewEvent("ebpf", model.SeverityInfo)
+	ev.PID = workerPID
+	ev.Comm = "nginx"
+	ev.Tags = map[string]string{
+		"kind":              "ssl_read",
+		"http_host":         "site-a.com",
+		"http_request_line": "GET /index.php HTTP/1.1",
+	}
+	p.Handle(ctx, ev)
+
+	// Per-vhost root cached for the host.
+	id, ok := p.WebRoots.Get("site-a.com")
+	if !ok || id == 0 {
+		t.Fatal("per-vhost web root was not minted/cached for a non-fcgi event")
+	}
+
+	// Worker PID attributed to that root.
+	primary, _ := pt.SourceOf(workerPID)
+	if primary == 0 {
+		t.Fatal("worker PID 9002 not attributed to a source root")
+	}
+	if primary != id {
+		t.Errorf("attributed root = %d, want the cached per-vhost root %d", primary, id)
+	}
+
+	a, err := srcStore.Get(ctx, primary)
+	if err != nil {
+		t.Fatalf("store.Get(minted anchor): %v", err)
+	}
+	if a.Kind != source.KindWeb {
+		t.Errorf("anchor kind = %v, want source.KindWeb", a.Kind)
+	}
+}

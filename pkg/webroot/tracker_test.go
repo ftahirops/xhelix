@@ -2,6 +2,7 @@ package webroot
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/xhelix/xhelix/pkg/lineage"
@@ -67,15 +68,48 @@ func TestTracker_MintRequestOncePerRid(t *testing.T) {
 	}
 }
 
-func TestTracker_MintRequestCapBounded(t *testing.T) {
+func TestTracker_MintRequestCapEvictsOldest(t *testing.T) {
 	tr := NewWithCap(1)
 	fm := &fakeMinter{}
 	ev := model.Event{PID: 1, Tags: map[string]string{"http_host": "h"}}
-	if _, ok := tr.MintRequest(context.Background(), fm, ev, "r1"); !ok {
+	id1, ok := tr.MintRequest(context.Background(), fm, ev, "r1")
+	if !ok {
 		t.Fatal("first MintRequest under cap should mint")
 	}
-	if id, ok := tr.MintRequest(context.Background(), fm, ev, "r2"); ok || id != 0 {
-		t.Errorf("MintRequest past cap = (%d,%v), want (0,false)", id, ok)
+	// Past cap: the oldest rid (r1) is evicted to make room, so r2 still
+	// mints (the map is a recent-mint dedup guard, not a hard stop).
+	id2, ok := tr.MintRequest(context.Background(), fm, ev, "r2")
+	if !ok || id2 == 0 {
+		t.Errorf("MintRequest past cap = (%d,%v), want non-zero + true (evict-oldest)", id2, ok)
+	}
+	if id2 == id1 {
+		t.Error("evicted mint should produce a fresh anchor id, not reuse r1's")
+	}
+	// r1 was evicted, so re-seeing it mints a fresh anchor rather than
+	// returning the (now-gone) cached one.
+	id1b, ok := tr.MintRequest(context.Background(), fm, ev, "r1")
+	if !ok || id1b == 0 {
+		t.Errorf("re-mint of evicted rid r1 = (%d,%v), want non-zero + true", id1b, ok)
+	}
+}
+
+// TestTracker_MintRequestResumesAfterCapExceeded is the regression test for
+// the "MintRequest dies forever after cap distinct request_ids" bug: request
+// ids are high-cardinality (one per HTTP request), so a hard cap without
+// eviction meant attribution went permanently dark once cap was reached.
+// This drives cap+100 DISTINCT rids through MintRequest and asserts minting
+// still succeeds well past the cap.
+func TestTracker_MintRequestResumesAfterCapExceeded(t *testing.T) {
+	tr := NewWithCap(DefaultCap)
+	fm := &fakeMinter{}
+	ev := model.Event{PID: 1, Tags: map[string]string{"http_host": "h"}}
+
+	for i := 0; i < DefaultCap+100; i++ {
+		rid := "rid-" + strconv.Itoa(i)
+		id, ok := tr.MintRequest(context.Background(), fm, ev, rid)
+		if !ok || id == 0 {
+			t.Fatalf("MintRequest(%s) at i=%d = (%d,%v), want non-zero + true (mint must not die past cap)", rid, i, id, ok)
+		}
 	}
 }
 

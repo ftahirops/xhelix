@@ -41,6 +41,7 @@ type Tracker struct {
 	hosts    map[string]lineage.LineageID
 	seqs     map[string]uint64            // per-host monotonic counter (NextSeq)
 	requests map[string]lineage.LineageID // per-request-id minted anchor (MintRequest)
+	ridOrder []string                     // FIFO insertion order of requests keys, for eviction
 }
 
 // New returns a Tracker with the default cap.
@@ -79,9 +80,15 @@ func (t *Tracker) NextSeq(host string) uint64 {
 // builds an identity event tagged service=web + http_host + request_id (and
 // carries path/method when present) and calls minter.MintFromEvent, mirroring
 // the per-vhost mint path. Returns (anchorID, true) when it minted, or
-// (existingID|0, false) when rid was already minted, the cap is reached, or
-// the mint was declined. Cap-bounded to prevent anchor blow-up from a churning
-// request-id space.
+// (existingID|0, false) when rid was already minted or the mint was declined.
+//
+// The requests map is a mint-once-per-recent-rid dedup guard, not a durable
+// store — request_id is high-cardinality (one per HTTP request), so unlike
+// hosts/seqs it is bounded with FIFO eviction rather than a hard stop: once
+// cap distinct rids are cached, the oldest is evicted to make room for the
+// new one. A stale evicted rid reappearing just mints a fresh anchor, which
+// is rare and harmless — the alternative (a hard cap) would silently stop
+// minting forever once the process had seen cap distinct requests.
 func (t *Tracker) MintRequest(ctx context.Context, minter Minter, ev model.Event, rid string) (lineage.LineageID, bool) {
 	if minter == nil || rid == "" {
 		return 0, false
@@ -95,10 +102,6 @@ func (t *Tracker) MintRequest(ctx context.Context, minter Minter, ev model.Event
 	if id, ok := t.requests[rid]; ok {
 		t.mu.Unlock()
 		return id, false // mint-once: already have an anchor for this request
-	}
-	if len(t.requests) >= t.cap {
-		t.mu.Unlock()
-		return 0, false
 	}
 	t.mu.Unlock()
 
@@ -125,7 +128,15 @@ func (t *Tracker) MintRequest(ctx context.Context, minter Minter, ev model.Event
 		t.mu.Unlock()
 		return existing, false
 	}
+	if len(t.requests) >= t.cap {
+		// Evict the oldest rid to make room (FIFO ring): the requests map is
+		// only a recent-mint dedup guard, so it must never hard-stop minting.
+		oldest := t.ridOrder[0]
+		t.ridOrder = t.ridOrder[1:]
+		delete(t.requests, oldest)
+	}
 	t.requests[rid] = id
+	t.ridOrder = append(t.ridOrder, rid)
 	t.mu.Unlock()
 	return id, true
 }
