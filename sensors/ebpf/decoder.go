@@ -418,6 +418,11 @@ func decodeDBQueryEvent(b []byte, ev *model.Event) {
 // per-request identity (method/uri/host/script + FastCGI requestId);
 // PID/comm come from the event header (the receiving php-fpm worker).
 // fidelity=coarse by construction: single-recv, first iovec only.
+// decodeFCGIRequestEvent parses an XH_EV_FCGI_REQUEST payload:
+// buf_len(4 LE) | buf[buf_len]. The buf is the name-value CONTENT of a FastCGI
+// PARAMS record (NOT a record stream — the recv-side capture emits the content
+// recv that follows a PARAMS header), so we parse it directly as name-value
+// pairs. host prefers HTTP_HOST, falling back to SERVER_NAME (the nginx vhost).
 func decodeFCGIRequestEvent(ev *model.Event, b []byte) {
 	ev.Tags["kind"] = "fcgi_request"
 	if len(b) < 4 {
@@ -428,16 +433,16 @@ func decodeFCGIRequestEvent(ev *model.Event, b []byte) {
 	if blen < len(data) {
 		data = data[:blen]
 	}
-	if !fastcgi.IsFastCGI(data) {
-		return
-	}
-	r, ok := fastcgi.Parse(data)
+	r, ok := fastcgi.ParseParams(data)
 	if !ok {
 		return
 	}
-	ev.Tags["fcgi_request_id"] = fmt.Sprintf("%d", r.RequestID)
-	if r.Host != "" {
-		ev.Tags["http_host"] = r.Host
+	host := r.Host
+	if host == "" {
+		host = r.ServerName
+	}
+	if host != "" {
+		ev.Tags["http_host"] = host
 	}
 	if r.Method != "" {
 		ev.Tags["http_method"] = r.Method

@@ -82,3 +82,52 @@ func TestIsFastCGI(t *testing.T) {
 		t.Error("redis RESP must not sniff as FastCGI")
 	}
 }
+
+// paramsContent builds a raw FastCGI PARAMS name-value block (no record header),
+// which is what the recv-side capture emits.
+func paramsContent(kv [][2]string) []byte {
+	var b []byte
+	for _, p := range kv {
+		b = append(b, byte(len(p[0])), byte(len(p[1])))
+		b = append(b, []byte(p[0])...)
+		b = append(b, []byte(p[1])...)
+	}
+	return b
+}
+
+func TestParseParamsExtractsIdentity(t *testing.T) {
+	content := paramsContent([][2]string{
+		{"SCRIPT_FILENAME", "/var/www/a/index.php"},
+		{"REQUEST_METHOD", "GET"},
+		{"REQUEST_URI", "/wp-admin/"},
+		{"SERVER_NAME", "a.com"},
+		{"HTTP_HOST", "a.com"},
+	})
+	r, ok := ParseParams(content)
+	if !ok {
+		t.Fatal("ParseParams ok=false")
+	}
+	if r.Host != "a.com" || r.URI != "/wp-admin/" || r.Method != "GET" {
+		t.Errorf("got host=%q uri=%q method=%q", r.Host, r.URI, r.Method)
+	}
+	if r.ServerName != "a.com" || r.Script != "/var/www/a/index.php" {
+		t.Errorf("got server_name=%q script=%q", r.ServerName, r.Script)
+	}
+}
+
+func TestParseParamsServerNameOnly(t *testing.T) {
+	r, ok := ParseParams(paramsContent([][2]string{{"SERVER_NAME", "b.com"}, {"REQUEST_URI", "/"}}))
+	if !ok || r.ServerName != "b.com" {
+		t.Fatalf("server_name = %q ok=%v", r.ServerName, ok)
+	}
+}
+
+func TestParseParamsRejectsGarbage(t *testing.T) {
+	// Padding / non-nv bytes → no identity fields → ok=false.
+	if _, ok := ParseParams([]byte{0, 0, 0, 0}); ok {
+		t.Error("all-zero padding must not classify")
+	}
+	if _, ok := ParseParams(nil); ok {
+		t.Error("nil must not classify")
+	}
+}

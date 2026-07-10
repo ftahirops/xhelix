@@ -280,26 +280,27 @@ func fcgiRecord(typ byte, reqID uint16, content []byte) []byte {
 }
 
 // buildFCGITestPayload constructs an XH_EV_FCGI_REQUEST payload:
-// buf_len(4 LE) | BEGIN_REQUEST(reqID=1) + PARAMS stream (short-form lengths).
+// buf_len(4 LE) | raw PARAMS name-value CONTENT (short-form lengths, no record
+// header) — matching what the recv-side capture emits (the content recv that
+// follows a PARAMS header).
 func buildFCGITestPayload(t *testing.T) []byte {
 	t.Helper()
-	begin := fcgiRecord(1 /*BEGIN_REQUEST*/, 1, []byte{0x00, 0x01, 0x01, 0, 0, 0, 0, 0})
 	var params []byte
 	add := func(k, v string) {
 		params = append(params, byte(len(k)), byte(len(v)))
 		params = append(params, []byte(k)...)
 		params = append(params, []byte(v)...)
 	}
-	// Order deterministic (map iteration would not be) so the stream is stable.
+	// Order deterministic so the content is stable.
+	add("SCRIPT_FILENAME", "/var/www/site-a/wp-login.php")
 	add("REQUEST_METHOD", "POST")
 	add("REQUEST_URI", "/wp-login.php")
+	add("SERVER_NAME", "site-a.com")
 	add("HTTP_HOST", "site-a.com")
-	add("SCRIPT_FILENAME", "/var/www/site-a/wp-login.php")
-	stream := append(begin, fcgiRecord(4 /*PARAMS*/, 1, params)...)
 
-	buf := make([]byte, 4+len(stream))
-	binary.LittleEndian.PutUint32(buf[:4], uint32(len(stream)))
-	copy(buf[4:], stream)
+	buf := make([]byte, 4+len(params))
+	binary.LittleEndian.PutUint32(buf[:4], uint32(len(params)))
+	copy(buf[4:], params)
 	return buf
 }
 
@@ -319,11 +320,30 @@ func TestDecodeFCGIRequest(t *testing.T) {
 	if ev.Tags["script_filename"] != "/var/www/site-a/wp-login.php" {
 		t.Errorf("script = %q", ev.Tags["script_filename"])
 	}
-	if ev.Tags["fcgi_request_id"] != "1" {
-		t.Errorf("request_id = %q", ev.Tags["fcgi_request_id"])
-	}
 	if ev.Tags["fidelity"] != "coarse" {
 		t.Error("fcgi_request must be tagged coarse")
+	}
+}
+
+// TestDecodeFCGIRequestServerNameFallback: when HTTP_HOST is absent, the nginx
+// SERVER_NAME vhost is used as the host.
+func TestDecodeFCGIRequestServerNameFallback(t *testing.T) {
+	var params []byte
+	add := func(k, v string) {
+		params = append(params, byte(len(k)), byte(len(v)))
+		params = append(params, []byte(k)...)
+		params = append(params, []byte(v)...)
+	}
+	add("REQUEST_URI", "/")
+	add("SERVER_NAME", "vhost-b.com")
+	buf := make([]byte, 4+len(params))
+	binary.LittleEndian.PutUint32(buf[:4], uint32(len(params)))
+	copy(buf[4:], params)
+
+	ev := model.Event{Tags: map[string]string{}}
+	decodeFCGIRequestEvent(&ev, buf)
+	if ev.Tags["http_host"] != "vhost-b.com" {
+		t.Errorf("http_host = %q, want vhost-b.com (SERVER_NAME fallback)", ev.Tags["http_host"])
 	}
 }
 

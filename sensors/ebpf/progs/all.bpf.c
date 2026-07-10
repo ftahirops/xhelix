@@ -114,7 +114,7 @@ struct xh_dbquery_evt {
    (nginx→php-fpm on port 9000), for the L7 per-request root emitter. Userspace
    (pkg/fastcgi) parses the request identity (method/uri/host/script). Coarse by
    construction: single recv, first iovec (ITER_UBUF) only. */
-#define XH_FCGI_BUF_MAX 256
+#define XH_FCGI_BUF_MAX 1024
 struct xh_fcgi_evt {
     struct xh_event_hdr hdr;
     __u32 buf_len;          // bytes captured (kernel-side capped at XH_FCGI_BUF_MAX)
@@ -941,6 +941,19 @@ static __always_inline void xh_stash_fcgi_recv(struct sock *sk,
     bpf_map_update_elem(&xh_fcgi_ctx_map, &key, &c, BPF_ANY);
 }
 
+/* xh_fcgi_want_map — pid_tgid → 1 when the previous recv on this thread was a
+   non-empty FastCGI PARAMS record HEADER, so the NEXT recv on this thread is
+   that record's name-value CONTENT (which carries HTTP_HOST / REQUEST_URI /
+   SCRIPT_FILENAME). php-fpm reads the 8-byte record header and the record
+   content in SEPARATE recv() calls, so the content never begins with the
+   version byte — gating on "version==1" alone only ever sees headers. */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 8192);
+    __type(key, __u64);                 // pid_tgid
+    __type(value, __u8);
+} xh_fcgi_want_map SEC(".maps");
+
 SEC("kretprobe/tcp_recvmsg")
 int kretprobe_tcp_recvmsg(struct pt_regs *ctx) {
     __u64 key = bpf_get_current_pid_tgid();
@@ -950,24 +963,44 @@ int kretprobe_tcp_recvmsg(struct pt_regs *ctx) {
     bpf_map_delete_elem(&xh_fcgi_ctx_map, &key);
 
     int ret = (int)PT_REGS_RC(ctx);
-    if (ret <= 0) return 0;
+    if (ret <= 0) {
+        bpf_map_delete_elem(&xh_fcgi_want_map, &key); // failed recv resets state
+        return 0;
+    }
 
-    __u32 cap = (__u32)ret;
-    if (cap > XH_FCGI_BUF_MAX) cap = XH_FCGI_BUF_MAX;
+    /* Two-phase capture. php-fpm reads a FastCGI record's 8-byte header and its
+       content in separate recv() calls, so the content (the name-value block
+       carrying HTTP_HOST) does NOT start with the version byte. If the previous
+       recv on this thread was a non-empty PARAMS header, THIS recv is that
+       content — capture it. */
+    __u8 *want = bpf_map_lookup_elem(&xh_fcgi_want_map, &key);
+    if (want) {
+        bpf_map_delete_elem(&xh_fcgi_want_map, &key);
+        __u32 cap = (__u32)ret;
+        if (cap > XH_FCGI_BUF_MAX) cap = XH_FCGI_BUF_MAX;
+        struct xh_fcgi_evt *e = bpf_ringbuf_reserve(&xh_events, sizeof(*e), 0);
+        if (!e) return 0;
+        xh_fill_hdr(&e->hdr, XH_EV_FCGI_REQUEST);
+        e->buf_len = cap;
+        __builtin_memset(e->buf, 0, sizeof(e->buf));
+        bpf_probe_read_user(e->buf, cap, (void *)base);
+        bpf_ringbuf_submit(e, 0);
+        return 0;
+    }
 
-    /* Magic pre-filter: peek the first byte; a v1 FastCGI record starts with
-       version==1. Reject anything else before reserving a ringbuf slot. */
-    __u8 magic = 0;
-    if (bpf_probe_read_user(&magic, 1, (void *)base) != 0) return 0;
-    if (magic != 1) return 0;
-
-    struct xh_fcgi_evt *e = bpf_ringbuf_reserve(&xh_events, sizeof(*e), 0);
-    if (!e) return 0;
-    xh_fill_hdr(&e->hdr, XH_EV_FCGI_REQUEST);
-    e->buf_len = cap;
-    __builtin_memset(e->buf, 0, sizeof(e->buf));
-    bpf_probe_read_user(e->buf, cap, (void *)base);
-    bpf_ringbuf_submit(e, 0);
+    /* Otherwise: is this a non-empty PARAMS record header? A v1 FastCGI header
+       is [version=1][type][requestId:2][contentLength:2][paddingLen][reserved].
+       type 4 = FCGI_PARAMS. If it declares content, the NEXT recv is that
+       content. Peek 6 header bytes; never emit the header itself. */
+    __u8 hdr[6] = {};
+    if (bpf_probe_read_user(hdr, sizeof(hdr), (void *)base) != 0) return 0;
+    if (hdr[0] == 1 && hdr[1] == 4) {
+        __u16 clen = ((__u16)hdr[4] << 8) | (__u16)hdr[5];
+        if (clen > 0) {
+            __u8 one = 1;
+            bpf_map_update_elem(&xh_fcgi_want_map, &key, &one, BPF_ANY);
+        }
+    }
     return 0;
 }
 

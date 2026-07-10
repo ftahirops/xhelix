@@ -14,16 +14,14 @@ const (
 	typeParams       = 4
 )
 
-// paramsKeys are the only PARAMS names we extract (coarse identity).
-// Others are skipped without allocation.
-
 // Result is the coarse per-request classification of a FastCGI request.
 type Result struct {
 	RequestID      uint16
 	IsBeginRequest bool
 	Method         string
 	URI            string
-	Host           string
+	Host           string // HTTP_HOST
+	ServerName     string // SERVER_NAME (nginx vhost) — host fallback
 	Script         string
 }
 
@@ -106,10 +104,25 @@ func parseParams(b []byte, r *Result) {
 			r.URI = val
 		case "HTTP_HOST":
 			r.Host = val
+		case "SERVER_NAME":
+			r.ServerName = val
 		case "SCRIPT_FILENAME":
 			r.Script = val
 		}
 	}
+}
+
+// ParseParams parses a raw FastCGI PARAMS name-value content block — the bytes
+// of ONE PARAMS record's content, WITHOUT the 8-byte record header. This is what
+// the app-tier recv-side capture emits: php-fpm reads a record's header and its
+// content in separate recv() calls, so the captured bytes are the name-value
+// pairs directly (not a record stream). Returns (Result, true) when any identity
+// field was extracted. Panic-free on truncated/padded input.
+func ParseParams(b []byte) (Result, bool) {
+	var r Result
+	parseParams(b, &r)
+	ok := r.Host != "" || r.ServerName != "" || r.URI != "" || r.Method != "" || r.Script != ""
+	return r, ok
 }
 
 // readLen decodes a FastCGI length field: 1 byte if high bit clear, else 4 bytes
